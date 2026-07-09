@@ -2847,7 +2847,7 @@ function renderCustomerDrillDetail(customer) {
               <td class="num">${formatNum(d.orderQty)}</td>
               <td class="num" style="color:#059669">${formatNum(d.totalFulfillQty)}</td>
               <td class="num" style="color:${d.rejectQty>0?'#F59E0B':'var(--text-secondary)'}">${d.rejectQty > 0 ? formatNum(d.rejectQty) : '-'}</td>
-              <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(d.realGap))}${d.rejectQty > 0 ? '<span style="font-size:10px;color:#F59E0B;margin-left:2px">(原'+formatNum(d.totalGap)+')</span>' : ''}</td>
+              <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(d.realGap))}</td>
             </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-secondary)">无缺货数据</td></tr>'; })()}
           </tbody>
         </table>
