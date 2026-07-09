@@ -741,10 +741,13 @@ function parseExcel(rawData, mode, options) {
   mode = mode || 'replace';
   options = options || {};
   try {
-    const wb = XLSX.read(rawData, { type: 'array' });
+    let wb;
+    if (rawData && rawData.__preparsed) wb = rawData;          // 预解析 JSON 伪 workbook（Sheets 直接为行数组）
+    else wb = XLSX.read(rawData, { type: 'array' });
     const sheetNames = wb.SheetNames;
 
     function sheetToArray(sheet) {
+      if (Array.isArray(sheet)) return sheet;                 // 已行化，直接返回
       return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true, dateNF: 'yyyy-mm-dd' });
     }
 
@@ -4990,26 +4993,75 @@ function init() {
   window.addEventListener('hashchange', handleHash);
 
   if (isAuthenticated) {
-    // 数据加载完成后的通用UI刷新
-    function afterDataLoad() {
+    // ===== 快速加载：manifest 变更检测 + IndexedDB 缓存 + JSON 优先 + xlsx 回退 =====
+    function getStoredHashes() {
+      try { return JSON.parse(localStorage.getItem('rdc_manifest_hashes') || 'null'); } catch (e) { return null; }
+    }
+    function setStoredHashes(h) {
+      try { localStorage.setItem('rdc_manifest_hashes', JSON.stringify(h)); } catch (e) {}
+    }
+    function fileOrderKey(f) {
+      if (f === 'data.json') return 0;
+      if (f.indexOf('data-') === 0) return 1;
+      if (f === 'inventory.json') return 2;
+      return 3;
+    }
+    function applyPreparsed(filename, j) {
+      const wb = { __preparsed: true, SheetNames: j.sheetNames, Sheets: j.sheets };
+      if (filename === 'inventory.json') parseInventoryExcel(wb);
+      else if (filename === 'data.json') parseExcel(wb, 'replace');
+      else if (filename.indexOf('data-') === 0) parseExcel(wb, 'append', { skipTransship: true });
+    }
+    async function bootLoad() {
+      // 1) IndexedDB 恢复（秒开首屏）
+      const restored = await loadFromIDB();
+      if (restored) renderAll();
+
+      // 2) manifest 变更检测：仅拉取哈希变化的文件
+      let manifest = null;
+      try {
+        const mres = await fetch('./manifest.json', { cache: 'no-cache' });
+        if (mres.ok) manifest = await mres.json();
+      } catch (e) { manifest = null; }
+
+      if (manifest && manifest.files) {
+        const stored = getStoredHashes() || {};
+        const changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
+        if (restored && changed.length === 0) {
+          showToast('已加载本地缓存（数据未更新）');
+          return;
+        }
+        const ordered = changed.slice().sort((a, b) => fileOrderKey(a) - fileOrderKey(b));
+        try {
+          for (const f of ordered) {
+            const j = await (await fetch('./' + f, { cache: 'no-cache' })).json();
+            applyPreparsed(f, j);
+          }
+          if (dataStore.shortage.length === 0 && dataStore.orderDetail.length === 0 && !dataStore.inventory) {
+            throw new Error('JSON 解析结果为空');
+          }
+          setStoredHashes(manifest.files);
+          detectAllMonths();
+          saveToIDB().catch(() => {});
+          showToast('已更新 ' + ordered.length + ' 个数据文件（JSON 快速加载）');
+          renderAll();
+          return;
+        } catch (e) {
+          console.warn('JSON 快速加载失败，回退 Excel：', e);
+          showToast('JSON 加载异常，已回退 Excel 加载', true);
+        }
+      }
+
+      // 3) 回退：原始 xlsx 流程（全量重新解析）
+      const loaded = await autoLoadData();
+      detectAllMonths();
       renderAll();
+      return loaded;
     }
 
-    // 尝试从浏览器数据库恢复上次导入的数据
-    loadFromIDB().then(restored => {
-      if (restored) {
-        afterDataLoad();
-        showToast('已恢复上次数据（更新于 ' + (dataStore.lastUpdated ? new Date(dataStore.lastUpdated).toLocaleString('zh-CN') : '未知') + '）');
-      }
-      // 始终尝试从服务器加载最新数据（覆盖本地缓存）
-      autoLoadData().then(loaded => {
-        afterDataLoad();
-        if (window.location.hash) {
-          handleHash();
-        } else {
-          navigateTo(loaded || dataStore.loaded ? 'overview' : 'data');
-        }
-      });
+    bootLoad().then(loaded => {
+      if (window.location.hash) handleHash();
+      else navigateTo((loaded || dataStore.loaded) ? 'overview' : 'data');
     });
   }
 }
@@ -5037,9 +5089,11 @@ function onGlobalMonthChange(val) {
 // ============ INVENTORY STRUCTURE ANALYSIS ============
 function parseInventoryExcel(rawData) {
   try {
-    const wb = XLSX.read(rawData, { type: 'array' });
+    let wb;
+    if (rawData && rawData.__preparsed) wb = rawData;
+    else wb = XLSX.read(rawData, { type: 'array' });
     const sheetNames = wb.SheetNames;
-    const sa = (s) => XLSX.utils.sheet_to_json(s, { header: 1, defval: null, raw: true });
+    const sa = (s) => Array.isArray(s) ? s : XLSX.utils.sheet_to_json(s, { header: 1, defval: null, raw: true });
 
     // Sheet1: 库存周转 (now separate, parse if needed)
     // Sheet2: 总体情况 - 包含多RDC区块，逐个解析后汇总

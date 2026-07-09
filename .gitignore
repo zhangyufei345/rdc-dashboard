@@ -12,3 +12,13 @@ node_modules/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# wrangler 本地缓存（含账号信息）
+.wrangler/
+
+# 部署缓存
+.deploy_timestamp
+.deploy_version
+
+# 残留的 Windows 保留设备名文件（不可通过 Win32 删除，忽略之，不影响看板）
+nul
