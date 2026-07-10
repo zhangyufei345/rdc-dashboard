@@ -5016,6 +5016,8 @@ function init() {
     async function bootLoad() {
       // 1) IndexedDB 恢复（秒开首屏）
       const restored = await loadFromIDB();
+      // 自动选中最新月份（在首次渲染前生效，避免先渲染"全部月份"再闪烁切换）
+      if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
       if (restored) renderAll();
 
       // 2) manifest 变更检测：仅拉取哈希变化的文件
