@@ -5901,7 +5901,7 @@ function renderSlowMoving() {
       // 新增慢动品：根因在需求侧（库存激增只是结果）。聚焦需求信号失真
       if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('分仓需求虚高(过量补货)');
       if (demand > 0 && ship / demand < 0.5) flags.push('业务提报需求虚高');
-      if (fut5 > 0 && fut / fut5 < 0.7) flags.push('分仓需求预测砍单');
+      if (fut5 > 0 && fut / fut5 < 0.7) flags.push('未来需求下降');
       if (flags.indexOf('分仓需求虚高(过量补货)') >= 0 && flags.indexOf('业务提报需求虚高') >= 0) flags.push('⚡ 需求信号全面失真');
     } else {
       if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('过量补货');
@@ -5915,7 +5915,7 @@ function renderSlowMoving() {
     if (isNew) {
       // 新增慢动品：建议聚焦需求侧修正
       if (rc.indexOf('⚡ 需求信号全面失真') >= 0) adv = '紧急：分仓与业务双端需求失真，冻结补货并复盘提报链路';
-      else if (rc.indexOf('分仓需求预测砍单') >= 0) adv = '核实需求砍单原因：若非真实需求萎缩则恢复预测，避免库存被动积压';
+      else if (rc.indexOf('未来需求下降') >= 0) adv = '核实未来需求下降原因：若非真实需求萎缩则恢复预测，避免库存被动积压';
       else if (rc.indexOf('分仓需求虚高(过量补货)') >= 0) adv = '回溯分仓需求预测，下调提报系数；暂停按原需求补货';
       else if (rc.indexOf('业务提报需求虚高') >= 0) adv = '回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货';
       else adv = '核查5月→6月需求信号变化，确认是否需求虚高后修正导致覆盖骤升';
@@ -6252,12 +6252,12 @@ function renderSlowMovingLogic() {
   s += '<div class="rule-box">';
   s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 分仓需求虚高(过量补货)</div><div class="ri-cond">判定：净转入/出货 > 2.0 倍</div><div class="ri-result">分仓提报多→触发大量补货→实际没卖</div></div>';
   s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">📝 业务提报需求虚高</div><div class="ri-cond">判定：出货/业务提报需求 < 50%</div><div class="ri-result">业务端提报多→触发补货→实际没卖</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 分仓需求预测砍单</div><div class="ri-cond">判定：6月分仓未来需求 / 5月 < 0.7（砍超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 未来需求下降</div><div class="ri-cond">判定：6月分仓未来需求 / 5月 < 0.7（下降超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
   s += '<div class="rule-item" style="border-left-color:#DC2626"><div class="ri-flag">⚡ 需求信号全面失真</div><div class="ri-cond">判定：分仓虚高 + 业务虚高 同时命中</div><div class="ri-result">双端需求都失真，最危险，需冻结补货复盘</div></div>';
   s += '</div>';
   s += '<div style="margin-top:16px;padding:14px 16px;border-radius:10px;background:#F5F3FF;border:1px solid #DDD6FE">';
   s += '<div style="font-size:13px;font-weight:600;color:#6D28D9;margin-bottom:6px">🔑 核心原则：库存激增只是结果，不是根因</div>';
-  s += '<p style="font-size:12px;color:#5B21B6;line-height:1.8;margin:0">覆盖月数骤升的因果链是：<strong>分仓/业务需求虚高 → 触发过量补货 → 实际未出货 → 后续需求被砍 → 库存覆盖被动上升</strong>。因此新增慢动品的根因诊断<strong>全部聚焦需求侧</strong>（分仓需求、业务提报需求、需求预测砍单），<strong>不把"库存增加"作为任何判定维度</strong>——库存量永远只是中间变量。</p>';
+  s += '<p style="font-size:12px;color:#5B21B6;line-height:1.8;margin:0">覆盖月数骤升的因果链是：<strong>分仓/业务需求虚高 → 触发过量补货 → 实际未出货 → 后续需求下降 → 库存覆盖被动上升</strong>。因此新增慢动品的根因诊断<strong>全部聚焦需求侧</strong>（分仓需求、业务提报需求、未来需求下降），<strong>不把"库存增加"作为任何判定维度</strong>——库存量永远只是中间变量。</p>';
   s += '</div></div>';
 
   // Section 4: 排除规则
