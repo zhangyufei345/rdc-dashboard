@@ -396,7 +396,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'datasets';
 let db = null;
 
@@ -405,9 +405,10 @@ function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = function(e) {
       const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+      if (db.objectStoreNames.contains(STORE_NAME)) {
+        db.deleteObjectStore(STORE_NAME); // 版本升级时清空旧缓存，强制用新解析逻辑（含 cov12）重新生成
       }
+      db.createObjectStore(STORE_NAME, { keyPath: 'key' });
     };
     req.onsuccess = function(e) { db = e.target.result; resolve(db); };
     req.onerror = function(e) { reject(e.target.error); };
