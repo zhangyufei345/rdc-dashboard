@@ -5255,7 +5255,7 @@ function parseInventoryExcel(rawData) {
           returnAmt: getSN(r,19), nearExpiryAmt: getSN(r,20), planAmt: getSN(r,21), inTransitAmt: getSN(r,22),
           // Coverage months (col 23-28: 2026-06 to 2026-11)
           cov06: getSN(r,23), cov07: getSN(r,24), cov08: getSN(r,25),
-          cov09: getSN(r,26), cov10: getSN(r,27), cov11: getSN(r,28),
+          cov09: getSN(r,26), cov10: getSN(r,27), cov11: getSN(r,28), cov12: getSN(r,29),
           coverageLevel: covLabel
         });
       }
@@ -5877,7 +5877,7 @@ function renderSlowMoving() {
   var futureDemand = {};
   slow6.forEach(function(d) {
     var key = d.rdc + '|' + d.sku;
-    futureDemand[key] = (d.cov06||0)+(d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0);
+    futureDemand[key] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0);
   });
   var futureDemand5 = {};
   cov5.forEach(function(d) {
@@ -6005,7 +6005,7 @@ function renderSlowMoving() {
   var bizDemandAll = {};
   (dataStore.bizDemand || []).forEach(function(bz) { var k = normalizeRdcName(bz.rdc) + '|' + bz.opCode; if (!skuRdcKeysAll.has(k)) return; bizDemandAll[k] = (bizDemandAll[k] || 0) + (bz.dealerDemand || 0) + (bz.kaDemand || 0) + (bz.newChannel || 0); });
   var futureDemandAll = {};
-  slow6AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemandAll[k] = (d.cov06||0)+(d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0); });
+  slow6AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemandAll[k] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0); });
   var brandFlagCount = {};
   var brandSlowCount = {};
   slow6AllRdc.forEach(function(d) {
@@ -6217,14 +6217,14 @@ function renderSlowMovingLogic() {
   s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 实际出货 ship</div><div class="ri-cond">来源：订单明细 firstDayQty</div><div class="ri-result">真实卖出去的数量</div></div>';
   s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">🔄 净转入 netIn</div><div class="ri-cond">来源：转储数据 转入−转出</div><div class="ri-result">实际补货入库量（补多了即偏高）</div></div>';
   s += '<div class="rule-item" style="border-left-color:#D97706"><div class="ri-flag">📝 业务提报需求 demand</div><div class="ri-cond">来源：业务需求满足情况（经销商+KA+新渠道）</div><div class="ri-result">销售端报上来的需求</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📅 分仓未来需求 fut</div><div class="ri-cond">来源：库存覆盖表 cov06~cov11 合计（当月+未来5月）</div><div class="ri-result">系统按覆盖逻辑测算的分仓需求</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#0EA5E9"><div class="ri-flag">📆 分仓未来需求(上月) fut5</div><div class="ri-cond">来源：5月库存覆盖表 cov06~cov11 合计</div><div class="ri-result">上月同期测算的分仓需求，用于环比</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📅 分仓未来需求 fut</div><div class="ri-cond">来源：6月覆盖表 cov07~cov12 合计（7~12月，6月起点的未来6个月）</div><div class="ri-result">系统按覆盖逻辑测算的分仓需求</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#0EA5E9"><div class="ri-flag">📆 分仓未来需求(上月) fut5</div><div class="ri-cond">来源：5月库存覆盖表 cov06~cov11 合计（6~11月，5月起点的未来6个月）</div><div class="ri-result">上月同期测算的分仓需求，用于环比</div></div>';
   s += '</div>';
   s += '<p style="font-size:13px;font-weight:600;margin:16px 0 8px">五个诊断维度（任一命中即打标签，可多命中）</p>';
   var roots = [
     { flag:'🚚', result:'分仓需求虚高(过量补货)', cond:'净转入 / 出货 > 2.0 倍', field:'netIn / ship', color:'#DC2626', advice:'回溯分仓需求预测，下调提报系数；暂停按原需求补货' },
     { flag:'📝', result:'业务提报需求虚高', cond:'出货 / 业务提报需求 < 50%', field:'ship / demand', color:'#8B5CF6', advice:'回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货' },
-    { flag:'📉', result:'未来需求下降', cond:'6月分仓未来需求 / 5月 < 0.7（下降超30%）', field:'fut / fut5', color:'#059669', advice:'核实下降原因：若非真实萎缩则恢复预测，避免库存被动积压' },
+    { flag:'📉', result:'未来需求下降', cond:'6月起点未来6个月 / 5月起点未来6个月 < 0.7（下降超30%）', field:'fut / fut5', color:'#059669', advice:'核实下降原因：若非真实萎缩则恢复预测，避免库存被动积压' },
     { flag:'⏳', result:'效期风险', cond:'可销售库存中 临期天数/总货架寿命 < 2/3 占比 > 30%', field:'below23 / sellable', color:'#D97706', advice:'优先折价/特价出清临期库存，评估退厂或调拨' },
     { flag:'⏰', result:'严重呆滞', cond:'出货 = 0 且 分仓未来需求 = 0', field:'ship=0 且 fut=0', color:'#2563EB', advice:'折价出清或退厂处理，评估SKU清退或停产' }
   ];
@@ -6259,10 +6259,10 @@ function renderSlowMovingLogic() {
   s += '<div class="rule-box">';
   s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 分仓需求虚高(过量补货)</div><div class="ri-cond">判定：净转入/出货 > 2.0 倍</div><div class="ri-result">分仓提报多→触发大量补货→实际没卖</div></div>';
   s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">📝 业务提报需求虚高</div><div class="ri-cond">判定：出货/业务提报需求 < 50%</div><div class="ri-result">业务端提报多→触发补货→实际没卖</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 未来需求下降</div><div class="ri-cond">判定：6月分仓未来需求 / 5月 < 0.7（下降超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 未来需求下降</div><div class="ri-cond">判定：(6月起点未来6个月 cov07~cov12) / (5月起点未来6个月 cov06~cov11) < 0.7（下降超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
   s += '<div class="rule-item" style="border-left-color:#DC2626"><div class="ri-flag">⚡ 需求信号全面失真</div><div class="ri-cond">判定：分仓虚高 + 业务虚高 同时命中</div><div class="ri-result">双端需求都失真，最危险，需冻结补货复盘</div></div>';
   s += '</div>';
-  s += '<p style="font-size:12px;color:var(--text-secondary);margin-top:12px">对<strong>「较上月新增」</strong>的慢动SKU（5月正常周转、6月跳入慢动），这一环比维度<strong>「未来需求下降」</strong>尤为关键——它能直接回答"覆盖月数怎么从正常骤升的"。</p>';
+  s += '<p style="font-size:12px;color:var(--text-secondary);margin-top:12px">对<strong>「较上月新增」</strong>的慢动SKU（5月正常周转、6月跳入慢动），这一维度<strong>「未来需求下降」</strong>尤为关键——它用<strong>滚动6个月窗口</strong>对比（6月视角的 7~12月 vs 5月视角的 6~11月），能客观反映"未来需求是否被整体下调"，而非仅看单月。</p>';
   s += '</div>';
 
   // Section 4: 排除规则
