@@ -5029,6 +5029,7 @@ function init() {
         const stored = getStoredHashes() || {};
         const changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
         if (restored && changed.length === 0) {
+          if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
           showToast('已加载本地缓存（数据未更新）');
           return;
         }
@@ -5043,6 +5044,7 @@ function init() {
           }
           setStoredHashes(manifest.files);
           detectAllMonths();
+          if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
           saveToIDB().catch(() => {});
           showToast('已更新 ' + ordered.length + ' 个数据文件（JSON 快速加载）');
           renderAll();
@@ -5056,6 +5058,7 @@ function init() {
       // 3) 回退：原始 xlsx 流程（全量重新解析）
       const loaded = await autoLoadData();
       detectAllMonths();
+      if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
       renderAll();
       return loaded;
     }
