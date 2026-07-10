@@ -6367,14 +6367,20 @@ function getBizDemandSummary(f) {
   });
 
   // 构建需求SKU集合，用于出货匹配时的校验（只统计有业务提报的SKU出货）
+  // 同时记录每个 SKU×RDC×月 的"最早补货日期"，作为出货计入的时间下限
   const demandSkuSet = new Set();
+  const skuSubmitDate = {}; // key: month|rdc|opCode => 最早补货日期(YYYY-MM-DD)
   biz.forEach(d => {
     const m = d.dateStr.slice(0, 7);
     if (monthFilter !== 'all' && m !== monthFilter) return;
     const nrdc = normalizeRdcName(d.rdc);
     if (rdcFilter !== 'all' && nrdc !== rdcFilter) return;
     const anyDemand = (d.dealerDemand||0) + (d.kaDemand||0) + (d.newChannel||0);
-    if (anyDemand > 0) demandSkuSet.add(m + '|' + nrdc + '|' + d.opCode);
+    if (anyDemand > 0) {
+      const sk = m + '|' + nrdc + '|' + d.opCode;
+      demandSkuSet.add(sk);
+      if (!skuSubmitDate[sk] || d.dateStr < skuSubmitDate[sk]) skuSubmitDate[sk] = d.dateStr;
+    }
   });
 
   // 按月×RDC×渠道聚合实际出货（从订单明细，时间窗口：当月~次月15日）
@@ -6401,6 +6407,10 @@ function getBizDemandSummary(f) {
         const wrh = normalizeRdcName(d.warehouse || '');
         const skuKey = mi + '|' + wrh + '|' + d.skuCode;
         if (!demandSkuSet.has(skuKey)) continue;
+
+        // 时间下限：仅计入"补货日期之后"（SAP放行日期 严格 > 该SKU最早补货日期）产生的出货
+        const submitDate = skuSubmitDate[skuKey];
+        if (submitDate && !(d.dateStr > submitDate)) { break; }
 
         const key = mi + '|' + wrh + '|' + ch;
         if (!shipmentMap[key]) shipmentMap[key] = 0;
@@ -6483,7 +6493,7 @@ function renderBizDemand() {
   html += '<select id="bd-month-filter" onchange="window._bizDemandFilters.month=this.value;renderBizDemand()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(f.month==='all'?' selected':'')+'>全部月份</option>' + months.map(m=>'<option value="'+m+'"'+(f.month===m?' selected':'')+'>'+m+'</option>').join('') + '</select>';
   html += '<select id="bd-rdc-filter" onchange="window._bizDemandFilters.rdc=this.value;renderBizDemand()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(f.rdc==='all'?' selected':'')+'>全部RDC</option>' + rdcs.map(r=>'<option value="'+r+'"'+(f.rdc===r?' selected':'')+'>'+r+'</option>').join('') + '</select>';
   html += '<select id="bd-channel-filter" onchange="window._bizDemandFilters.channel=this.value;renderBizDemand()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(f.channel==='all'?' selected':'')+'>全部渠道</option><option value="经销商"'+(f.channel==='经销商'?' selected':'')+'>经销商</option><option value="KA"'+(f.channel==='KA'?' selected':'')+'>KA</option><option value="新通路"'+(f.channel==='新通路'?' selected':'')+'>新通路</option></select>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">共 ' + summary.length + ' 条记录 · 出货窗口：当月至次月15日</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto" title="仅统计 SAP放行日期 晚于该SKU最早补货日期 的出货，且不晚于次月15日">共 ' + summary.length + ' 条记录 · 出货窗口：补货日期次日 ~ 次月15日（仅计提报后出货）</span>';
   html += '</div>';
 
   // ===== KPI 卡片 =====
@@ -6687,6 +6697,17 @@ function renderBizDemandDetail() {
     if (d.opCode && d.productName) skuNameMap[d.opCode] = d.productName;
   });
 
+  // 每个 SKU×RDC×月 的最早补货日期（出货计入时间下限）
+  const skuSubmitDate = {}; // key: month|rdc|opCode => 最早补货日期(YYYY-MM-DD)
+  biz.forEach(d => {
+    const m = d.dateStr.slice(0, 7);
+    const nrdc = normalizeRdcName(d.rdc);
+    const anyDemand = (d.dealerDemand||0) + (d.kaDemand||0) + (d.newChannel||0);
+    if (anyDemand <= 0) return;
+    const sk = m + '|' + nrdc + '|' + d.opCode;
+    if (!skuSubmitDate[sk] || d.dateStr < skuSubmitDate[sk]) skuSubmitDate[sk] = d.dateStr;
+  });
+
   const orders = dataStore.orderDetail || [];
   const shipMap = {}; // key: "month|rdc|opCode|channel" => qty
 
@@ -6711,8 +6732,12 @@ function renderBizDemandDetail() {
 
         const baseKey = mi + '|' + wrh + '|' + d.skuCode;
         if (skuMap[baseKey]) {
-          const sk = baseKey + '|' + ch;
-          shipMap[sk] = (shipMap[sk] || 0) + (d.firstDayQty || 0);
+          // 时间下限：仅计入"补货日期之后"（SAP放行日期 严格 > 该SKU最早补货日期）产生的出货
+          const submitDate = skuSubmitDate[baseKey];
+          if (!submitDate || d.dateStr > submitDate) {
+            const sk = baseKey + '|' + ch;
+            shipMap[sk] = (shipMap[sk] || 0) + (d.firstDayQty || 0);
+          }
         }
         break;
       }
