@@ -5846,8 +5846,8 @@ function renderSlowMoving() {
   var newSlow = slow6.filter(function(d) { return !slow5Keys.has(d.rdc + '|' + d.sku); });
   var kpi = {
     skuCount: new Set(slow6.map(function(d) { return d.sku; })).size,
-    newCount: new Set(newSlow.map(function(d) { return d.rdc + '|' + d.sku; })).size,
-    totalQty: slow6.reduce(function(s,d) { return s + (d.availQtyPlan || 0); }, 0),
+    newCount: new Set(newSlow.map(function(d) { return d.sku; })).size,
+    totalQty: slow6.reduce(function(s,d) { return s + (d.availQtyPlan || d.availableQty || 0); }, 0),
     totalAmt: slow6.reduce(function(s,d) { return s + (d.planAmt || 0); }, 0) / 1000
   };
   var cov5Map = {};
@@ -5897,7 +5897,7 @@ function renderSlowMoving() {
     if (flags.indexOf('过量补货') >= 0 && flags.indexOf('出货低于预期') >= 0 && flags.indexOf('效期风险') < 0) flags.push('⚠️ 疑似业务提报虚高');
     var rc = flags.length ? flags.join(' + ') : '正常慢周转';
     var adv = rc.includes('严重呆滞') ? '建议折价出清或退厂处理' : rc.includes('⚠️ 疑似业务提报虚高') ? '回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货' : rc.includes('过量补货') ? '暂停补货，优先跨RDC调拨消耗库存' : rc.includes('效期风险') ? '优先折价/特价出清临期库存，评估退厂或调拨，避免在效期更差前继续补货' : rc.includes('出货低于预期') ? '下调需求预测，安排促销/渠道分流' : '持续监测';
-    return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan, inventoryAmt: d.planAmt, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: !slow5Keys.has(key), cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, rootCause: rc, advice: adv };
+    return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan || d.availableQty || 0, inventoryAmt: d.planAmt, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: !slow5Keys.has(key), cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, rootCause: rc, advice: adv };
   }).sort(function(a, b) { return b.inventoryAmt - a.inventoryAmt; });
   window._slowMovingAll = detailRows;
   window._slowMovingNew = detailRows.filter(function(d) { return d.isNew; }).slice(0, 20);
@@ -6015,7 +6015,7 @@ function renderSlowMoving() {
   var systemicCount = crossBrands.filter(function(c) { return c.highCount >= 4; }).length;
   var regionalCount = crossBrands.filter(function(c) { return c.highCount >= 2 && c.highCount < 4; }).length;
 
-  var trendQty = [slow5, slow6].map(function(arr) { return arr.reduce(function(s,d) { return s + (d.availQtyPlan||0); }, 0); });
+  var trendQty = [slow5, slow6].map(function(arr) { return arr.reduce(function(s,d) { return s + (d.availQtyPlan || d.availableQty || 0); }, 0); });
 
   var rdcLabel = rdcFilter === 'all' ? '全部RDC' : rdcFilter;
   var hainanLabel = hainanFilter === 'all' ? '全部' : hainanFilter === 'yes' ? '仅海南花露水' : '不含海南花露水';
