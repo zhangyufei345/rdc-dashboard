@@ -5879,6 +5879,11 @@ function renderSlowMoving() {
     var key = d.rdc + '|' + d.sku;
     futureDemand[key] = (d.cov06||0)+(d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0);
   });
+  var futureDemand5 = {};
+  cov5.forEach(function(d) {
+    var key = d.rdc + '|' + d.sku;
+    futureDemand5[key] = (d.cov06||0)+(d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0);
+  });
   var detailRows = slow6.map(function(d) {
     var key = d.rdc + '|' + d.sku;
     var prev = cov5Map[key];
@@ -5887,17 +5892,42 @@ function renderSlowMoving() {
     var ship = shipQty[key] || 0;
     var demand = bizDemand[key] || 0;
     var fut = futureDemand[key] || 0;
+    var fut5 = futureDemand5[key] || 0;
     var exMap = (dataStore.inventory && dataStore.inventory.expiry6) ? dataStore.inventory.expiry6[key] : null;
     var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0; // 可销售库存中 临期天数/总货架寿命<2/3 的占比
+    var isNew = !slow5Keys.has(key);
     var flags = [];
-    if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('过量补货');
-    if (demand > 0 && ship / demand < 0.5) flags.push('出货低于预期');
-    if (expiryRatio > 0.3) flags.push('效期风险');
-    if (ship === 0 && fut === 0) flags.push('严重呆滞');
-    if (flags.indexOf('过量补货') >= 0 && flags.indexOf('出货低于预期') >= 0 && flags.indexOf('效期风险') < 0) flags.push('⚠️ 疑似业务提报虚高');
-    var rc = flags.length ? flags.join(' + ') : '正常慢周转';
-    var adv = rc.includes('严重呆滞') ? '建议折价出清或退厂处理' : rc.includes('⚠️ 疑似业务提报虚高') ? '回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货' : rc.includes('过量补货') ? '暂停补货，优先跨RDC调拨消耗库存' : rc.includes('效期风险') ? '优先折价/特价出清临期库存，评估退厂或调拨，避免在效期更差前继续补货' : rc.includes('出货低于预期') ? '下调需求预测，安排促销/渠道分流' : '持续监测';
-    return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan || d.availableQty || 0, inventoryAmt: d.planAmt, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: !slow5Keys.has(key), cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, rootCause: rc, advice: adv };
+    if (isNew) {
+      // 新增慢动品：根因在需求侧（库存激增只是结果）。聚焦需求信号失真
+      if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('分仓需求虚高(过量补货)');
+      if (demand > 0 && ship / demand < 0.5) flags.push('业务提报需求虚高');
+      if (fut5 > 0 && fut / fut5 < 0.7) flags.push('分仓需求预测砍单');
+      if (flags.indexOf('分仓需求虚高(过量补货)') >= 0 && flags.indexOf('业务提报需求虚高') >= 0) flags.push('⚡ 需求信号全面失真');
+    } else {
+      if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('过量补货');
+      if (demand > 0 && ship / demand < 0.5) flags.push('出货低于预期');
+      if (expiryRatio > 0.3) flags.push('效期风险');
+      if (ship === 0 && fut === 0) flags.push('严重呆滞');
+      if (flags.indexOf('过量补货') >= 0 && flags.indexOf('出货低于预期') >= 0 && flags.indexOf('效期风险') < 0) flags.push('⚠️ 疑似业务提报虚高');
+    }
+    var rc = flags.length ? flags.join(' + ') : (isNew ? '需求变化待查' : '正常慢周转');
+    var adv;
+    if (isNew) {
+      // 新增慢动品：建议聚焦需求侧修正
+      if (rc.indexOf('⚡ 需求信号全面失真') >= 0) adv = '紧急：分仓与业务双端需求失真，冻结补货并复盘提报链路';
+      else if (rc.indexOf('分仓需求预测砍单') >= 0) adv = '核实需求砍单原因：若非真实需求萎缩则恢复预测，避免库存被动积压';
+      else if (rc.indexOf('分仓需求虚高(过量补货)') >= 0) adv = '回溯分仓需求预测，下调提报系数；暂停按原需求补货';
+      else if (rc.indexOf('业务提报需求虚高') >= 0) adv = '回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货';
+      else adv = '核查5月→6月需求信号变化，确认是否需求虚高后修正导致覆盖骤升';
+    } else {
+      if (rc.indexOf('严重呆滞') >= 0) adv = '建议折价出清或退厂处理';
+      else if (rc.indexOf('⚠️ 疑似业务提报虚高') >= 0) adv = '回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货';
+      else if (rc.indexOf('过量补货') >= 0) adv = '暂停补货，优先跨RDC调拨消耗库存';
+      else if (rc.indexOf('效期风险') >= 0) adv = '优先折价/特价出清临期库存，评估退厂或调拨，避免在效期更差前继续补货';
+      else if (rc.indexOf('出货低于预期') >= 0) adv = '下调需求预测，安排促销/渠道分流';
+      else adv = '持续监测';
+    }
+    return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan || d.availableQty || 0, inventoryAmt: d.planAmt, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: isNew, cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, rootCause: rc, advice: adv };
   }).sort(function(a, b) { return b.inventoryAmt - a.inventoryAmt; });
   window._slowMovingAll = detailRows;
   window._slowMovingNew = detailRows.filter(function(d) { return d.isNew; }).slice(0, 20);
@@ -6215,6 +6245,20 @@ function renderSlowMovingLogic() {
   s += '</p></div>';
   s += '<p style="font-size:12px;color:var(--text-secondary);margin-top:12px">💡 一个慢动SKU可能命中多条根因，系统用「 + 」拼接全部命中项展示；当「过量补货 + 出货低于预期」命中且「效期风险」未命中时，额外自动标注<strong>「⚠️ 疑似业务提报虚高」</strong>（红色高亮），一眼区分"提报虚高"与"效期结构偏差"。</p>';
   s += '</div>';
+
+  // Section 3.5: 新增慢动品趋势归因
+  s += '<h2>🆕 新增慢动品 —— 趋势归因（为什么从好变差）</h2><div class="logic-card" style="border-left:4px solid #7C3AED">';
+  s += '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">对<span style="font-weight:600;color:#7C3AED">「较上月新增」</span>的慢动SKU（5月正常周转、6月跳入慢动），系统不再套用上述四维快照诊断，而是做<strong>跨月趋势归因</strong>——因为此时真正要回答的是「<strong>覆盖月数怎么从正常骤升的</strong>」。</p>';
+  s += '<div class="rule-box">';
+  s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 分仓需求虚高(过量补货)</div><div class="ri-cond">判定：净转入/出货 > 2.0 倍</div><div class="ri-result">分仓提报多→触发大量补货→实际没卖</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">📝 业务提报需求虚高</div><div class="ri-cond">判定：出货/业务提报需求 < 50%</div><div class="ri-result">业务端提报多→触发补货→实际没卖</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 分仓需求预测砍单</div><div class="ri-cond">判定：6月分仓未来需求 / 5月 < 0.7（砍超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#DC2626"><div class="ri-flag">⚡ 需求信号全面失真</div><div class="ri-cond">判定：分仓虚高 + 业务虚高 同时命中</div><div class="ri-result">双端需求都失真，最危险，需冻结补货复盘</div></div>';
+  s += '</div>';
+  s += '<div style="margin-top:16px;padding:14px 16px;border-radius:10px;background:#F5F3FF;border:1px solid #DDD6FE">';
+  s += '<div style="font-size:13px;font-weight:600;color:#6D28D9;margin-bottom:6px">🔑 核心原则：库存激增只是结果，不是根因</div>';
+  s += '<p style="font-size:12px;color:#5B21B6;line-height:1.8;margin:0">覆盖月数骤升的因果链是：<strong>分仓/业务需求虚高 → 触发过量补货 → 实际未出货 → 后续需求被砍 → 库存覆盖被动上升</strong>。因此新增慢动品的根因诊断<strong>全部聚焦需求侧</strong>（分仓需求、业务提报需求、需求预测砍单），<strong>不把"库存增加"作为任何判定维度</strong>——库存量永远只是中间变量。</p>';
+  s += '</div></div>';
 
   // Section 4: 排除规则
   s += '<h2>🚫 特殊产品排除规则</h2><div class="logic-card">';
