@@ -2431,17 +2431,19 @@ function renderBrandRdcMatrix() {
     matrix[d.brand][d.warehouse].firstShort += d.firstDayShort;
   });
 
-  // 表格（紧凑样式：1/2 字号、padding、列宽）
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:540px"><thead><tr>';
-  html += '<th style="text-align:left;padding:5px 6px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;position:sticky;left:0;z-index:1">品牌 \\ RDC</th>';
+  // 表格（紧凑样式：列宽 30px，padding 2px）
+  let html = '<table style="width:auto;border-collapse:collapse;font-size:11px;table-layout:fixed"><colgroup><col style="width:60px">';
+  MATRIX_RDCS.forEach(() => { html += '<col style="width:55px">'; });
+  html += '</colgroup><thead><tr>';
+  html += '<th style="text-align:left;padding:3px 4px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;position:sticky;left:0;z-index:1">品牌 \\ RDC</th>';
   MATRIX_RDCS.forEach(r => {
-    html += '<th style="padding:5px 4px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;min-width:60px;font-size:11px">'+r+'</th>';
+    html += '<th style="padding:3px 2px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;font-size:11px;white-space:nowrap">'+r+'</th>';
   });
   html += '</tr></thead><tbody>';
 
   MATRIX_BRANDS.forEach(b => {
     html += '<tr>';
-    html += '<td style="padding:5px 6px;font-weight:600;border:1px solid #E5E7EB;background:#F9FAFB;position:sticky;left:0;z-index:1">'+b+'</td>';
+    html += '<td style="padding:3px 4px;font-weight:600;border:1px solid #E5E7EB;background:#F9FAFB;position:sticky;left:0;z-index:1;white-space:nowrap">'+b+'</td>';
     MATRIX_RDCS.forEach(r => {
       const m = matrix[b][r];
       let content, bg, fg;
@@ -2459,7 +2461,7 @@ function renderBrandRdcMatrix() {
         : { type: 'month', month: window._matrixDate.slice(0,7) };
       const trJson = JSON.stringify(tr).replace(/"/g, '&quot;');
       html += '<td data-brand="'+b+'" data-rdc="'+r+'" data-tr="'+trJson+'" '
-        + 'style="padding:5px 4px;text-align:center;border:1px solid #E5E7EB;background:'+bg+';color:'+fg+';cursor:pointer;transition:transform 0.1s" '
+        + 'style="padding:3px 2px;text-align:center;border:1px solid #E5E7EB;background:'+bg+';color:'+fg+';cursor:pointer;transition:transform 0.1s;white-space:nowrap" '
         + 'onmouseenter="showMatrixTooltip(event, this)" onmouseleave="hideMatrixTooltip()">'
         + '<span style="font-weight:600">'+content+'</span></td>';
     });
