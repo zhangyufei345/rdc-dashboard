@@ -2202,12 +2202,12 @@ function renderShortageOrderDetail() {
       <button class="btn-export" style="font-size:12px;padding:5px 16px" onclick="window._shortageTab='shortage';renderShortage()">缺货汇总</button>
     </div>
 
-    <!-- 品牌×RDC 订单满足率矩阵 -->
+    <!-- 日订单满足矩阵 -->
     <div class="card" style="margin-bottom:12px" id="card-brand-rdc-matrix">
       <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span class="card-title">品牌 × RDC 订单满足率矩阵</span>
+        <span class="card-title">日订单满足矩阵</span>
         <span style="font-size:11px;color:var(--text-secondary)">首日满足率 = (订单量 - 首日缺货) / 订单量</span>
-        <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+        <div style="display:flex;gap:10px;align-items:center;margin-left:8px">
           <label style="font-size:12px">日期：</label>
           <select id="matrix-date" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
           <label style="font-size:12px">粒度：</label>
@@ -2505,8 +2505,8 @@ function showMatrixTooltip(event, td) {
     skus.forEach((s, i) => {
       html += '<div style="display:flex;gap:6px;margin:3px 0;align-items:baseline">'
         + '<span style="color:#9CA3AF;min-width:14px">'+(i+1)+'.</span>'
+        + '<span style="color:#9CA3AF;font-size:11px;min-width:50px">'+s.code+'</span>'
         + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+s.name+'">'+s.name+'</span>'
-        + '<span style="color:#9CA3AF;font-size:11px">('+s.code+')</span>'
         + '<span style="color:#FCA5A5;font-weight:600;min-width:60px;text-align:right">'+formatNum(s.gap)+'支</span>'
         + '</div>';
     });
