@@ -380,6 +380,25 @@ function getTopFirstDayShortSKUs(dateStr, rdc, limit) {
   return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
 }
 
+// 按品牌×RDC×时间范围聚合首日缺货TOP（用于品牌矩阵弹框）
+// timeRange: { type: 'day'|'month'|'all', dateStr: 'YYYY-MM-DD', month: 'YYYY-MM' }
+function getTopFirstDayShortSKUsByBrand(brand, rdc, timeRange, limit) {
+  limit = limit || 5;
+  if (!brand || !rdc) return [];
+  const tr = timeRange || { type: 'all' };
+  const dedup = {};
+  dataStore.orderDetail.filter(d => {
+    if (d.brand !== brand || d.warehouse !== rdc || d.firstDayShort <= 0) return false;
+    if (tr.type === 'day' && d.dateStr !== tr.dateStr) return false;
+    if (tr.type === 'month' && (!d.dateStr || !d.dateStr.startsWith(tr.month))) return false;
+    return true;
+  }).forEach(d => {
+    if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+    dedup[d.skuCode].gap += d.firstDayShort;
+  });
+  return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
+}
+
 function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
   limit = limit || 5;
   if (!dateStr || !rdcKey) return [];
@@ -1860,7 +1879,10 @@ function renderShortage() {
   const page = document.getElementById('page-shortage');
   if (!page) return;
 
-  // Tab切换：订单明细分析
+  // Tab默认激活订单缺货明细分析
+  if (typeof window._shortageTab === 'undefined') window._shortageTab = 'order-detail';
+
+  // Tab切换：订单缺货明细分析
   if (window._shortageTab === 'order-detail') {
     renderShortageOrderDetail();
     return;
@@ -1923,10 +1945,10 @@ function renderShortage() {
       <label>搜索：</label><input type="text" id="filter-shortage-search" placeholder="物料号/名称/品牌" value="${filters.search}" oninput="filters.search=this.value;renderShortage()">
       <button class="btn-export" onclick="exportShortageCSV()">导出CSV</button>
     </div>
-    <!-- Tab切换：缺货汇总 / 订单缺货分析 -->
+    <!-- Tab切换：订单缺货明细分析 / 缺货汇总 -->
     <div style="display:flex;gap:4px;margin-bottom:12px">
+      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
       <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab!=='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='shortage';renderShortage()">缺货汇总</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='order-detail';renderShortage()">订单明细分析</button>
     </div>
     <div class="row-3" style="margin-bottom:12px">
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-red)">${formatNum(filteredCount)}</div><div style="font-size:11px;color:var(--text-secondary)">筛选结果 / 共${totalCount}条</div></div>
@@ -2176,8 +2198,26 @@ function renderShortageOrderDetail() {
     </div>
     <!-- Tab切换 -->
     <div style="display:flex;gap:4px;margin-bottom:12px">
+      <button class="btn-export" style="font-size:12px;padding:5px 16px;background:var(--color-blue);color:#fff" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
       <button class="btn-export" style="font-size:12px;padding:5px 16px" onclick="window._shortageTab='shortage';renderShortage()">缺货汇总</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;background:var(--color-blue);color:#fff" onclick="window._shortageTab='order-detail';renderShortage()">订单明细分析</button>
+    </div>
+
+    <!-- 品牌×RDC 订单满足率矩阵 -->
+    <div class="card" style="margin-bottom:12px" id="card-brand-rdc-matrix">
+      <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class="card-title">品牌 × RDC 订单满足率矩阵</span>
+        <span style="font-size:11px;color:var(--text-secondary)">首日满足率 = (订单量 - 首日缺货) / 订单量</span>
+        <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+          <label style="font-size:12px">日期：</label>
+          <select id="matrix-date" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
+          <label style="font-size:12px">粒度：</label>
+          <select id="matrix-gran" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
+            <option value="day">按日</option>
+            <option value="month">按月</option>
+          </select>
+        </div>
+      </div>
+      <div id="brand-rdc-matrix" style="overflow-x:auto;padding:8px 0"></div>
     </div>
 
     <!-- 表1: 汇总统计 + 图表 -->
@@ -2326,6 +2366,166 @@ function renderShortageOrderDetail() {
       { name: '经销商', type: 'bar', data: brandDealerData, color: '#93C5FD', barWidth: '18%' }
     ]
   });
+
+  // 渲染品牌×RDC 满足率矩阵
+  renderBrandRdcMatrix();
+}
+
+// 矩阵独立品牌列表（11个，固定；不影响 BRAND_LIST）
+const MATRIX_BRANDS = ['上海','六神','友谊','启初','家安','春蕾','海鸥','百爱神','美加净','雅霜','高夫'];
+const MATRIX_RDCS = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
+
+// 满足率背景色（红→黄→绿，与图2 渐变一致）
+function matrixColor(rate) {
+  if (rate >= 0.95) return { bg: '#A7F3D0', fg: '#065F46' }; // 深绿
+  if (rate >= 0.85) return { bg: '#D1FAE5', fg: '#065F46' }; // 绿
+  if (rate >= 0.7)  return { bg: '#FEF3C7', fg: '#92400E' }; // 黄
+  if (rate >= 0.5)  return { bg: '#FED7AA', fg: '#9A3412' }; // 橙
+  if (rate > 0)     return { bg: '#FECACA', fg: '#991B1B' }; // 浅红
+  return { bg: '#F3F4F6', fg: '#6B7280' }; // 灰
+}
+
+// 初始化/填充日期下拉
+function matrixInitDateOptions() {
+  if (!dataStore.orderDetail || dataStore.orderDetail.length === 0) return [];
+  const allDates = [...new Set(dataStore.orderDetail.map(d => d.dateStr).filter(Boolean))].sort();
+  const sel = document.getElementById('matrix-date');
+  if (!sel) return allDates;
+  if (sel.options.length === 0) {
+    allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
+  }
+  // 默认值
+  if (!window._matrixDate || !allDates.includes(window._matrixDate)) {
+    window._matrixDate = allDates[allDates.length - 1] || '';
+  }
+  sel.value = window._matrixDate;
+  const gran = document.getElementById('matrix-gran');
+  if (gran && !gran.value) gran.value = 'day';
+  if (gran) gran.value = window._matrixGran || 'day';
+  return allDates;
+}
+
+function renderBrandRdcMatrix() {
+  const container = document.getElementById('brand-rdc-matrix');
+  if (!container) return;
+  if (!dataStore.orderDetail || dataStore.orderDetail.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary)">暂无订单明细数据</div>';
+    return;
+  }
+  const allDates = matrixInitDateOptions();
+  if (!window._matrixDate && allDates.length > 0) window._matrixDate = allDates[allDates.length - 1];
+  if (!window._matrixGran) window._matrixGran = 'day';
+
+  // 计算矩阵
+  const matrix = {};
+  MATRIX_BRANDS.forEach(b => {
+    matrix[b] = {};
+    MATRIX_RDCS.forEach(r => { matrix[b][r] = { qty: 0, firstShort: 0 }; });
+  });
+  dataStore.orderDetail.forEach(d => {
+    if (!d.brand || !d.warehouse) return;
+    if (!matrix[d.brand] || matrix[d.brand][d.warehouse] === undefined) return;
+    if (window._matrixGran === 'day' && d.dateStr !== window._matrixDate) return;
+    if (window._matrixGran === 'month' && (!d.dateStr || !d.dateStr.startsWith(window._matrixDate.slice(0,7)))) return;
+    matrix[d.brand][d.warehouse].qty += d.orderQty;
+    matrix[d.brand][d.warehouse].firstShort += d.firstDayShort;
+  });
+
+  // 表格
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;min-width:780px"><thead><tr>';
+  html += '<th style="text-align:left;padding:10px 12px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;position:sticky;left:0;z-index:1">品牌 \\ RDC</th>';
+  MATRIX_RDCS.forEach(r => {
+    html += '<th style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;min-width:90px">'+r+'</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  MATRIX_BRANDS.forEach(b => {
+    html += '<tr>';
+    html += '<td style="padding:10px 12px;font-weight:600;border:1px solid #E5E7EB;background:#F9FAFB;position:sticky;left:0;z-index:1">'+b+'</td>';
+    MATRIX_RDCS.forEach(r => {
+      const m = matrix[b][r];
+      let content, bg, fg;
+      if (m.qty === 0) {
+        content = '<span style="color:#9CA3AF;font-size:11px">无订单</span>';
+        bg = '#F9FAFB'; fg = '#9CA3AF';
+      } else {
+        const rate = 1 - m.firstShort / m.qty;
+        const c = matrixColor(rate);
+        content = (rate * 100).toFixed(1) + '%';
+        bg = c.bg; fg = c.fg;
+      }
+      const tr = window._matrixGran === 'day'
+        ? { type: 'day', dateStr: window._matrixDate }
+        : { type: 'month', month: window._matrixDate.slice(0,7) };
+      const trJson = JSON.stringify(tr).replace(/"/g, '&quot;');
+      html += '<td data-brand="'+b+'" data-rdc="'+r+'" data-tr="'+trJson+'" '
+        + 'style="padding:10px;text-align:center;border:1px solid #E5E7EB;background:'+bg+';color:'+fg+';cursor:pointer;transition:transform 0.1s" '
+        + 'onmouseenter="showMatrixTooltip(event, this)" onmouseleave="hideMatrixTooltip()">'
+        + '<span style="font-weight:600">'+content+'</span></td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+
+  // 图例
+  html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;padding:8px 0;font-size:11px;color:var(--text-secondary)">'
+    + '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:14px;height:14px;background:#A7F3D0;border:1px solid #E5E7EB;display:inline-block"></span>≥95%</span>'
+    + '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:14px;height:14px;background:#D1FAE5;border:1px solid #E5E7EB;display:inline-block"></span>85-95%</span>'
+    + '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:14px;height:14px;background:#FEF3C7;border:1px solid #E5E7EB;display:inline-block"></span>70-85%</span>'
+    + '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:14px;height:14px;background:#FED7AA;border:1px solid #E5E7EB;display:inline-block"></span>50-70%</span>'
+    + '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:14px;height:14px;background:#FECACA;border:1px solid #E5E7EB;display:inline-block"></span><50%</span>'
+    + '<span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto">鼠标悬停查看TOP5首日缺货产品</span>'
+    + '</div>';
+
+  container.innerHTML = html;
+}
+
+function showMatrixTooltip(event, td) {
+  let tip = document.getElementById('matrix-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'matrix-tooltip';
+    tip.style.cssText = 'position:fixed;background:rgba(31,41,55,0.96);color:#fff;padding:10px 14px;border-radius:6px;font-size:12px;z-index:10000;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,0.35);max-width:360px;line-height:1.6';
+    document.body.appendChild(tip);
+  }
+  const brand = td.getAttribute('data-brand');
+  const rdc = td.getAttribute('data-rdc');
+  const trJson = td.getAttribute('data-tr');
+  let tr = { type: 'all' };
+  try { tr = JSON.parse(trJson); } catch(e) {}
+  const skus = getTopFirstDayShortSKUsByBrand(brand, rdc, tr, 5);
+  const dateLabel = tr.type === 'day' ? tr.dateStr : (tr.month || '');
+  let html = '<div style="font-weight:600;margin-bottom:6px;font-size:13px">'+brand+' × '+rdc+'</div>';
+  html += '<div style="color:#9CA3AF;font-size:11px;margin-bottom:6px">'+dateLabel+' · 首日缺货TOP5</div>';
+  if (skus.length === 0) {
+    html += '<div style="color:#9CA3AF">该单元格下无首日缺货记录</div>';
+  } else {
+    skus.forEach((s, i) => {
+      html += '<div style="display:flex;gap:6px;margin:3px 0;align-items:baseline">'
+        + '<span style="color:#9CA3AF;min-width:14px">'+(i+1)+'.</span>'
+        + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+s.name+'">'+s.name+'</span>'
+        + '<span style="color:#9CA3AF;font-size:11px">('+s.code+')</span>'
+        + '<span style="color:#FCA5A5;font-weight:600;min-width:60px;text-align:right">'+formatNum(s.gap)+'支</span>'
+        + '</div>';
+    });
+  }
+  tip.innerHTML = html;
+  // 位置：鼠标右下方，超出屏幕则放左/上
+  const padding = 14;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const tipW = tip.offsetWidth || 320, tipH = tip.offsetHeight || 200;
+  let left = event.clientX + padding;
+  let top = event.clientY + padding;
+  if (left + tipW + 8 > vw) left = event.clientX - tipW - padding;
+  if (top + tipH + 8 > vh) top = event.clientY - tipH - padding;
+  tip.style.left = Math.max(8, left) + 'px';
+  tip.style.top = Math.max(8, top) + 'px';
+  tip.style.display = 'block';
+}
+
+function hideMatrixTooltip() {
+  const tip = document.getElementById('matrix-tooltip');
+  if (tip) tip.style.display = 'none';
 }
 
 function exportShortageOrderDetailCSV() {
