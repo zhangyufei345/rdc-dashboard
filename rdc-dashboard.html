@@ -2211,11 +2211,6 @@ function renderShortageOrderDetail() {
       <div style="display:flex;gap:10px;align-items:center;padding:0 12px 8px 12px">
         <label style="font-size:12px">日期：</label>
         <select id="matrix-date" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
-        <label style="font-size:12px">粒度：</label>
-        <select id="matrix-gran" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
-          <option value="day">按日</option>
-          <option value="month">按月</option>
-        </select>
       </div>
       </div>
       <div id="brand-rdc-matrix" style="overflow-x:auto;padding:8px 0"></div>
@@ -2386,26 +2381,6 @@ function matrixColor(rate) {
   return { bg: '#F3F4F6', fg: '#6B7280' }; // 灰
 }
 
-// 初始化/填充日期下拉
-function matrixInitDateOptions() {
-  if (!dataStore.orderDetail || dataStore.orderDetail.length === 0) return [];
-  const allDates = [...new Set(dataStore.orderDetail.map(d => d.dateStr).filter(Boolean))].sort();
-  const sel = document.getElementById('matrix-date');
-  if (!sel) return allDates;
-  if (sel.options.length === 0) {
-    allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
-  }
-  // 默认值
-  if (!window._matrixDate || !allDates.includes(window._matrixDate)) {
-    window._matrixDate = allDates[allDates.length - 1] || '';
-  }
-  sel.value = window._matrixDate;
-  const gran = document.getElementById('matrix-gran');
-  if (gran && !gran.value) gran.value = 'day';
-  if (gran) gran.value = window._matrixGran || 'day';
-  return allDates;
-}
-
 function renderBrandRdcMatrix() {
   const container = document.getElementById('brand-rdc-matrix');
   if (!container) return;
@@ -2413,9 +2388,34 @@ function renderBrandRdcMatrix() {
     container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary)">暂无订单明细数据</div>';
     return;
   }
-  const allDates = matrixInitDateOptions();
-  if (!window._matrixDate && allDates.length > 0) window._matrixDate = allDates[allDates.length - 1];
-  if (!window._matrixGran) window._matrixGran = 'day';
+
+  // 跟上层筛选联动：月份 + 渠道(KA/经销商)。RDC 不联动（矩阵永远 6 RDC 全景）
+  const monthFilter = filters.dataMonth && filters.dataMonth !== 'all';
+  const showKa = window._odChKa !== false;
+  const showDealer = window._odChDealer !== false;
+  const activeCh = [];
+  if (showKa) activeCh.push('KA');
+  if (showDealer) activeCh.push('经销商');
+  let data = dataStore.orderDetail;
+  if (monthFilter) data = data.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth));
+  if (activeCh.length > 0 && activeCh.length < 2) {
+    data = data.filter(d => activeCh.includes(d.channel));
+  } else if (activeCh.length === 0) {
+    data = [];
+  }
+
+  // 日期下拉 = filtered 中的所有日期
+  const allDates = [...new Set(data.map(d => d.dateStr).filter(Boolean))].sort();
+  const sel = document.getElementById('matrix-date');
+  if (sel) {
+    const cur = window._matrixDate;
+    sel.innerHTML = '';
+    allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
+    if (!cur || !allDates.includes(cur)) window._matrixDate = allDates[allDates.length - 1] || '';
+    sel.value = window._matrixDate;
+  }
+  // 矩阵永远按日（默认行为，UI 不可改）
+  window._matrixGran = 'day';
 
   // 计算矩阵
   const matrix = {};
@@ -2423,11 +2423,10 @@ function renderBrandRdcMatrix() {
     matrix[b] = {};
     MATRIX_RDCS.forEach(r => { matrix[b][r] = { qty: 0, firstShort: 0 }; });
   });
-  dataStore.orderDetail.forEach(d => {
+  data.forEach(d => {
     if (!d.brand || !d.warehouse) return;
     if (!matrix[d.brand] || matrix[d.brand][d.warehouse] === undefined) return;
-    if (window._matrixGran === 'day' && d.dateStr !== window._matrixDate) return;
-    if (window._matrixGran === 'month' && (!d.dateStr || !d.dateStr.startsWith(window._matrixDate.slice(0,7)))) return;
+    if (d.dateStr !== window._matrixDate) return; // 按日
     matrix[d.brand][d.warehouse].qty += d.orderQty;
     matrix[d.brand][d.warehouse].firstShort += d.firstDayShort;
   });
@@ -2457,9 +2456,7 @@ function renderBrandRdcMatrix() {
         content = (rate * 100).toFixed(1) + '%';
         bg = c.bg; fg = c.fg;
       }
-      const tr = window._matrixGran === 'day'
-        ? { type: 'day', dateStr: window._matrixDate }
-        : { type: 'month', month: window._matrixDate.slice(0,7) };
+      const tr = { type: 'day', dateStr: window._matrixDate };
       const trJson = JSON.stringify(tr).replace(/"/g, '&quot;');
       html += '<td data-brand="'+b+'" data-rdc="'+r+'" data-tr="'+trJson+'" '
         + 'style="padding:3px 2px;text-align:center;border:1px solid #E5E7EB;background:'+bg+';color:'+fg+';cursor:pointer;transition:transform 0.1s;white-space:nowrap" '
