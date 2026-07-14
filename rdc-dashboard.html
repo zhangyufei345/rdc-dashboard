@@ -2207,15 +2207,16 @@ function renderShortageOrderDetail() {
       <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="card-title">日订单满足矩阵</span>
         <span style="font-size:11px;color:var(--text-secondary)">首日满足率 = (订单量 - 首日缺货) / 订单量</span>
-        <div style="display:flex;gap:10px;align-items:center;margin-left:8px">
-          <label style="font-size:12px">日期：</label>
-          <select id="matrix-date" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
-          <label style="font-size:12px">粒度：</label>
-          <select id="matrix-gran" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
-            <option value="day">按日</option>
-            <option value="month">按月</option>
-          </select>
-        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;padding:0 12px 8px 12px">
+        <label style="font-size:12px">日期：</label>
+        <select id="matrix-date" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
+        <label style="font-size:12px">粒度：</label>
+        <select id="matrix-gran" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
+          <option value="day">按日</option>
+          <option value="month">按月</option>
+        </select>
+      </div>
       </div>
       <div id="brand-rdc-matrix" style="overflow-x:auto;padding:8px 0"></div>
     </div>
