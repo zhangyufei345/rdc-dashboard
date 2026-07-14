@@ -2431,22 +2431,22 @@ function renderBrandRdcMatrix() {
     matrix[d.brand][d.warehouse].firstShort += d.firstDayShort;
   });
 
-  // 表格
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px;min-width:780px"><thead><tr>';
-  html += '<th style="text-align:left;padding:10px 12px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;position:sticky;left:0;z-index:1">品牌 \\ RDC</th>';
+  // 表格（紧凑样式：1/2 字号、padding、列宽）
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:540px"><thead><tr>';
+  html += '<th style="text-align:left;padding:5px 6px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;position:sticky;left:0;z-index:1">品牌 \\ RDC</th>';
   MATRIX_RDCS.forEach(r => {
-    html += '<th style="padding:10px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;min-width:90px">'+r+'</th>';
+    html += '<th style="padding:5px 4px;background:#F3F4F6;border:1px solid #E5E7EB;font-weight:600;min-width:60px;font-size:11px">'+r+'</th>';
   });
   html += '</tr></thead><tbody>';
 
   MATRIX_BRANDS.forEach(b => {
     html += '<tr>';
-    html += '<td style="padding:10px 12px;font-weight:600;border:1px solid #E5E7EB;background:#F9FAFB;position:sticky;left:0;z-index:1">'+b+'</td>';
+    html += '<td style="padding:5px 6px;font-weight:600;border:1px solid #E5E7EB;background:#F9FAFB;position:sticky;left:0;z-index:1">'+b+'</td>';
     MATRIX_RDCS.forEach(r => {
       const m = matrix[b][r];
       let content, bg, fg;
       if (m.qty === 0) {
-        content = '<span style="color:#9CA3AF;font-size:11px">无订单</span>';
+        content = '<span style="color:#9CA3AF;font-size:10px">无订单</span>';
         bg = '#F9FAFB'; fg = '#9CA3AF';
       } else {
         const rate = 1 - m.firstShort / m.qty;
@@ -2459,7 +2459,7 @@ function renderBrandRdcMatrix() {
         : { type: 'month', month: window._matrixDate.slice(0,7) };
       const trJson = JSON.stringify(tr).replace(/"/g, '&quot;');
       html += '<td data-brand="'+b+'" data-rdc="'+r+'" data-tr="'+trJson+'" '
-        + 'style="padding:10px;text-align:center;border:1px solid #E5E7EB;background:'+bg+';color:'+fg+';cursor:pointer;transition:transform 0.1s" '
+        + 'style="padding:5px 4px;text-align:center;border:1px solid #E5E7EB;background:'+bg+';color:'+fg+';cursor:pointer;transition:transform 0.1s" '
         + 'onmouseenter="showMatrixTooltip(event, this)" onmouseleave="hideMatrixTooltip()">'
         + '<span style="font-weight:600">'+content+'</span></td>';
     });
