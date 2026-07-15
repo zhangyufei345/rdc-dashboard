@@ -2211,7 +2211,7 @@ function renderShortageOrderDetail() {
       </div>
       <div style="display:flex;gap:10px;align-items:center;padding:0 12px 8px 12px">
         <label style="font-size:12px">日期：</label>
-        <select id="matrix-date" onchange="renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
+        <select id="matrix-date" onchange="window._matrixDate=this.value;renderBrandRdcMatrix()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px"></select>
       </div>
       </div>
       <div id="brand-rdc-matrix" style="overflow-x:auto;padding:8px 0"></div>
