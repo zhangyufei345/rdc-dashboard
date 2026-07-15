@@ -2950,9 +2950,9 @@ function renderCustomerDrillDetail(customer) {
     custOrders = custOrders.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth));
   }
   
-  // 计算每个SKU的总缺货量
+  // 计算每个SKU的总缺货量（只统计有缺货/被拒的订单行，与下方"按SKU+仓库聚合"明细表口径一致）
   const skuGapMap = {};
-  custOrders.forEach(d => {
+  custOrders.filter(d => (d.totalGap||0) > 0 || (d.rejectReason && d.rejectReason.trim())).forEach(d => {
     const key = d.skuCode || d.skuName || '未知';
     if (!skuGapMap[key]) skuGapMap[key] = { code: d.skuCode, name: d.skuName, brand: d.brand, gapQty: 0, orderQty: 0, fulfillQty: 0, totalGap: 0, rejectQty: 0 };
     skuGapMap[key].gapQty += (d.totalGap || 0);
