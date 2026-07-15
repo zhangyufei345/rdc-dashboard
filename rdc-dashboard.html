@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v0.4.2 (deploy-fix-20260715) -->
+<!-- RDC运营数据看板 v0.4.3 (date-picker-fix) -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2410,13 +2410,13 @@ function renderBrandRdcMatrix() {
   const allDates = [...new Set(data.map(d => d.dateStr).filter(Boolean))].sort();
   const sel = document.getElementById('matrix-date');
   if (sel) {
-    // 只在首次填充（onchange 时 options 已存在则不重建，保护 sel.value 不被 innerHTML='' 清空）
     if (sel.options.length === 0) {
       allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
+      // 首次填充后设默认值为最新日期
+      window._matrixDate = allDates[allDates.length - 1] || '';
+      sel.value = window._matrixDate;
     }
-    const cur = sel.value || window._matrixDate;
-    if (!cur || !allDates.includes(cur)) window._matrixDate = allDates[allDates.length - 1] || '';
-    sel.value = window._matrixDate;
+    // onchange 时 window._matrixDate 已由 onchange 同步，不碰 sel.value，避免干扰
   }
   // 矩阵永远按日（默认行为，UI 不可改）
   window._matrixGran = 'day';
