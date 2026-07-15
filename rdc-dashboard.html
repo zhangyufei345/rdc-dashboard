@@ -2408,7 +2408,8 @@ function renderBrandRdcMatrix() {
   const allDates = [...new Set(data.map(d => d.dateStr).filter(Boolean))].sort();
   const sel = document.getElementById('matrix-date');
   if (sel) {
-    const cur = window._matrixDate;
+    // 优先读 sel.value（onchange 时浏览器已自动同步）；初次加载/无 value 时 fallback 到 window._matrixDate
+    const cur = sel.value || window._matrixDate;
     sel.innerHTML = '';
     allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
     if (!cur || !allDates.includes(cur)) window._matrixDate = allDates[allDates.length - 1] || '';
