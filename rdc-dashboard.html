@@ -2410,10 +2410,11 @@ function renderBrandRdcMatrix() {
   const allDates = [...new Set(data.map(d => d.dateStr).filter(Boolean))].sort();
   const sel = document.getElementById('matrix-date');
   if (sel) {
-    // 优先读 sel.value（onchange 时浏览器已自动同步）；初次加载/无 value 时 fallback 到 window._matrixDate
+    // 只在首次填充（onchange 时 options 已存在则不重建，保护 sel.value 不被 innerHTML='' 清空）
+    if (sel.options.length === 0) {
+      allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
+    }
     const cur = sel.value || window._matrixDate;
-    sel.innerHTML = '';
-    allDates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
     if (!cur || !allDates.includes(cur)) window._matrixDate = allDates[allDates.length - 1] || '';
     sel.value = window._matrixDate;
   }
