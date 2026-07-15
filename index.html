@@ -2368,8 +2368,9 @@ function renderShortageOrderDetail() {
   renderBrandRdcMatrix();
 }
 
-// 矩阵独立品牌列表（11个，固定；不影响 BRAND_LIST）
-const MATRIX_BRANDS = ['上海','六神','友谊','启初','家安','春蕾','海鸥','百爱神','美加净','雅霜','高夫'];
+// 矩阵品牌列表（与 dataStore.orderDetail 中的 brand 字段保持一致）
+// 调整历史：2026-07-15 根据实际7月数据剔除友谊/春蕾/海鸥/百爱神/雅霜（数据中无），保留数据中有的上海/六神/启初/家安/美加净/高夫/传统
+const MATRIX_BRANDS = ['上海','六神','启初','家安','美加净','高夫','传统'];
 const MATRIX_RDCS = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
 
 // 满足率背景色（红→黄→绿，与图2 渐变一致）
