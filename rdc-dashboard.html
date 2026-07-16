@@ -3070,7 +3070,7 @@ function renderCustomerDrillDetail(customer) {
         <div class="card-header"><span class="card-title">⚠️ 主要缺货SKU排名（${monthLabel}）</span></div>
         <div class="table-wrap" style="max-height:400px">
           <table class="data-table">
-            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(箱)</th><th>大仓供应</th></tr></thead>
+            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(支)</th><th>大仓供应</th></tr></thead>
             <tbody>
               ${skuWithGaps.length > 0 ? skuWithGaps.map((sku, i) => `<tr>
                 <td><span class="badge ${i<3?'badge-red':'badge-orange'}">#${i+1}</span></td>
@@ -3082,7 +3082,7 @@ function renderCustomerDrillDetail(customer) {
                 <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(sku.realGap))}</td>
                 <td class="num" style="color:${sku.rejectQty>0?'#F59E0B':'var(--text-secondary)'};font-weight:${sku.rejectQty>0?600:400}">${sku.rejectQty > 0 ? formatNum(sku.rejectQty) : '-'}</td>
                 <td class="num"><span class="${sku.realGap / sku.orderQty > 0.5 ? 'rate-bad' : 'rate-warn'}">${sku.orderQty > 0 ? (sku.realGap/sku.orderQty*100).toFixed(1):0}%</span></td>
-                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitBoxes?formatNum(i.transitBoxes):'—';})()}</td>
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
                 <td>${(()=>{const i=getSkuSupplyInfo(sku.code);return i.dcSupply||'—';})()}</td>
               </tr>`).join('') : '<tr><td colspan="11" style="text-align:center;padding:16px;color:var(--text-secondary)">✅ 该客户暂无缺货记录</td></tr>'}
             </tbody>
@@ -3120,7 +3120,7 @@ function renderCustomerDrillDetail(customer) {
       <div class="card-header"><span class="card-title">📦 ${monthLabel}缺货SKU明细（按SKU+仓库聚合）</span></div>
       <div class="table-wrap" style="max-height:300px">
         <table class="data-table">
-          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th><th>RDC在途(箱)</th><th>大仓供应情况</th></tr></thead>
+          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th><th>RDC在途(支)</th><th>大仓供应情况</th></tr></thead>
           <tbody>
             ${(() => { const m = {}; custOrders.filter(d => (d.totalGap||0) > 0 || (d.rejectReason&&d.rejectReason.trim())).forEach(d => { const k = (d.skuCode||'')+'|'+(d.warehouse||''); if (!m[k]) m[k] = { skuCode: d.skuCode, skuName: d.skuName, brand: d.brand, warehouse: d.warehouse, orderQty: 0, totalFulfillQty: 0, totalGap: 0, rejectQty: 0 }; m[k].orderQty += (d.orderQty||0); m[k].totalFulfillQty += (d.totalFulfillQty||0); m[k].totalGap += (d.totalGap||0); if (d.rejectReason && d.rejectReason.trim()) m[k].rejectQty += (d.orderQty||0); }); Object.values(m).forEach(row => { row.realGap = Math.max(0, row.totalGap - row.rejectQty); }); const arr = Object.values(m).sort((a,b) => b.realGap - a.realGap).slice(0,20); return arr.length > 0 ? arr.map(d => `<tr>
               <td>${d.skuCode || '-'}</td>
@@ -3131,7 +3131,7 @@ function renderCustomerDrillDetail(customer) {
               <td class="num" style="color:#059669">${formatNum(d.totalFulfillQty)}</td>
               <td class="num" style="color:${d.rejectQty>0?'#F59E0B':'var(--text-secondary)'}">${d.rejectQty > 0 ? formatNum(d.rejectQty) : '-'}</td>
               <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(d.realGap))}</td>
-                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitBoxes?formatNum(i.transitBoxes):'—';})()}</td>
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
                 <td>${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.dcSupply||'—';})()}</td>
               </tr>`).join('') : '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--text-secondary)">无缺货数据</td></tr>'; })()}
           </tbody>
