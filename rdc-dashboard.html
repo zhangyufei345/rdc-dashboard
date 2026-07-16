@@ -1433,7 +1433,7 @@ function renderOverview() {
             const rate = (p.value * 100).toFixed(1) + '%';
             html += '<div style="margin-top:6px"><strong>' + rdc + '：' + rate + '</strong></div>';
             const skus = getTopFirstDayShortSKUs(dateStr, rdc, 5);
-            html += buildTopShortTipTable(skus, '缺口(支)', function(s){ return formatNum(s.gap); }, rdc);
+            html += buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, rdc);
           });
           return html;
         }
@@ -1475,7 +1475,7 @@ function renderOverview() {
         const rdcKey = rdcKeyMap[rdcName];
         let html = '<strong>' + rdcName + '</strong><br/>缺货金额：¥' + p[0].value.toLocaleString();
         const skus = getTopShortageAmountSKUsByRDC(filters.overviewDate, rdcKey, 5);
-        html += buildTopShortTipTable(skus, '缺货金额', function(s){ return '¥' + formatNum(s.amount) + '<br/><span class="muted">' + formatNum(s.boxes) + '箱</span>'; }, rdcName);
+        html += buildTopShortTipTable(skus, '缺货金额', function(s, info){ return '¥' + formatNum(s.amount) + '<br/><span class="muted">' + formatNum(s.boxes) + '箱</span>'; }, rdcName);
         return html;
       }
     },
@@ -1528,7 +1528,7 @@ function renderOverview() {
           let html = '<strong>' + brand + ' · ' + rdc + '</strong><br/>月满足率：' + rate;
           const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
           if (skus.length > 0) {
-            html += buildTopShortTipTable(skus, '缺口(箱)', function(s){ return formatNum(s.gap); }, rdc);
+            html += buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, rdc);
           } else {
             // 从orderDetail计算当月该品牌×RDC的总缺货
             const monthStr = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (filters.overviewDate ? filters.overviewDate.slice(0, 7) : '');
@@ -1832,7 +1832,7 @@ function renderFulfillment() {
       let head = '<div style="font-weight:600;margin-bottom:4px">' + r.rdc + ' · ' + channel + '</div>'
         + '<div style="color:#6b7280;font-size:11px;margin-bottom:4px">订单支数：' + formatNum(r[channel + '_dayOrder']) + '</div>';
       if (skus.length === 0) return head + '<div style="color:#9ca3af">当日无缺货记录</div>';
-      return head + buildTopShortTipTable(skus, '缺口(支)', function(s){ return formatNum(s.gap); }, r.rdc);
+      return head + buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, r.rdc);
     }
 
     tableHtml += '<tr>' +
@@ -2493,13 +2493,14 @@ function showMatrixTooltip(event, td) {
     let rows = '';
     skus.forEach((s, i) => {
       const info = getSkuSupplyInfo(s.code, rdc);
-      const transit = info.transitUnits != null ? formatNum(info.transitUnits) : '—';
+      const transit = info.transitBoxes ? formatNum(info.transitBoxes) : '—';
       const supply = info.dcSupply || '—';
+      const gapBoxes = (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—';
       rows += '<tr>'
         + '<td style="color:#9CA3AF;padding:2px 10px 2px 0;text-align:right">'+(i+1)+'.</td>'
         + '<td style="padding:2px 10px 2px 0;font-size:11px;color:#9CA3AF">'+s.code+'</td>'
         + '<td style="padding:2px 10px 2px 0">'+s.name+'</td>'
-        + '<td style="padding:2px 10px 2px 0;text-align:right;color:#FCA5A5;font-weight:600">'+formatNum(s.gap)+'支</td>'
+        + '<td style="padding:2px 10px 2px 0;text-align:right;color:#FCA5A5;font-weight:600">'+gapBoxes+'</td>'
         + '<td style="padding:2px 10px 2px 0;text-align:right">'+transit+'</td>'
         + '<td style="padding:2px 0 0 0;max-width:130px">'+supply+'</td></tr>';
     });
@@ -2508,8 +2509,8 @@ function showMatrixTooltip(event, td) {
       + '<th style="padding:2px 10px 4px 0;text-align:right">#</th>'
       + '<th style="padding:2px 10px 4px 0">代码</th>'
       + '<th style="padding:2px 10px 4px 0">品名</th>'
-      + '<th style="padding:2px 10px 4px 0;text-align:right">缺口(支)</th>'
-      + '<th style="padding:2px 10px 4px 0;text-align:right">在途(支)</th>'
+      + '<th style="padding:2px 10px 4px 0;text-align:right">缺口(箱)</th>'
+      + '<th style="padding:2px 10px 4px 0;text-align:right">在途(箱)</th>'
       + '<th style="padding:2px 0 4px 0">大仓供应</th></tr></thead>'
       + '<tbody>'+rows+'</tbody></table>';
   }
@@ -2945,7 +2946,7 @@ function drillCustomerByName(name) {
 }
 
 // 渲染客户下钻详情 - 显示该客户的主要缺货SKU
-// ===== 箱规 / 在途(支) / 大仓供应 辅助（缺货报告增强）=====
+// ===== 箱规 / 在途(箱) / 大仓供应 辅助（缺货报告增强）=====
 const RDC_TRANSIT_KEY = {'华南RDC':'huananTransit','华北RDC':'huabeiTransit','东北RDC':'dongbeiTransit','西北RDC':'xibeiTransit','华中RDC':'huazhongTransit','西南RDC':'xinanTransit'};
 function buildSupplyMaps() {
   // 每次重建，避免 dataStore.shortage 更新后索引仍停留在旧数据
@@ -2956,7 +2957,7 @@ function buildSupplyMaps() {
     (window._shortageByCode[c] = window._shortageByCode[c] || []).push(s);
   });
 }
-// 取某 SKU 的供应信息：在途(支)=在途箱数×箱规；大仓供应=缺货汇总文本
+// 取某 SKU 的供应信息：在途(箱)=缺货报告原始在途箱数；大仓供应=缺货汇总文本
 // rdc: 指定RDC时报该RDC在途，否则报合计在途；dateStr: 优先匹配该日期的缺货记录
 function getSkuSupplyInfo(code, rdc, dateStr) {
   buildSupplyMaps();
@@ -2969,12 +2970,16 @@ function getSkuSupplyInfo(code, rdc, dateStr) {
   }
   let dcSupply = entry ? (entry.dcSupply || '') : '';
   let transitBoxes = 0;
+  let shortageBoxes = 0;
   if (entry) {
     if (rdc && RDC_TRANSIT_KEY[rdc]) transitBoxes = entry[RDC_TRANSIT_KEY[rdc]] || 0;
     else transitBoxes = entry.rdcTransitTotal || 0;
+    const rdcShortKeyMap = {'华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort'};
+    if (rdc && rdcShortKeyMap[rdc]) shortageBoxes = entry[rdcShortKeyMap[rdc]] || 0;
+    else shortageBoxes = entry.rdcShortBoxes || 0;
   }
   const transitUnits = (bs && transitBoxes) ? Math.round(transitBoxes * bs) : null;
-  return { boxSpec: bs, dcSupply: dcSupply, transitBoxes: transitBoxes, transitUnits: transitUnits };
+  return { boxSpec: bs, dcSupply: dcSupply, transitBoxes: transitBoxes, transitUnits: transitUnits, shortageBoxes: shortageBoxes };
 }
 // 悬浮提示注册：返回索引，HTML 存入 window._tipStore（避开 title 属性转义问题）
 window._tipStore = window._tipStore || [];
@@ -2993,19 +2998,19 @@ function floatTipInit() {
   document.addEventListener('mouseout', function(e){ const el=e.target.closest('[data-tip]'); if(el){ document.getElementById('float-tip').style.display='none'; } });
 }
 
-// 统一的 TOP缺货SKU 悬浮表：含 RDC在途(支) + 大仓供应，数字右对齐，避免挤在一起
-// skus: [{code,name,...}]；metricLabel: 指标列名；metricFn(s): 返回指标单元格HTML；rdc: 指定RDC(用于取在途，否则取合计)
+// 统一的 TOP缺货SKU 悬浮表：含 RDC在途(箱) + 大仓供应，数字右对齐，避免挤在一起
+// skus: [{code,name,...}]；metricLabel: 指标列名；metricFn(s, info): 返回指标单元格HTML；rdc: 指定RDC(用于取在途，否则取合计)
 function buildTopShortTipTable(skus, metricLabel, metricFn, rdc) {
   if (!skus || !skus.length) return '<div style="color:#9ca3af;margin-top:4px">无缺货SKU记录</div>';
-  let html = '<table class="tip-sku-table"><thead><tr><th class="c">#</th><th>SKU代码</th><th>品名</th><th class="num">' + metricLabel + '</th><th class="num">RDC在途(支)</th><th>大仓供应</th></tr></thead><tbody>';
+  let html = '<table class="tip-sku-table"><thead><tr><th class="c">#</th><th>SKU代码</th><th>品名</th><th class="num">' + metricLabel + '</th><th class="num">RDC在途(箱)</th><th>大仓供应</th></tr></thead><tbody>';
   skus.forEach(function(s, i) {
     const info = getSkuSupplyInfo(s.code, rdc);
-    const transit = info.transitUnits != null ? formatNum(info.transitUnits) : '—';
+    const transit = info.transitBoxes ? formatNum(info.transitBoxes) : '—';
     const supply = info.dcSupply || '—';
     html += '<tr><td class="c">' + (i+1) + '</td>' +
       '<td>' + s.code + '</td>' +
       '<td class="nm">' + (s.name || '-') + '</td>' +
-      '<td class="num">' + metricFn(s) + '</td>' +
+      '<td class="num">' + metricFn(s, info) + '</td>' +
       '<td class="num">' + transit + '</td>' +
       '<td class="sup">' + supply + '</td></tr>';
   });
@@ -3065,7 +3070,7 @@ function renderCustomerDrillDetail(customer) {
         <div class="card-header"><span class="card-title">⚠️ 主要缺货SKU排名（${monthLabel}）</span></div>
         <div class="table-wrap" style="max-height:400px">
           <table class="data-table">
-            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(支)</th><th>大仓供应</th></tr></thead>
+            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(箱)</th><th>大仓供应</th></tr></thead>
             <tbody>
               ${skuWithGaps.length > 0 ? skuWithGaps.map((sku, i) => `<tr>
                 <td><span class="badge ${i<3?'badge-red':'badge-orange'}">#${i+1}</span></td>
@@ -3077,7 +3082,7 @@ function renderCustomerDrillDetail(customer) {
                 <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(sku.realGap))}</td>
                 <td class="num" style="color:${sku.rejectQty>0?'#F59E0B':'var(--text-secondary)'};font-weight:${sku.rejectQty>0?600:400}">${sku.rejectQty > 0 ? formatNum(sku.rejectQty) : '-'}</td>
                 <td class="num"><span class="${sku.realGap / sku.orderQty > 0.5 ? 'rate-bad' : 'rate-warn'}">${sku.orderQty > 0 ? (sku.realGap/sku.orderQty*100).toFixed(1):0}%</span></td>
-                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitBoxes?formatNum(i.transitBoxes):'—';})()}</td>
                 <td>${(()=>{const i=getSkuSupplyInfo(sku.code);return i.dcSupply||'—';})()}</td>
               </tr>`).join('') : '<tr><td colspan="11" style="text-align:center;padding:16px;color:var(--text-secondary)">✅ 该客户暂无缺货记录</td></tr>'}
             </tbody>
@@ -3115,7 +3120,7 @@ function renderCustomerDrillDetail(customer) {
       <div class="card-header"><span class="card-title">📦 ${monthLabel}缺货SKU明细（按SKU+仓库聚合）</span></div>
       <div class="table-wrap" style="max-height:300px">
         <table class="data-table">
-          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th><th>RDC在途(支)</th><th>大仓供应情况</th></tr></thead>
+          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th><th>RDC在途(箱)</th><th>大仓供应情况</th></tr></thead>
           <tbody>
             ${(() => { const m = {}; custOrders.filter(d => (d.totalGap||0) > 0 || (d.rejectReason&&d.rejectReason.trim())).forEach(d => { const k = (d.skuCode||'')+'|'+(d.warehouse||''); if (!m[k]) m[k] = { skuCode: d.skuCode, skuName: d.skuName, brand: d.brand, warehouse: d.warehouse, orderQty: 0, totalFulfillQty: 0, totalGap: 0, rejectQty: 0 }; m[k].orderQty += (d.orderQty||0); m[k].totalFulfillQty += (d.totalFulfillQty||0); m[k].totalGap += (d.totalGap||0); if (d.rejectReason && d.rejectReason.trim()) m[k].rejectQty += (d.orderQty||0); }); Object.values(m).forEach(row => { row.realGap = Math.max(0, row.totalGap - row.rejectQty); }); const arr = Object.values(m).sort((a,b) => b.realGap - a.realGap).slice(0,20); return arr.length > 0 ? arr.map(d => `<tr>
               <td>${d.skuCode || '-'}</td>
@@ -3126,7 +3131,7 @@ function renderCustomerDrillDetail(customer) {
               <td class="num" style="color:#059669">${formatNum(d.totalFulfillQty)}</td>
               <td class="num" style="color:${d.rejectQty>0?'#F59E0B':'var(--text-secondary)'}">${d.rejectQty > 0 ? formatNum(d.rejectQty) : '-'}</td>
               <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(d.realGap))}</td>
-                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitBoxes?formatNum(i.transitBoxes):'—';})()}</td>
                 <td>${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.dcSupply||'—';})()}</td>
               </tr>`).join('') : '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--text-secondary)">无缺货数据</td></tr>'; })()}
           </tbody>
