@@ -5306,7 +5306,11 @@ function init() {
 
       if (manifest && manifest.files) {
         const stored = getStoredHashes() || {};
-        const changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
+        let changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
+        // 旧缓存没有 boxSpecMap 时，强制拉取一次 data.json 以补全箱规数据（一次性兼容）
+        if ((!window._boxSpec || Object.keys(window._boxSpec).length === 0) && !changed.includes('data.json')) {
+          changed.push('data.json');
+        }
         if (restored && changed.length === 0) {
           if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
           showToast('已加载本地缓存（数据未更新）');
