@@ -34,6 +34,29 @@ function sha256File(p) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+// 读取产品主数据（产品.xlsx），构建 物料号 -> 每箱支数(箱规转化因子) 映射
+// 列定位：第1列(A)=产品编码，第35列(AI)=箱规转化因子
+function buildBoxSpecMap() {
+  const p = path.join(ROOT, '产品.xlsx');
+  if (!fs.existsSync(p)) { console.log('   (未找到 产品.xlsx，boxSpecMap 为空)'); return {}; }
+  const wb = XLSX.read(fs.readFileSync(p), { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const arr = XLSX.utils.sheet_to_json(ws, SHEET_OPTS);
+  const map = {};
+  for (let i = 1; i < arr.length; i++) {
+    const row = arr[i];
+    if (!row || row.length < 35) continue;
+    const code = String(row[0] != null ? row[0] : '').trim();
+    const fac = row[34]; // 第35列(AI) 箱规转化因子
+    if (code && fac != null && fac !== '') {
+      const n = Number(fac);
+      if (!isNaN(n) && n > 0) map[code] = n;
+    }
+  }
+  console.log('   boxSpecMap 命中 ' + Object.keys(map).length + ' 个SKU');
+  return map;
+}
+
 function main() {
   const sources = findSources();
   if (sources.length === 0) {
@@ -59,6 +82,7 @@ function main() {
     });
 
     const payload = { sheetNames: wb.SheetNames, sheets };
+    if (base === 'data') payload.boxSpecMap = buildBoxSpecMap();
     fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
     // manifest 以「源 xlsx 内容哈希」为键，仅当真实数据变化时才触发网页重新解析
     manifest.files[outJson] = sha256File(srcPath);

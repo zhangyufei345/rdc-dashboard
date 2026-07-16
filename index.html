@@ -1429,14 +1429,9 @@ function renderOverview() {
           params.forEach(p => {
             const rdc = p.seriesName;
             const rate = (p.value * 100).toFixed(1) + '%';
-            html += '<br/>' + rdc + '：' + rate;
+            html += '<div style="margin-top:6px"><strong>' + rdc + '：' + rate + '</strong></div>';
             const skus = getTopFirstDayShortSKUs(dateStr, rdc, 5);
-            if (skus.length > 0) {
-              html += '<br/>—— 首日缺货TOP' + skus.length + ' ——';
-              skus.forEach((s, i) => {
-                html += '<br/>&nbsp;&nbsp;' + (i+1) + '. ' + s.code + ' ' + s.name + '：' + formatNum(s.gap) + '支';
-              });
-            }
+            html += buildTopShortTipTable(skus, '缺口(支)', function(s){ return formatNum(s.gap); }, rdc);
           });
           return html;
         }
@@ -1478,12 +1473,7 @@ function renderOverview() {
         const rdcKey = rdcKeyMap[rdcName];
         let html = '<strong>' + rdcName + '</strong><br/>缺货金额：¥' + p[0].value.toLocaleString();
         const skus = getTopShortageAmountSKUsByRDC(filters.overviewDate, rdcKey, 5);
-        if (skus.length > 0) {
-          html += '<br/>—— TOP5 缺货SKU（金额）——';
-          skus.forEach((s, i) => {
-            html += '<br/>' + (i+1) + '. ' + s.code + ' ' + s.name + '<br/>   金额：¥' + formatNum(s.amount) + ' · ' + formatNum(s.boxes) + '箱';
-          });
-        }
+        html += buildTopShortTipTable(skus, '缺货金额', function(s){ return '¥' + formatNum(s.amount) + '<br/><span class="muted">' + formatNum(s.boxes) + '箱</span>'; }, rdcName);
         return html;
       }
     },
@@ -1533,13 +1523,10 @@ function renderOverview() {
           const brand = brands[p.value[1]];
           const rdc = RDC_LIST[p.value[0]];
           const rate = (p.value[2] * 100).toFixed(1) + '%';
-          const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
           let html = '<strong>' + brand + ' · ' + rdc + '</strong><br/>月满足率：' + rate;
+          const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
           if (skus.length > 0) {
-            html += '<br/>—— TOP5 缺货SKU ——';
-            skus.forEach((s, i) => {
-              html += '<br/>' + (i+1) + '. ' + s.code + ' ' + s.name + '<br/>   缺口：' + formatNum(s.gap) + '箱';
-            });
+            html += buildTopShortTipTable(skus, '缺口(箱)', function(s){ return formatNum(s.gap); }, rdc);
           } else {
             // 从orderDetail计算当月该品牌×RDC的总缺货
             const monthStr = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (filters.overviewDate ? filters.overviewDate.slice(0, 7) : '');
@@ -1834,29 +1821,26 @@ function renderFulfillment() {
     '<th style="text-align:center;background:#EFF6FF">KA</th><th style="text-align:center;background:#EFF6FF">经销商</th><th style="text-align:center;background:#EFF6FF">合计</th>' +
     '</tr></thead><tbody>';
 
+  window._tipStore.length = 0;
   tableRows.forEach(r => {
     const dayKa = getRdcChannelShortageSKUs(r.rdc, 'KA', filters.fulfillDate, 5);
     const dayDealer = getRdcChannelShortageSKUs(r.rdc, '经销商', filters.fulfillDate, 5);
 
-    function skuTooltipText(channel, skus) {
-      var txt = r.rdc + ' · ' + channel + '\n订单支数：' + formatNum(r[channel + '_dayOrder']);
-      if (skus.length > 0) {
-        txt += '\n—— 缺货TOP' + skus.length + ' ——';
-        skus.forEach(function(s, i) { txt += '\n' + (i+1) + '. ' + s.code + ' ' + s.name + '  缺口：' + formatNum(s.gap) + '支'; });
-      } else {
-        txt += '\n当日无缺货记录';
-      }
-      return txt;
+    function skuTooltipHTML(channel, skus) {
+      let head = '<div style="font-weight:600;margin-bottom:4px">' + r.rdc + ' · ' + channel + '</div>'
+        + '<div style="color:#6b7280;font-size:11px;margin-bottom:4px">订单支数：' + formatNum(r[channel + '_dayOrder']) + '</div>';
+      if (skus.length === 0) return head + '<div style="color:#9ca3af">当日无缺货记录</div>';
+      return head + buildTopShortTipTable(skus, '缺口(支)', function(s){ return formatNum(s.gap); }, r.rdc);
     }
 
     tableHtml += '<tr>' +
       '<td><strong>' + r.rdc + '</strong></td>' +
       // 日满足率（淡黄底）
-      '<td class="num" style="background:#FFFBEB;cursor:pointer" title="' + skuTooltipText('KA', dayKa) + '">' +
+      '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('KA', dayKa)) + '">' +
         '<span class="' + (r.KA_dayRate >= 0.95 ? 'rate-good' : r.KA_dayRate >= 0.9 ? 'rate-warn' : 'rate-bad') + '">' + formatPct(r.KA_dayRate) + '</span>' +
         (dayKa.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + dayKa.length + 'SKU</span>' : '') +
       '</td>' +
-      '<td class="num" style="background:#FFFBEB;cursor:pointer" title="' + skuTooltipText('经销商', dayDealer) + '">' +
+      '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('经销商', dayDealer)) + '">' +
         '<span class="' + (r.经销商_dayRate >= 0.95 ? 'rate-good' : r.经销商_dayRate >= 0.9 ? 'rate-warn' : r.经销商_dayRate > 0 ? 'rate-bad' : '') + '">' + formatPct(r.经销商_dayRate) + '</span>' +
         (dayDealer.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + dayDealer.length + 'SKU</span>' : '') +
       '</td>' +
@@ -2504,14 +2488,28 @@ function showMatrixTooltip(event, td) {
   if (skus.length === 0) {
     html += '<div style="color:#9CA3AF">该单元格下无首日缺货记录</div>';
   } else {
+    let rows = '';
     skus.forEach((s, i) => {
-      html += '<div style="display:flex;gap:6px;margin:3px 0;align-items:baseline">'
-        + '<span style="color:#9CA3AF;min-width:14px">'+(i+1)+'.</span>'
-        + '<span style="color:#9CA3AF;font-size:11px;min-width:50px">'+s.code+'</span>'
-        + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+s.name+'">'+s.name+'</span>'
-        + '<span style="color:#FCA5A5;font-weight:600;min-width:60px;text-align:right">'+formatNum(s.gap)+'支</span>'
-        + '</div>';
+      const info = getSkuSupplyInfo(s.code, rdc);
+      const transit = info.transitUnits != null ? formatNum(info.transitUnits) : '—';
+      const supply = info.dcSupply || '—';
+      rows += '<tr>'
+        + '<td style="color:#9CA3AF;padding:2px 10px 2px 0;text-align:right">'+(i+1)+'.</td>'
+        + '<td style="padding:2px 10px 2px 0;font-size:11px;color:#9CA3AF">'+s.code+'</td>'
+        + '<td style="padding:2px 10px 2px 0">'+s.name+'</td>'
+        + '<td style="padding:2px 10px 2px 0;text-align:right;color:#FCA5A5;font-weight:600">'+formatNum(s.gap)+'支</td>'
+        + '<td style="padding:2px 10px 2px 0;text-align:right">'+transit+'</td>'
+        + '<td style="padding:2px 0 0 0;max-width:130px">'+supply+'</td></tr>';
     });
+    html += '<table style="border-collapse:collapse;font-variant-numeric:tabular-nums;margin-top:6px;width:100%">'
+      + '<thead><tr style="color:#9CA3AF;font-size:10px;text-align:left">'
+      + '<th style="padding:2px 10px 4px 0;text-align:right">#</th>'
+      + '<th style="padding:2px 10px 4px 0">代码</th>'
+      + '<th style="padding:2px 10px 4px 0">品名</th>'
+      + '<th style="padding:2px 10px 4px 0;text-align:right">缺口(支)</th>'
+      + '<th style="padding:2px 10px 4px 0;text-align:right">在途(支)</th>'
+      + '<th style="padding:2px 0 4px 0">大仓供应</th></tr></thead>'
+      + '<tbody>'+rows+'</tbody></table>';
   }
   tip.innerHTML = html;
   // 位置：鼠标右下方，超出屏幕则放左/上
@@ -2945,6 +2943,76 @@ function drillCustomerByName(name) {
 }
 
 // 渲染客户下钻详情 - 显示该客户的主要缺货SKU
+// ===== 箱规 / 在途(支) / 大仓供应 辅助（缺货报告增强）=====
+const RDC_TRANSIT_KEY = {'华南RDC':'huananTransit','华北RDC':'huabeiTransit','东北RDC':'dongbeiTransit','西北RDC':'xibeiTransit','华中RDC':'huazhongTransit','西南RDC':'xinanTransit'};
+let _supplyMapsBuilt = false;
+function buildSupplyMaps() {
+  if (_supplyMapsBuilt) return;
+  window._shortageByCode = {};
+  dataStore.shortage.forEach(function(s) {
+    const c = String(s.materialCode == null ? '' : s.materialCode).trim();
+    if (!c) return;
+    (window._shortageByCode[c] = window._shortageByCode[c] || []).push(s);
+  });
+  _supplyMapsBuilt = true;
+}
+// 取某 SKU 的供应信息：在途(支)=在途箱数×箱规；大仓供应=缺货汇总文本
+// rdc: 指定RDC时报该RDC在途，否则报合计在途；dateStr: 优先匹配该日期的缺货记录
+function getSkuSupplyInfo(code, rdc, dateStr) {
+  buildSupplyMaps();
+  const bs = (window._boxSpec && window._boxSpec[String(code)] != null) ? window._boxSpec[String(code)] : null;
+  const entries = window._shortageByCode ? window._shortageByCode[String(code)] : null;
+  let entry = null;
+  if (entries && entries.length) {
+    if (dateStr) entry = entries.filter(function(e){ return e.dateStr === dateStr; })[0] || entries[0];
+    else entry = entries.slice().sort(function(a,b){ return (a.date && b.date) ? (a.date > b.date ? 1 : -1) : 0; })[0];
+  }
+  let dcSupply = entry ? (entry.dcSupply || '') : '';
+  let transitBoxes = 0;
+  if (entry) {
+    if (rdc && RDC_TRANSIT_KEY[rdc]) transitBoxes = entry[RDC_TRANSIT_KEY[rdc]] || 0;
+    else transitBoxes = entry.rdcTransitTotal || 0;
+  }
+  const transitUnits = (bs && transitBoxes) ? Math.round(transitBoxes * bs) : null;
+  return { boxSpec: bs, dcSupply: dcSupply, transitBoxes: transitBoxes, transitUnits: transitUnits };
+}
+// 悬浮提示注册：返回索引，HTML 存入 window._tipStore（避开 title 属性转义问题）
+window._tipStore = window._tipStore || [];
+function regTip(html) { window._tipStore.push(html); return window._tipStore.length - 1; }
+function floatTipInit() {
+  if (document.getElementById('float-tip')) return;
+  const st = document.createElement('style');
+  st.textContent = '.float-tip{position:fixed;z-index:9999;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);padding:8px 10px;font-size:11px;display:none;pointer-events:none;max-width:460px;color:#1f2937;line-height:1.5}.float-tip table{border-collapse:collapse;font-variant-numeric:tabular-nums;margin-top:2px}.float-tip td{padding:2px 8px 2px 0;vertical-align:top}.float-tip .num{text-align:right;white-space:nowrap}.float-tip .muted{color:#9ca3af}.float-tip .hd{font-weight:600;border-bottom:1px solid #e5e7eb;padding-bottom:3px;margin-bottom:4px}.tip-sku-table{border-collapse:collapse;font-variant-numeric:tabular-nums;margin-top:5px;font-size:11px;line-height:1.45}.tip-sku-table th{padding:3px 8px 3px 0;color:#6b7280;font-weight:600;border-bottom:1px solid #d1d5db;text-align:left;white-space:nowrap}.tip-sku-table td{padding:3px 8px 3px 0;border-bottom:1px solid #eee;vertical-align:top;white-space:nowrap}.tip-sku-table th.num,.tip-sku-table td.num{text-align:right}.tip-sku-table td.c{color:#9ca3af;text-align:right;padding-right:6px}.tip-sku-table td.nm{max-width:150px;overflow:hidden;text-overflow:ellipsis}.tip-sku-table td.sup{max-width:140px}.tip-sku-table .muted{color:#9ca3af;font-size:10px}';
+  document.head.appendChild(st);
+  const d = document.createElement('div');
+  d.id = 'float-tip'; d.className = 'float-tip';
+  document.body.appendChild(d);
+  function pos(e){ const t=document.getElementById('float-tip'); const pad=14,vw=window.innerWidth,vh=window.innerHeight,w=t.offsetWidth,h=t.offsetHeight; let l=e.clientX+pad,tp=e.clientY+pad; if(l+w+8>vw)l=e.clientX-w-8; if(tp+h+8>vh)tp=e.clientY-h-8; t.style.left=Math.max(8,l)+'px'; t.style.top=Math.max(8,tp)+'px'; }
+  document.addEventListener('mouseover', function(e){ const el=e.target.closest('[data-tip]'); if(el){ const t=document.getElementById('float-tip'); t.innerHTML=window._tipStore[el.getAttribute('data-tip')]||''; t.style.display='block'; pos(e); } });
+  document.addEventListener('mousemove', function(e){ const t=document.getElementById('float-tip'); if(t.style.display==='block') pos(e); });
+  document.addEventListener('mouseout', function(e){ const el=e.target.closest('[data-tip]'); if(el){ document.getElementById('float-tip').style.display='none'; } });
+}
+
+// 统一的 TOP缺货SKU 悬浮表：含 RDC在途(支) + 大仓供应，数字右对齐，避免挤在一起
+// skus: [{code,name,...}]；metricLabel: 指标列名；metricFn(s): 返回指标单元格HTML；rdc: 指定RDC(用于取在途，否则取合计)
+function buildTopShortTipTable(skus, metricLabel, metricFn, rdc) {
+  if (!skus || !skus.length) return '<div style="color:#9ca3af;margin-top:4px">无缺货SKU记录</div>';
+  let html = '<table class="tip-sku-table"><thead><tr><th class="c">#</th><th>SKU代码</th><th>品名</th><th class="num">' + metricLabel + '</th><th class="num">RDC在途(支)</th><th>大仓供应</th></tr></thead><tbody>';
+  skus.forEach(function(s, i) {
+    const info = getSkuSupplyInfo(s.code, rdc);
+    const transit = info.transitUnits != null ? formatNum(info.transitUnits) : '—';
+    const supply = info.dcSupply || '—';
+    html += '<tr><td class="c">' + (i+1) + '</td>' +
+      '<td>' + s.code + '</td>' +
+      '<td class="nm">' + (s.name || '-') + '</td>' +
+      '<td class="num">' + metricFn(s) + '</td>' +
+      '<td class="num">' + transit + '</td>' +
+      '<td class="sup">' + supply + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
 function renderCustomerDrillDetail(customer) {
   // 从订单明细中找出该客户组的订单，并过滤月份
   let custOrders = dataStore.orderDetail.filter(d => d.customerGroup === customer.name);
@@ -2997,7 +3065,7 @@ function renderCustomerDrillDetail(customer) {
         <div class="card-header"><span class="card-title">⚠️ 主要缺货SKU排名（${monthLabel}）</span></div>
         <div class="table-wrap" style="max-height:400px">
           <table class="data-table">
-            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th></tr></thead>
+            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(支)</th><th>大仓供应</th></tr></thead>
             <tbody>
               ${skuWithGaps.length > 0 ? skuWithGaps.map((sku, i) => `<tr>
                 <td><span class="badge ${i<3?'badge-red':'badge-orange'}">#${i+1}</span></td>
@@ -3009,7 +3077,9 @@ function renderCustomerDrillDetail(customer) {
                 <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(sku.realGap))}</td>
                 <td class="num" style="color:${sku.rejectQty>0?'#F59E0B':'var(--text-secondary)'};font-weight:${sku.rejectQty>0?600:400}">${sku.rejectQty > 0 ? formatNum(sku.rejectQty) : '-'}</td>
                 <td class="num"><span class="${sku.realGap / sku.orderQty > 0.5 ? 'rate-bad' : 'rate-warn'}">${sku.orderQty > 0 ? (sku.realGap/sku.orderQty*100).toFixed(1):0}%</span></td>
-              </tr>`).join('') : '<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--text-secondary)">✅ 该客户暂无缺货记录</td></tr>'}
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
+                <td>${(()=>{const i=getSkuSupplyInfo(sku.code);return i.dcSupply||'—';})()}</td>
+              </tr>`).join('') : '<tr><td colspan="11" style="text-align:center;padding:16px;color:var(--text-secondary)">✅ 该客户暂无缺货记录</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -3045,7 +3115,7 @@ function renderCustomerDrillDetail(customer) {
       <div class="card-header"><span class="card-title">📦 ${monthLabel}缺货SKU明细（按SKU+仓库聚合）</span></div>
       <div class="table-wrap" style="max-height:300px">
         <table class="data-table">
-          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th></tr></thead>
+          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th><th>RDC在途(支)</th><th>大仓供应情况</th></tr></thead>
           <tbody>
             ${(() => { const m = {}; custOrders.filter(d => (d.totalGap||0) > 0 || (d.rejectReason&&d.rejectReason.trim())).forEach(d => { const k = (d.skuCode||'')+'|'+(d.warehouse||''); if (!m[k]) m[k] = { skuCode: d.skuCode, skuName: d.skuName, brand: d.brand, warehouse: d.warehouse, orderQty: 0, totalFulfillQty: 0, totalGap: 0, rejectQty: 0 }; m[k].orderQty += (d.orderQty||0); m[k].totalFulfillQty += (d.totalFulfillQty||0); m[k].totalGap += (d.totalGap||0); if (d.rejectReason && d.rejectReason.trim()) m[k].rejectQty += (d.orderQty||0); }); Object.values(m).forEach(row => { row.realGap = Math.max(0, row.totalGap - row.rejectQty); }); const arr = Object.values(m).sort((a,b) => b.realGap - a.realGap).slice(0,20); return arr.length > 0 ? arr.map(d => `<tr>
               <td>${d.skuCode || '-'}</td>
@@ -3056,7 +3126,9 @@ function renderCustomerDrillDetail(customer) {
               <td class="num" style="color:#059669">${formatNum(d.totalFulfillQty)}</td>
               <td class="num" style="color:${d.rejectQty>0?'#F59E0B':'var(--text-secondary)'}">${d.rejectQty > 0 ? formatNum(d.rejectQty) : '-'}</td>
               <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(d.realGap))}</td>
-            </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-secondary)">无缺货数据</td></tr>'; })()}
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
+                <td>${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.dcSupply||'—';})()}</td>
+              </tr>`).join('') : '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--text-secondary)">无缺货数据</td></tr>'; })()}
           </tbody>
         </table>
       </div>
@@ -5096,6 +5168,7 @@ function renderInventoryTurnover() {
 // ============ INITIALIZATION ============
 function init() {
   document.body.className = 'mode-' + currentMode;
+  floatTipInit();
 
   const app = document.getElementById('app');
   app.innerHTML = `
@@ -5214,7 +5287,7 @@ function init() {
     function applyPreparsed(filename, j) {
       const wb = { __preparsed: true, SheetNames: j.sheetNames, Sheets: j.sheets };
       if (filename === 'inventory.json') parseInventoryExcel(wb);
-      else if (filename === 'data.json') parseExcel(wb, 'replace');
+      else if (filename === 'data.json') { window._boxSpec = (j && j.boxSpecMap) || {}; parseExcel(wb, 'replace'); }
       else if (filename.indexOf('data-') === 0) parseExcel(wb, 'append', { skipTransship: true });
     }
     async function bootLoad() {
