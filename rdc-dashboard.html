@@ -455,6 +455,7 @@ async function saveToIDB() {
       inventory: dataStore.inventory || null,
       shortageReasons: window._shortageReasons || {},
       replStatus: window._replStatus || {},
+      boxSpecMap: window._boxSpec || {},
       updatedAt: new Date().toISOString()
     };
     store.put(payload);
@@ -492,6 +493,7 @@ async function loadFromIDB() {
             } catch(e) {}
           }
           window._replStatus = req.result.replStatus || {};
+          window._boxSpec = req.result.boxSpecMap || {};
           dataStore.loaded = true;
           dataStore.lastUpdated = req.result.updatedAt || null;
           detectAllMonths();
@@ -2945,16 +2947,14 @@ function drillCustomerByName(name) {
 // 渲染客户下钻详情 - 显示该客户的主要缺货SKU
 // ===== 箱规 / 在途(支) / 大仓供应 辅助（缺货报告增强）=====
 const RDC_TRANSIT_KEY = {'华南RDC':'huananTransit','华北RDC':'huabeiTransit','东北RDC':'dongbeiTransit','西北RDC':'xibeiTransit','华中RDC':'huazhongTransit','西南RDC':'xinanTransit'};
-let _supplyMapsBuilt = false;
 function buildSupplyMaps() {
-  if (_supplyMapsBuilt) return;
+  // 每次重建，避免 dataStore.shortage 更新后索引仍停留在旧数据
   window._shortageByCode = {};
   dataStore.shortage.forEach(function(s) {
-    const c = String(s.materialCode == null ? '' : s.materialCode).trim();
+    const c = String(s.materialCode == null ? '' : s.materialCode).replace(/^0+/, '').trim();
     if (!c) return;
     (window._shortageByCode[c] = window._shortageByCode[c] || []).push(s);
   });
-  _supplyMapsBuilt = true;
 }
 // 取某 SKU 的供应信息：在途(支)=在途箱数×箱规；大仓供应=缺货汇总文本
 // rdc: 指定RDC时报该RDC在途，否则报合计在途；dateStr: 优先匹配该日期的缺货记录
@@ -2965,7 +2965,7 @@ function getSkuSupplyInfo(code, rdc, dateStr) {
   let entry = null;
   if (entries && entries.length) {
     if (dateStr) entry = entries.filter(function(e){ return e.dateStr === dateStr; })[0] || entries[0];
-    else entry = entries.slice().sort(function(a,b){ return (a.date && b.date) ? (a.date > b.date ? 1 : -1) : 0; })[0];
+    else entry = entries.slice().sort(function(a,b){ return (a.date && b.date) ? (a.date < b.date ? 1 : -1) : 0; })[0];
   }
   let dcSupply = entry ? (entry.dcSupply || '') : '';
   let transitBoxes = 0;
