@@ -7198,24 +7198,13 @@ function renderBizDemandDACR() {
   var f = window._dacrFilters || { rdc: 'all', month: 'all' };
   window._dacrFilters = f;
   // ===== 1. 按 SKU×RDC×渠道 聚合业务提报和实际出货 =====
-  var dacrMap = {}; // key: "sku|rdc|ch" => { bizD, shipped, skuName, brand, months }
-  var biz = dataStore.bizDemand || [];
-  biz.forEach(function(d) {
-    var nrdc = normalizeRdcName(d.rdc);
-    if (f.rdc !== 'all' && nrdc !== f.rdc) return;
-    var m = d.dateStr ? d.dateStr.slice(0,7) : '';
-    if (f.month !== 'all' && m !== f.month) return;
-    var chs = [{k:'经销商',v:d.dealerDemand},{k:'KA',v:d.kaDemand},{k:'新通路',v:(d.newChannel||0)}];
-    chs.forEach(function(ch) {
-      if (!ch.v || ch.v <= 0) return;
-      var key = d.opCode + '|' + nrdc + '|' + ch.k;
-      if (!dacrMap[key]) dacrMap[key] = { sku: d.opCode, skuName: d.productName || '', rdc: nrdc, channel: ch.k, bizD: 0, shipped: 0, months: {} };
-      dacrMap[key].bizD += ch.v;
-      if (!dacrMap[key].skuName && d.productName) dacrMap[key].skuName = d.productName;
-      if (m) dacrMap[key].months[m] = (dacrMap[key].months[m] || 0) + ch.v;
-    });
-  });
+  // 注意：bizDemand r[2] 实为"操作工号"非SKU编码，故用 产品名称+规格 作匹配键
+  function normKey(s) { return String(s||'').replace(/[\s\u3000]/g,'').slice(0,30); }
+  var dacrMap = {}; // key: "normPname|rdc|ch"
   var orders = dataStore.orderDetail || [];
+  var biz = dataStore.bizDemand || [];
+  // 先聚合订单明细的出货量到 productName+rdc+ch
+  var shipMap = {};
   orders.forEach(function(d) {
     var nrdc = normalizeRdcName(d.warehouse);
     if (f.rdc !== 'all' && nrdc !== f.rdc) return;
@@ -7223,9 +7212,28 @@ function renderBizDemandDACR() {
     if (f.month !== 'all' && m !== f.month) return;
     var ch = d.channel;
     if (ch === 'KA' || ch === '经销商' || ch === '新通路') {
-      var key = d.skuCode + '|' + nrdc + '|' + ch;
-      if (dacrMap[key]) dacrMap[key].shipped += (d.firstDayQty || 0);
+      var pkey = normKey(d.skuName) + '|' + nrdc + '|' + ch;
+      shipMap[pkey] = (shipMap[pkey] || 0) + (d.firstDayQty || 0);
     }
+  });
+  // 再聚合业务提报
+  biz.forEach(function(d) {
+    var nrdc = normalizeRdcName(d.rdc);
+    if (f.rdc !== 'all' && nrdc !== f.rdc) return;
+    var m = d.dateStr ? d.dateStr.slice(0,7) : '';
+    if (f.month !== 'all' && m !== f.month) return;
+    var chs = [{k:'经销商',v:d.dealerDemand},{k:'KA',v:d.kaDemand},{k:'新通路',v:(d.newChannel||0)}];
+    var pkey = normKey(d.productName);
+    chs.forEach(function(ch) {
+      if (!ch.v || ch.v <= 0) return;
+      var key = pkey + '|' + nrdc + '|' + ch.k;
+      if (!dacrMap[key]) dacrMap[key] = { sku: d.opCode || '', skuName: d.productName || '', rdc: nrdc, channel: ch.k, bizD: 0, shipped: 0, months: {} };
+      dacrMap[key].bizD += ch.v;
+      // 匹配出货
+      var sk = normKey(d.productName) + '|' + nrdc + '|' + ch.k;
+      if (shipMap[sk]) dacrMap[key].shipped = (dacrMap[key].shipped || 0) + shipMap[sk];
+      if (m) dacrMap[key].months[m] = (dacrMap[key].months[m] || 0) + ch.v;
+    });
   });
   var dacrList = Object.values(dacrMap).filter(function(r) { return r.bizD > 0; });
   dacrList.forEach(function(r) {
