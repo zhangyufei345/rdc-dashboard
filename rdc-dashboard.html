@@ -6450,7 +6450,7 @@ function renderSlowMoving() {
   crossHtml += '</tbody></table></div><div style="text-align:right;padding:8px 0"><button class="btn-export" onclick="exportCrossBrand()">导出CSV</button></div></div>';
   // 右半：图例说明卡
   crossHtml += '<div class="card" style="height:100%"><div class="card-header"><span class="card-title">📋 品牌矩阵说明</span></div><div style="padding:12px;font-size:12px">';
-  crossHtml += '<div style="margin-bottom:14px"><div style="font-weight:600;margin-bottom:6px">🎨 颜色含义（单元格=该品牌在该RDC的慢动占比）</div>';
+  crossHtml += '<div style="margin-bottom:14px"><div style="font-weight:600;margin-bottom:6px">🎨 颜色含义（单元格 = 该品牌在该RDC库存中，慢动品金额占比｜每个格子分母不同、独立计算，同行加总可超过100%）</div>';
   crossHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:50px;height:16px;background:#DC2626;border-radius:3px"></span><span style="font-size:11px">≥50% 高占比</span></div>';
   crossHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:50px;height:16px;background:#F59E0B;border-radius:3px"></span><span style="font-size:11px">30~50% 中占比</span></div>';
   crossHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:50px;height:16px;background:#F0F9FF;border:1px solid #ddd;border-radius:3px"></span><span style="font-size:11px"><30% 低占比 / 0%</span></div></div>';
