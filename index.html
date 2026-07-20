@@ -6333,6 +6333,12 @@ function renderSlowMoving() {
     return scope + '：' + base;
   }
   var heatY = crossBrands.map(function(c) { return c.brand; });
+  // 过滤掉不需要展示的品牌（佰草集/典萃/玉泽/其他/片仔癀 全为0%或无业务意义）
+  var EXCLUDED_BRANDS = ['佰草集', '典萃', '玉泽', '其他', '片仔癀'];
+  crossBrands = crossBrands.filter(function(c) { return EXCLUDED_BRANDS.indexOf(c.brand) < 0; });
+  var _filteredHeatCells = {};
+  Object.keys(brandRdcCell || {}).forEach(function(b) { if (EXCLUDED_BRANDS.indexOf(b) < 0) _filteredHeatCells[b] = brandRdcCell[b]; });
+  brandRdcCell = _filteredHeatCells;
   window._crossBrands = crossBrands;
   window._slowHeatCells = brandRdcCell;
   var systemicCount = crossBrands.filter(function(c) { return c.highCount >= 4; }).length;
@@ -6394,6 +6400,18 @@ function renderSlowMoving() {
   });
   Object.keys(causeRdcSkus).forEach(function(c) { Object.keys(causeRdcSkus[c]).forEach(function(rdc) { causeRdcSkus[c][rdc].sort(function(a, b) { return (b.inventoryAmt || 0) - (a.inventoryAmt || 0); }); }); });
   window._causeMatrix.causeRdcSkus = causeRdcSkus;
+  // 构建 brandRdcSkus（按品牌×RDC 分组，用于品牌矩阵点击下钻）
+  var brandRdcSkus = {};
+  detailRowsAll2.forEach(function(d) {
+    var info = slowSkuInfo[d.rdc + '|' + d.sku] || {};
+    var brand = info.brand;
+    if (!brand || EXCLUDED_BRANDS.indexOf(brand) >= 0) return;
+    if (!brandRdcSkus[brand]) brandRdcSkus[brand] = {};
+    if (!brandRdcSkus[brand][d.rdc]) brandRdcSkus[brand][d.rdc] = [];
+    brandRdcSkus[brand][d.rdc].push({ rdc: d.rdc, sku: d.sku, skuName: info.skuName, brand: brand, coverageLevel: info.coverageLevel, inventoryAmt: d.inventoryAmt, rootCause: d.rootCause });
+  });
+  Object.keys(brandRdcSkus).forEach(function(b) { Object.keys(brandRdcSkus[b]).forEach(function(rdc) { brandRdcSkus[b][rdc].sort(function(a, c) { return (c.inventoryAmt || 0) - (a.inventoryAmt || 0); }); }); });
+  window._causeMatrix.brandRdcSkus = brandRdcSkus;
 
   var trendQty = [slow5, slow6].map(function(arr) { return arr.reduce(function(s,d) { return s + (d.availQtyPlan || d.availableQty || 0); }, 0); });
 
@@ -6411,8 +6429,10 @@ function renderSlowMoving() {
 
   html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc"></div></div></div><div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level"></div></div></div>';
 
-  // 跨RDC高占比品牌根因分析
-  var crossHtml = '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🏷️ 跨RDC高占比品牌根因分析</span><span style="font-size:11px;color:var(--text-secondary)">基于全部RDC（不受上方RDC筛选影响）｜红≥50% 橙30~50%｜高占比阈值='+HIGH_RATIO+'%｜系统性 '+systemicCount+' 个 / 区域性 '+regionalCount+' 个</span></div>';
+  // 跨RDC高占比品牌根因分析（左半：矩阵+表格｜右半：图例说明）
+  var crossHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">';
+  // 左半：矩阵+表格
+  crossHtml += '<div class="card" style="height:100%"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🏷️ 跨RDC高占比品牌根因分析</span><span style="font-size:11px;color:var(--text-secondary)">点击单元格下钻SKU｜红≥50% 橙30~50%｜系统性 '+systemicCount+' 个 / 区域性 '+regionalCount+' 个</span></div>';
   crossHtml += '<div class="chart-container" id="chart-slow-cross-heat" style="height:'+Math.max(320, heatY.length * 20)+'px"></div>';
   crossHtml += '<div style="font-size:12px;color:var(--text-secondary);padding:8px 0 4px">在 ≥1 个RDC 慢动占比 ≥ '+HIGH_RATIO+'% 的品牌（按高占比RDC数排序，系统性优先）：</div>';
   crossHtml += '<div class="table-wrap"><table class="data-table"><thead><tr><th>品牌</th><th>整体慢动占比</th><th>高占比RDC</th><th>涉及RDC</th><th>平均占比</th><th>主导根因（SKU数）</th><th>建议</th></tr></thead><tbody>';
@@ -6428,6 +6448,18 @@ function renderSlowMoving() {
     });
   }
   crossHtml += '</tbody></table></div><div style="text-align:right;padding:8px 0"><button class="btn-export" onclick="exportCrossBrand()">导出CSV</button></div></div>';
+  // 右半：图例说明卡
+  crossHtml += '<div class="card" style="height:100%"><div class="card-header"><span class="card-title">📋 品牌矩阵说明</span></div><div style="padding:12px;font-size:12px">';
+  crossHtml += '<div style="margin-bottom:14px"><div style="font-weight:600;margin-bottom:6px">🎨 颜色含义（单元格=该品牌在该RDC的慢动占比）</div>';
+  crossHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:50px;height:16px;background:#DC2626;border-radius:3px"></span><span style="font-size:11px">≥50% 高占比</span></div>';
+  crossHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:50px;height:16px;background:#F59E0B;border-radius:3px"></span><span style="font-size:11px">30~50% 中占比</span></div>';
+  crossHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:50px;height:16px;background:#F0F9FF;border:1px solid #ddd;border-radius:3px"></span><span style="font-size:11px"><30% 低占比 / 0%</span></div></div>';
+  crossHtml += '<div style="margin-bottom:14px"><div style="font-weight:600;margin-bottom:6px">🚫 已排除品牌（不展示）</div>';
+  crossHtml += '<div style="font-size:11px;color:var(--text-secondary);line-height:1.6">佰草集、典萃、玉泽、其他、片仔癀 — 慢动占比均为0%或无业务意义，不再纳入分析。</div></div>';
+  crossHtml += '<div><div style="font-weight:600;margin-bottom:6px">📊 范围标记（表格第3列）</div>';
+  crossHtml += '<div style="font-size:11px;line-height:1.8"><span class="badge" style="background:#FEE2E2;color:#B91C1C">系统性</span> ≥4个RDC高占比<br/><span class="badge" style="background:#FEF3C7;color:#92400E">区域性</span> 2~3个RDC高占比<br/><span class="badge" style="background:#DBEAFE;color:#1D4ED8">局部</span> 1个RDC高占比</div></div>';
+  crossHtml += '</div></div>';
+  crossHtml += '</div>';
   html += crossHtml;
 
   // RDC × 主根因 慢动金额矩阵卡片（左半）+ 主根因优先级图例（右半）
@@ -6484,21 +6516,30 @@ function renderSlowMoving() {
     // 跨RDC品牌慢动占比热力图
     var heatChart = echarts.init(document.getElementById('chart-slow-cross-heat'));
     var heatY = window._crossBrands.map(function(c) { return c.brand; });
+    var heatRdcLabels = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
+    var heatRdcShort = ['华南','华北','东北','西北','华中','西南'];
     var heatData = [];
     window._crossBrands.forEach(function(c, yi) {
-      ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'].forEach(function(r, xi) {
+      heatRdcLabels.forEach(function(r, xi) {
         var cell = (window._slowHeatCells && window._slowHeatCells[c.brand] && window._slowHeatCells[c.brand][r]);
         var v = (cell && cell.total > 0) ? +(cell.slow / cell.total * 100).toFixed(1) : null;
         if (v !== null) heatData.push([xi, yi, v]);
       });
     });
     heatChart.setOption({
-      tooltip: { position: 'top', formatter: function(p) { return heatY[p.data[1]] + '<br/>' + ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'][p.data[0]] + '：<b>' + p.data[2] + '%</b>'; } },
-      grid: { left: 90, right: 20, top: 50, bottom: 10 },
-      xAxis: { type: 'category', data: ['华南','华北','东北','西北','华中','西南'], position: 'top', splitArea: { show: true }, axisLabel: { fontSize: 11 } },
-      yAxis: { type: 'category', data: heatY, splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+      tooltip: { position: 'top', formatter: function(p) { return heatY[p.data[1]] + '<br/>' + heatRdcLabels[p.data[0]] + '：<b>' + p.data[2] + '%</b>'; } },
+      grid: { left: 80, right: 20, top: 50, bottom: 10 },
+      xAxis: { type: 'category', data: heatRdcShort, position: 'top', splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+      yAxis: { type: 'category', data: heatY, splitArea: { show: true }, axisLabel: { fontSize: 10 } },
       visualMap: { min: 0, max: 100, calculable: true, orient: 'horizontal', left: 'center', top: 0, inRange: { color: ['#F0F9FF','#FDE68A','#F59E0B','#DC2626'] }, text: ['高', '低'], textStyle: { fontSize: 10 } },
-      series: [{ type: 'heatmap', data: heatData, label: { show: true, fontSize: 9, formatter: function(p) { return p.data[2] + '%'; } }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } } }]
+      series: [{ type: 'heatmap', data: heatData, label: { show: true, fontSize: 9, formatter: function(p) { return p.data[2] + '%'; } }, cursor: 'pointer', emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } } }]
+    });
+    // 单元格点击 → 品牌SKU下钻
+    heatChart.on('click', function(p) {
+      if (!p || !p.data) return;
+      var brand = heatY[p.data[1]];
+      var rdc = heatRdcLabels[p.data[0]];
+      if (brand && rdc && typeof openBrandDrillDown === 'function') openBrandDrillDown(brand, rdc);
     });
 
     // RDC × 主根因 慢动金额矩阵 热力图
@@ -6687,6 +6728,80 @@ function exportCauseBucket(rdc, cause) {
   });
   var safeCause = cause.replace(/[^\w一-龥]/g, '');
   downloadFile('SKU根因下钻_' + rdc + '_' + safeCause + '_' + new Date().toISOString().slice(0, 10) + '.csv', csv);
+}
+
+// ========== 品牌矩阵单元格下钻：品牌SKU 根因明细（弹窗） ==========
+function openBrandDrillDown(brand, rdc) {
+  var cm = window._causeMatrix;
+  if (!cm || !cm.brandRdcSkus) { if (typeof showToast === 'function') showToast('暂无下钻数据', true); return; }
+  var skus = (cm.brandRdcSkus[brand] && cm.brandRdcSkus[brand][rdc]) || [];
+  if (skus.length === 0) { if (typeof showToast === 'function') showToast('该桶无SKU数据', true); return; }
+  var cell = (window._slowHeatCells && window._slowHeatCells[brand] && window._slowHeatCells[brand][rdc]) || {};
+  var bucketAmt = cell.slow || 0;
+  var bucketAmtK = (bucketAmt / 1000).toFixed(1);
+  var pctRdc = cell.total > 0 ? (bucketAmt / cell.total * 100).toFixed(1) : '0.0';
+  function esc(s) { return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  var rowsHtml = skus.map(function(r, i) {
+    var pct = bucketAmt > 0 ? (r.inventoryAmt / bucketAmt * 100).toFixed(1) : '0.0';
+    var rc = r.rootCause || '';
+    var rcColor = rc.indexOf('失真') >= 0 || rc.indexOf('呆滞') >= 0 ? '#B91C1C' : (rc.indexOf('效期') >= 0 || rc.indexOf('下降') >= 0 ? '#D97706' : '#475569');
+    var nameEsc = esc(r.skuName);
+    var brandEsc = esc(r.brand);
+    var rcEsc = esc(rc);
+    return '<tr>'
+      + '<td class="num">' + (i + 1) + '</td>'
+      + '<td>' + rdc + '</td>'
+      + '<td style="font-family:monospace">' + (r.sku || '') + '</td>'
+      + '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + nameEsc + '">' + (nameEsc || '—') + '</td>'
+      + '<td>' + (r.coverageLevel || '—') + '</td>'
+      + '<td class="num">' + (r.inventoryAmt / 1000).toFixed(1) + '</td>'
+      + '<td class="num">' + pct + '%</td>'
+      + '<td style="max-width:340px;font-size:11px;line-height:1.4" title="' + rcEsc + '"><span style="color:' + rcColor + ';font-weight:600">' + rcEsc + '</span></td>'
+      + '</tr>';
+  }).join('');
+  var css = '<style>.bdm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999}.bdm-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(1100px,94vw);max-height:88vh;background:var(--bg-card,#fff);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);z-index:10000;display:flex;flex-direction:column;overflow:hidden}.bdm-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;border-bottom:1px solid var(--border-light,#eee);gap:12px}.bdm-title{font-size:16px;font-weight:700;color:var(--text-primary,#111)}.bdm-sub{font-size:12px;color:var(--text-secondary,#666);margin-top:4px}.bdm-close{background:transparent;border:none;font-size:28px;line-height:1;cursor:pointer;color:var(--text-secondary,#666);padding:0 4px}.bdm-close:hover{color:#DC2626}.bdm-body{flex:1;overflow:auto;padding:12px 16px}.bdm-footer{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-top:1px solid var(--border-light,#eee);gap:8px}</style>';
+  var html = css
+    + '<div class="bdm-overlay" onclick="if(event.target===this)closeBrandDrillDown()"></div>'
+    + '<div class="bdm-modal">'
+    +   '<div class="bdm-header"><div><div class="bdm-title">🔍 品牌SKU下钻 — <span style="color:#DC2626">' + brand + '</span> × <span style="color:#DC2626">' + rdc + '</span></div>'
+    +   '<div class="bdm-sub">共 <b>' + skus.length + '</b> 个SKU｜慢动金额 <b>' + bucketAmtK + '</b> 千元｜该品牌在本RDC慢动占比 <b>' + pctRdc + '%</b>｜仅展示慢动SKU</div></div>'
+    +   '<button class="bdm-close" onclick="closeBrandDrillDown()" title="关闭 (Esc)">×</button></div>'
+    +   '<div class="bdm-body"><table class="data-table"><thead><tr><th>#</th><th>RDC</th><th>SKU编码</th><th>名称</th><th>覆盖等级</th><th class="num">慢动金额(千元)</th><th class="num">占桶%</th><th>根因(完整)</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
+    +   '<div class="bdm-footer"><span style="font-size:11px;color:var(--text-secondary)">仅展示该品牌在该RDC的慢动SKU（不含正常库存）</span><button class="btn-export" onclick="exportBrandBucket(\'' + brand + '\',\'' + rdc + '\')">导出该桶CSV</button></div>'
+    + '</div>';
+  var old = document.getElementById('brandDrillModal');
+  if (old) old.remove();
+  var div = document.createElement('div');
+  div.id = 'brandDrillModal';
+  div.innerHTML = html;
+  document.body.appendChild(div);
+  if (!window._bdmEscBound) {
+    window._bdmEscBound = true;
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeBrandDrillDown(); });
+  }
+}
+
+function closeBrandDrillDown() {
+  var m = document.getElementById('brandDrillModal');
+  if (m) m.remove();
+}
+
+function exportBrandBucket(brand, rdc) {
+  var cm = window._causeMatrix;
+  var skus = (cm && cm.brandRdcSkus && cm.brandRdcSkus[brand] && cm.brandRdcSkus[brand][rdc]) || [];
+  if (skus.length === 0) { if (typeof showToast === 'function') showToast('该桶无数据', true); return; }
+  var cell = (window._slowHeatCells && window._slowHeatCells[brand] && window._slowHeatCells[brand][rdc]) || {};
+  var bucketAmt = cell.slow || 0;
+  var csv = '\uFEFF#,RDC,SKU编码,名称,品牌,覆盖等级,慢动金额(元),占桶%,根因(完整)\n';
+  skus.forEach(function(r, i) {
+    var pct = bucketAmt > 0 ? (r.inventoryAmt / bucketAmt * 100).toFixed(1) : '0.0';
+    var name = (r.skuName || '').replace(/,/g, '，');
+    var brandStr = (r.brand || '').replace(/,/g, '，');
+    var rc = (r.rootCause || '').replace(/,/g, '，').replace(/\n/g, ' ');
+    csv += [(i + 1), rdc, r.sku, name, brandStr, r.coverageLevel, r.inventoryAmt, pct, rc].join(',') + '\n';
+  });
+  var safeBrand = brand.replace(/[^\w一-龥]/g, '');
+  downloadFile('品牌SKU下钻_' + safeBrand + '_' + rdc + '_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
 
 // ==================== 慢动品根因分析逻辑说明 ====================
