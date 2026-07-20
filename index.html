@@ -5316,6 +5316,10 @@ function init() {
         if ((!window._boxSpec || Object.keys(window._boxSpec).length === 0) && !changed.includes('data.json')) {
           changed.push('data.json');
         }
+        // data.json 替换加载后会清空全量数据，若归档文件(5月/6月)哈希未变则不被重载导致数据丢失，故强制一并重载
+        if (changed.includes('data.json')) {
+          Object.keys(manifest.files).forEach(function(f) { if (f.indexOf('data-') === 0 && changed.indexOf(f) < 0) changed.push(f); });
+        }
         if (restored && changed.length === 0) {
           if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
           showToast('已加载本地缓存（数据未更新）');
