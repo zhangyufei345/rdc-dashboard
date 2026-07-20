@@ -7323,9 +7323,12 @@ function renderBizDemandDACR() {
         label: { show: true, position: 'right', formatter: function(p) { return (p.value*100).toFixed(1)+'%'; }, fontSize: 12, fontWeight: 700 }
       }]
     });
-    // 月度趋势图
+    // 月度趋势图：只统计 dacrList 里的产品（口径与dacrList一致）
     var trendChart = echarts.init(document.getElementById('chart-dacr-trend'));
     var trendMonths = months.slice(0, 6).reverse();
+    // 构建 dacrList 里的产品名+rdc 集合（用于过滤订单）
+    var dacrProdSet = {};
+    dacrList.forEach(function(r) { dacrProdSet[normKey(r.skuName) + '|' + r.rdc] = true; });
     var trendData = trendMonths.map(function(m) {
       var tBiz = 0, tShip = 0;
       dacrList.forEach(function(r) {
@@ -7334,9 +7337,11 @@ function renderBizDemandDACR() {
       orders.forEach(function(d) {
         var dm = d.dateStr ? d.dateStr.slice(0,7) : '';
         if (dm !== m) return;
-        if (d.channel === 'KA' || d.channel === '经销商' || d.channel === '新通路') tShip += (d.firstDayQty || 0);
+        if (d.channel !== 'KA' && d.channel !== '经销商' && d.channel !== '新通路') return;
+        var pkey = normKey(d.skuName) + '|' + normalizeRdcName(d.warehouse);
+        if (dacrProdSet[pkey]) tShip += (d.firstDayQty || 0);
       });
-      return tBiz > 0 ? tShip / tBiz : 0;
+      return tBiz > 0 ? Math.min(tShip / tBiz, 1.5) : 0;
     });
     trendChart.setOption({
       tooltip: { formatter: function(p) { return p.axisValue+': <b>'+(p.value*100).toFixed(1)+'%</b>'; } },
@@ -7345,30 +7350,29 @@ function renderBizDemandDACR() {
       yAxis: { type: 'value', min: 0, max: 1, axisLabel: { formatter: function(v) { return (v*100).toFixed(0)+'%'; } } },
       series: [{ type: 'line', data: trendData, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 3, color: '#2563EB' }, itemStyle: { color: '#2563EB' }, areaStyle: { color: 'rgba(37,99,235,0.1)' } }]
     });
-    // 热力图
+    // 热力图：用产品名+RDC+渠道作key（与dacrMap一致）
     var heatEl = document.getElementById('chart-dacr-heat');
     if (heatEl && topN.length > 0) {
-      var topSkus = [...new Set(topN.map(function(r) { return r.sku+'|'+r.rdc; }))];
+      var topPnameRdc = [...new Set(topN.map(function(r) { return r.skuName + '|' + r.rdc; }))];
       var heatChart = echarts.init(heatEl);
-      var heatY = topSkus.map(function(k) { var p=k.split('|'); var r=dacrMap[k.split('|')[0]+'|'+p[1]+'|经销商']||dacrMap[k.split('|')[0]+'|'+p[1]+'|KA']||dacrList.find(function(x){return x.sku+'|'+x.rdc===k;})||{}; return (r.sku||'')+'-'+(r.skuName||'').slice(0,8)+'@'+p[1]; });
+      var heatY = topPnameRdc.map(function(k) { var p=k.split('|'); var first=dacrList.find(function(x){return x.skuName===p[0]&&x.rdc===p[1];})||{}; return (p[0]||'').slice(0,12)+'@'+p[1]; });
       var heatChLabels = ['经销商','KA','新通路'];
       var heatData = [];
-      topSkus.forEach(function(k, yi) {
+      topPnameRdc.forEach(function(k, yi) {
         var parts = k.split('|');
         heatChLabels.forEach(function(ch, xi) {
-          var key = parts[0]+'|'+parts[1]+'|'+ch;
-          var r = dacrMap[key];
-          if (r && r.bizD > 0 && r.dacr > 0) heatData.push([xi, yi, Math.min(r.dacr, 1)]);
+          var pkey = normKey(parts[0]) + '|' + parts[1] + '|' + ch;
+          var r = dacrMap[pkey];
+          if (r && r.bizD > 0) heatData.push([xi, yi, Math.min(r.dacr, 1)]);
         });
       });
       heatChart.setOption({
         tooltip: { position: 'top', formatter: function(p) {
-          var skuKey = topSkus[p.data[1]];
+          var pkey = topPnameRdc[p.data[1]];
           var ch = heatChLabels[p.data[0]];
-          var key = skuKey.split('|')[0]+'|'+skuKey.split('|')[1]+'|'+ch;
-          var r = dacrMap[key];
+          var r = dacrMap[normKey(pkey.split('|')[0]) + '|' + pkey.split('|')[1] + '|' + ch];
           if (!r) return ch+': 无数据';
-          return '<b>'+r.sku+'</b> '+r.skuName+'<br/>'+r.rdc+' × '+ch+'<br/>DACR: <b>'+(r.dacr*100).toFixed(1)+'%</b><br/>提报 '+formatNum(r.bizD)+' / 出货 '+formatNum(r.shipped);
+          return '<b>'+r.skuName+'</b><br/>'+r.rdc+' × '+ch+'<br/>DACR: <b>'+(r.dacr*100).toFixed(1)+'%</b><br/>提报 '+formatNum(r.bizD)+' / 出货 '+formatNum(r.shipped);
         }},
         grid: { left: 180, right: 20, top: 40, bottom: 10 },
         xAxis: { type: 'category', data: heatChLabels, position: 'top', splitArea: { show: true }, axisLabel: { fontSize: 11 } },
