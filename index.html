@@ -5302,6 +5302,16 @@ function init() {
       if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
       if (restored) renderAll();
 
+      // 检测缓存异常：bizDemand 仅有单月数据时，清除哈希缓存强制全量重拉（修复 replace 清空归档的旧 bug）
+      if (restored && dataStore.bizDemand && dataStore.bizDemand.length > 0) {
+        var bizMonths = {};
+        dataStore.bizDemand.forEach(function(d) { if (d.dateStr) bizMonths[d.dateStr.slice(0,7)] = true; });
+        if (Object.keys(bizMonths).length <= 1) {
+          console.warn('缓存中 bizDemand 仅有单月数据(' + (Object.keys(bizMonths)[0] || '无') + ')，怀疑缓存异常，强制全量重拉');
+          try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+        }
+      }
+
       // 2) manifest 变更检测：仅拉取哈希变化的文件
       let manifest = null;
       try {
