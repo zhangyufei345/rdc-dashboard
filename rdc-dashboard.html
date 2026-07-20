@@ -1401,14 +1401,15 @@ function renderOverview() {
       return {
         dateStr,
         huanan: (rdcMap['华南RDC'] && rdcMap['华南RDC'].orderQty > 0) ? rdcMap['华南RDC'].firstDayQty / rdcMap['华南RDC'].orderQty : null,
-        huabei: (rdcMap['华北RDC'] && rdcMap['华北RDC'].orderQty > 0) ? rdcMap['华北RDC'].firstDayQty / rdcMap['华北RDC'].orderQty : null,
-        dongbei: (rdcMap['东北RDC'] && rdcMap['东北RDC'].orderQty > 0) ? rdcMap['东北RDC'].firstDayQty / rdcMap['东北RDC'].orderQty : null,
+        huabei: (rdcMap['华北RDC'] && rdcMap['华北RDC'].orderQty > 0) ? rdcMap['华北RDC'].firstDayQty / rdcMap['华北RDC'].orderQty : null,        dongbei: (rdcMap['东北RDC'] && rdcMap['东北RDC'].orderQty > 0) ? rdcMap['东北RDC'].firstDayQty / rdcMap['东北RDC'].orderQty : null,
         xibei: (rdcMap['西北RDC'] && rdcMap['西北RDC'].orderQty > 0) ? rdcMap['西北RDC'].firstDayQty / rdcMap['西北RDC'].orderQty : null,
         huazhong: (rdcMap['华中RDC'] && rdcMap['华中RDC'].orderQty > 0) ? rdcMap['华中RDC'].firstDayQty / rdcMap['华中RDC'].orderQty : null,
         xinan: (rdcMap['西南RDC'] && rdcMap['西南RDC'].orderQty > 0) ? rdcMap['西南RDC'].firstDayQty / rdcMap['西南RDC'].orderQty : null
       };
     });
   }
+  // 过滤周末和国定假日（与业务提报表口径一致）
+  daily = daily.filter(d => isWorkday(d.dateStr));
   if (daily.length > 0) {
     const rdcKeys = ['huanan','huabei','dongbei','xibei','huazhong','xinan'];
     const activeRDCs = getOverviewCheckedRDCs();
