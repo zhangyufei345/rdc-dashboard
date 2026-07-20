@@ -6431,23 +6431,27 @@ function renderSlowMoving() {
 
   // 跨RDC高占比品牌根因分析（左半：矩阵+表格｜右半：图例说明）
   var crossHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">';
-  // 左半：矩阵+表格
-  crossHtml += '<div class="card" style="height:100%"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🏷️ 跨RDC高占比品牌根因分析</span><span style="font-size:11px;color:var(--text-secondary)">点击单元格下钻SKU｜红≥50% 橙30~50%｜系统性 '+systemicCount+' 个 / 区域性 '+regionalCount+' 个</span></div>';
-  crossHtml += '<div class="chart-container" id="chart-slow-cross-heat" style="height:'+Math.max(320, heatY.length * 20)+'px"></div>';
-  crossHtml += '<div style="font-size:12px;color:var(--text-secondary);padding:8px 0 4px">在 ≥1 个RDC 慢动占比 ≥ '+HIGH_RATIO+'% 的品牌（按高占比RDC数排序，系统性优先）：</div>';
-  crossHtml += '<div class="table-wrap"><table class="data-table"><thead><tr><th>品牌</th><th>整体慢动占比</th><th>高占比RDC</th><th>涉及RDC</th><th>平均占比</th><th>主导根因（SKU数）</th><th>建议</th></tr></thead><tbody>';
+  // 跨RDC高占比品牌根因分析（左半：矩阵｜右半：图例说明）+ 下方明细表（全宽）
+  var crossTableHtml = '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🏷️ 跨RDC高占比品牌明细表</span><span style="font-size:11px;color:var(--text-secondary)">在 ≥1 个RDC 慢动占比 ≥ '+HIGH_RATIO+'% 的品牌（按高占比RDC数排序，系统性优先）</span></div>';
+  crossTableHtml += '<div class="table-wrap"><table class="data-table"><thead><tr><th>品牌</th><th>整体慢动占比</th><th>高占比RDC</th><th>涉及RDC</th><th>平均占比</th><th>主导根因（SKU数）</th><th>建议</th></tr></thead><tbody>';
   if (crossBrands.filter(function(c) { return c.highCount >= 1; }).length === 0) {
-    crossHtml += '<tr><td colspan="6" style="text-align:center;padding:30px">无高占比品牌</td></tr>';
+    crossTableHtml += '<tr><td colspan="6" style="text-align:center;padding:30px">无高占比品牌</td></tr>';
   } else {
     crossBrands.filter(function(c) { return c.highCount >= 1; }).forEach(function(cb) {
       var dom = dominantFlagOf(cb.brand);
       var scopeBadge = cb.highCount >= 4 ? '<span class="badge" style="background:#FEE2E2;color:#B91C1C">系统性</span>' : (cb.highCount >= 2 ? '<span class="badge" style="background:#FEF3C7;color:#92400E">区域性</span>' : '<span class="badge" style="background:#DBEAFE;color:#1D4ED8">局部</span>');
       var overallColor = cb.overallRatio >= 50 ? '#DC2626' : cb.overallRatio >= 30 ? '#D97706' : '#2563EB';
       var overallBg = cb.overallRatio >= 50 ? '#FEE2E2' : cb.overallRatio >= 30 ? '#FFFBEB' : '#DBEAFE';
-      crossHtml += '<tr><td><strong>'+cb.brand+'</strong></td><td style="background:'+overallBg+';color:'+overallColor+';font-weight:700">'+cb.overallRatio.toFixed(1)+'%</td><td>'+scopeBadge+' '+cb.highCount+'/'+allRdcs.length+'</td><td style="font-size:11px">'+cb.highRdcs.join('、')+'</td><td>'+cb.avgRatio.toFixed(1)+'%</td><td style="white-space:nowrap">'+dom.flag+'（'+dom.count+'/'+dom.total+'）</td><td style="font-size:11px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis" title="'+crossAdviceOf(cb, dom)+'">'+crossAdviceOf(cb, dom)+'</td></tr>';
+      crossTableHtml += '<tr><td><strong>'+cb.brand+'</strong></td><td style="background:'+overallBg+';color:'+overallColor+';font-weight:700">'+cb.overallRatio.toFixed(1)+'%</td><td>'+scopeBadge+' '+cb.highCount+'/'+allRdcs.length+'</td><td style="font-size:11px">'+cb.highRdcs.join('、')+'</td><td>'+cb.avgRatio.toFixed(1)+'%</td><td style="white-space:nowrap">'+dom.flag+'（'+dom.count+'/'+dom.total+'）</td><td style="font-size:11px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis" title="'+crossAdviceOf(cb, dom)+'">'+crossAdviceOf(cb, dom)+'</td></tr>';
     });
   }
-  crossHtml += '</tbody></table></div><div style="text-align:right;padding:8px 0"><button class="btn-export" onclick="exportCrossBrand()">导出CSV</button></div></div>';
+  crossTableHtml += '</tbody></table></div><div style="text-align:right;padding:8px 0"><button class="btn-export" onclick="exportCrossBrand()">导出CSV</button></div></div>';
+
+  // 左半：仅矩阵（不含表格）
+  var crossHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">';
+  crossHtml += '<div class="card" style="height:100%"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🏷️ 跨RDC高占比品牌根因分析</span><span style="font-size:11px;color:var(--text-secondary)">点击单元格下钻SKU｜红≥50% 橙30~50%｜系统性 '+systemicCount+' 个 / 区域性 '+regionalCount+' 个</span></div>';
+  crossHtml += '<div class="chart-container" id="chart-slow-cross-heat" style="height:'+Math.max(320, heatY.length * 20)+'px"></div>';
+  crossHtml += '</div>';
   // 右半：图例说明卡
   crossHtml += '<div class="card" style="height:100%"><div class="card-header"><span class="card-title">📋 品牌矩阵说明</span></div><div style="padding:12px;font-size:12px">';
   crossHtml += '<div style="margin-bottom:14px"><div style="font-weight:600;margin-bottom:6px">🎨 颜色含义（单元格 = 该品牌在该RDC库存中，慢动品金额占比｜每个格子分母不同、独立计算，同行加总可超过100%）</div>';
@@ -6461,6 +6465,7 @@ function renderSlowMoving() {
   crossHtml += '</div></div>';
   crossHtml += '</div>';
   html += crossHtml;
+  html += crossTableHtml;
 
   // RDC × 主根因 慢动金额矩阵卡片（左半）+ 主根因优先级图例（右半）
   var causeMatrixH = causeYOrder.length ? '' : '<div style="text-align:center;padding:30px;color:var(--text-secondary)">暂无慢动品根因数据</div>';
