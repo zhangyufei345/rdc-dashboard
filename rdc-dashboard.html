@@ -1164,6 +1164,7 @@ function renderPage(page) {
       case 'slow-moving-logic': renderSlowMovingLogic(); break;
       case 'biz-demand': renderBizDemand(); break;
       case 'biz-demand-detail': renderBizDemandDetail(); break;
+      case 'biz-demand-dacr': renderBizDemandDACR(); break;
       case 'data': renderDataPage(); break;
     }
   }, 50);
@@ -5208,6 +5209,7 @@ function init() {
           <div class="menu-item" data-page="shortage-compare" onclick="navigateTo('shortage-compare')"><span class="icon">⚖</span>缺货差异维护</div>
           <div class="menu-item" data-page="replenishment" onclick="navigateTo('replenishment')"><span class="icon">🎯</span>补货建议</div>
           <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>需求满足分析</div>
+          <div class="menu-item menu-sub" data-page="biz-demand-dacr" onclick="navigateTo('biz-demand-dacr')"><span class="icon">📊</span>业务需求可信度</div>
           </div>
           <div class="menu-group-header" onclick="toggleMenuGroup(this)"><span class="arrow">▼</span>📋 库存分析</div>
           <div class="menu-group-body" data-group="inventory">
@@ -5252,6 +5254,7 @@ function init() {
           <div class="page" id="page-slow-moving-logic"></div>
           <div class="page" id="page-biz-demand"></div>
           <div class="page" id="page-biz-demand-detail"></div>
+          <div class="page" id="page-biz-demand-dacr"></div>
         </main>
       </div>
     </div>
@@ -5260,7 +5263,7 @@ function init() {
   // Handle hash routing
   function handleHash() {
     const hash = window.location.hash.replace('#/', '');
-    if (hash && ['overview','fulfillment','shortage','weekend-sim','customer','transship','data','shortage-compare','replenishment','replenish-logic','inventory','inventory-structure','inventory-coverage-detail','slow-moving','slow-moving-logic','biz-demand','biz-demand-detail'].includes(hash)) {
+    if (hash && ['overview','fulfillment','shortage','weekend-sim','customer','transship','data','shortage-compare','replenishment','replenish-logic','inventory','inventory-structure','inventory-coverage-detail','slow-moving','slow-moving-logic','biz-demand','biz-demand-detail','biz-demand-dacr'].includes(hash)) {
       if (!isAuthenticated) return;
       if (hash === 'login') return;
       currentPage = hash;
@@ -7182,6 +7185,188 @@ function navigateToBizDemandDetail(month, rdc, channel) {
     channel: channel || f.channel || 'all'
   };
   navigateTo('biz-demand-detail');
+}
+
+// ========== 业务需求可信度（DACR）分析 ==========
+function renderBizDemandDACR() {
+  setTitle('业务需求可信度（DACR）');
+  const page = document.getElementById('page-biz-demand-dacr');
+  if (!dataStore.loaded || !dataStore.bizDemand || dataStore.bizDemand.length === 0) {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">暂无业务需求数据</div>';
+    return;
+  }
+  var f = window._dacrFilters || { rdc: 'all', month: 'all' };
+  window._dacrFilters = f;
+  // ===== 1. 按 SKU×RDC×渠道 聚合业务提报和实际出货 =====
+  var dacrMap = {}; // key: "sku|rdc|ch" => { bizD, shipped, skuName, brand, months }
+  var biz = dataStore.bizDemand || [];
+  biz.forEach(function(d) {
+    var nrdc = normalizeRdcName(d.rdc);
+    if (f.rdc !== 'all' && nrdc !== f.rdc) return;
+    var m = d.dateStr ? d.dateStr.slice(0,7) : '';
+    if (f.month !== 'all' && m !== f.month) return;
+    var chs = [{k:'经销商',v:d.dealerDemand},{k:'KA',v:d.kaDemand},{k:'新通路',v:(d.newChannel||0)}];
+    chs.forEach(function(ch) {
+      if (!ch.v || ch.v <= 0) return;
+      var key = d.opCode + '|' + nrdc + '|' + ch.k;
+      if (!dacrMap[key]) dacrMap[key] = { sku: d.opCode, skuName: d.productName || '', rdc: nrdc, channel: ch.k, bizD: 0, shipped: 0, months: {} };
+      dacrMap[key].bizD += ch.v;
+      if (!dacrMap[key].skuName && d.productName) dacrMap[key].skuName = d.productName;
+      if (m) dacrMap[key].months[m] = (dacrMap[key].months[m] || 0) + ch.v;
+    });
+  });
+  var orders = dataStore.orderDetail || [];
+  orders.forEach(function(d) {
+    var nrdc = normalizeRdcName(d.warehouse);
+    if (f.rdc !== 'all' && nrdc !== f.rdc) return;
+    var m = d.dateStr ? d.dateStr.slice(0,7) : '';
+    if (f.month !== 'all' && m !== f.month) return;
+    var ch = d.channel;
+    if (ch === 'KA' || ch === '经销商' || ch === '新通路') {
+      var key = d.skuCode + '|' + nrdc + '|' + ch;
+      if (dacrMap[key]) dacrMap[key].shipped += (d.firstDayQty || 0);
+    }
+  });
+  var dacrList = Object.values(dacrMap).filter(function(r) { return r.bizD > 0; });
+  dacrList.forEach(function(r) {
+    r.dacr = r.bizD > 0 ? r.shipped / r.bizD : 0;
+    r.gap = r.bizD - r.shipped;
+  });
+  dacrList.sort(function(a,b) { return a.dacr - b.dacr; });
+  // ===== 分类 =====
+  var levels = { green: 0, yellow: 0, orange: 0, red: 0 };
+  var lvlList = [];
+  dacrList.forEach(function(r) {
+    if (r.dacr >= 0.8) { levels.green++; r.level='可信'; r.lvl=4; }
+    else if (r.dacr >= 0.5) { levels.yellow++; r.level='偏高'; r.lvl=3; }
+    else if (r.dacr >= 0.3) { levels.orange++; r.level='虚高'; r.lvl=2; }
+    else { levels.red++; r.level='严重虚高'; r.lvl=1; }
+    lvlList.push(r);
+  });
+  // ===== 渠道级 DACR =====
+  var chMap = {};
+  ['经销商','KA','新通路'].forEach(function(ch) {
+    var items = dacrList.filter(function(r) { return r.channel === ch; });
+    var totBiz = items.reduce(function(s,r) { return s + r.bizD; }, 0);
+    var totShip = items.reduce(function(s,r) { return s + r.shipped; }, 0);
+    chMap[ch] = { channel: ch, bizD: totBiz, shipped: totShip, dacr: totBiz > 0 ? totShip / totBiz : 0, count: items.length };
+  });
+  // ===== 筛选选项 =====
+  var rdcs = [...new Set(dacrList.map(function(r) { return r.rdc; }))].sort();
+  var months = [...new Set(biz.map(function(d) { return d.dateStr ? d.dateStr.slice(0,7) : ''; }).filter(Boolean))].sort().reverse();
+  var topN = lvlList.slice(0, 30);
+  // ===== HTML 渲染 =====
+  var html = '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:16px 20px;background:var(--bg-card);border-radius:12px;margin-bottom:16px;align-items:center">';
+  html += '<button class="back-btn" onclick="navigateTo(\'biz-demand\')" style="margin-right:8px">← 返回需求满足</button>';
+  html += '<span style="font-size:13px;font-weight:600;color:var(--text-primary)">📊 业务需求可信度分析</span>';
+  html += '<select onchange="window._dacrFilters.rdc=this.value;renderBizDemandDACR()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(f.rdc==='all'?' selected':'')+'>全部RDC</option>'+rdcs.map(function(r){return '<option value="'+r+'"'+(f.rdc===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
+  html += '<select onchange="window._dacrFilters.month=this.value;renderBizDemandDACR()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(f.month==='all'?' selected':'')+'>全部月份</option>'+months.map(function(m){return '<option value="'+m+'"'+(f.month===m?' selected':'')+'>'+m+'</option>';}).join('')+'</select>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">DACR = 历史出货量 ÷ 业务提报量（按SKU×RDC×渠道）｜共 '+dacrList.length+' 条</span></div>';
+  // KPI
+  html += '<div class="kpi-row">'+
+    '<div class="kpi-card green"><div class="kpi-label">可信(DACR≥80%)</div><div class="kpi-value">'+levels.green+'</div></div>'+
+    '<div class="kpi-card yellow-kpi"><div class="kpi-label">偏高(50~80%)</div><div class="kpi-value">'+levels.yellow+'</div></div>'+
+    '<div class="kpi-card orange"><div class="kpi-label">虚高(30~50%)</div><div class="kpi-value">'+levels.orange+'</div></div>'+
+    '<div class="kpi-card red"><div class="kpi-label">严重虚高(&lt;30%)</div><div class="kpi-value">'+levels.red+'</div></div></div>';
+  // 渠道对比
+  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">渠道级 DACR 对比</span></div><div class="chart-container" id="chart-dacr-ch" style="height:280px"></div></div>';
+  html += '<div class="card"><div class="card-header"><span class="card-title">月度 DACR 趋势</span></div><div class="chart-container" id="chart-dacr-trend" style="height:280px"></div></div></div>';
+  // 可信度热力图
+  html += '<div class="card" style="margin-top:12px"><div class="card-header"><span class="card-title">🎨 SKU × RDC 可信度矩阵（Top30低可信SKU）</span><span style="font-size:11px;color:var(--text-secondary)">点击单元格下钻SKU明细 | 颜色=可信度(DACR)</span></div>';
+  html += '<div class="chart-container" id="chart-dacr-heat" style="height:'+Math.max(280,Math.min(topN.length*28, 600))+'px"></div></div>';
+  // 低可信度高增量 TOP 30 表
+  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🔴 低可信高增量 TOP 30（DACR由低到高）</span><button class="btn-export" onclick="exportDACR()">导出CSV</button></div>';
+  html += '<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>SKU代码</th><th>名称</th><th>RDC</th><th>渠道</th><th class="num">业务提报</th><th class="num">实际出货</th><th class="num">DACR</th><th>可信度</th><th class="num">虚高增量</th><th>建议</th></tr></thead><tbody>';
+  topN.forEach(function(r,i) {
+    var lvlColor = r.lvl===4?'#15803D':r.lvl===3?'#D97706':r.lvl===2?'#EA580C':'#DC2626';
+    var lvlBg = r.lvl===4?'#DCFCE7':r.lvl===3?'#FFFBEB':r.lvl===2?'#FEF3C7':'#FEE2E2';
+    var advice = r.lvl <= 2 ? '建议限制虚高补货，上限=系统需求×'+(1+Math.min(r.dacr,0.3)).toFixed(2) : (r.lvl===3 ? '建议按系统需求×1.3上限' : '可按业务需求采纳');
+    html += '<tr><td class="c">'+(i+1)+'</td><td style="font-family:monospace">'+r.sku+'</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td><td>'+r.rdc+'</td><td>'+r.channel+'</td><td class="num">'+formatNum(r.bizD)+'</td><td class="num">'+formatNum(r.shipped)+'</td><td class="num" style="color:'+lvlColor+';font-weight:700">'+(r.dacr*100).toFixed(1)+'%</td><td style="background:'+lvlBg+';color:'+lvlColor+';font-weight:700">'+r.level+'</td><td class="num" style="color:#DC2626">'+formatNum(r.gap)+'</td><td style="font-size:11px">'+advice+'</td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+  page.innerHTML = html;
+  window._dacrData = { dacrList: dacrList, topN: topN, chMap: chMap };
+  // ===== ECharts 渲染 =====
+  setTimeout(function() {
+    // 渠道 DACR 对比图
+    var chChart = echarts.init(document.getElementById('chart-dacr-ch'));
+    var chLabels = ['经销商','KA','新通路'];
+    chChart.setOption({
+      tooltip: { formatter: function(p) { return p.name+': <b>'+(p.value*100).toFixed(1)+'%</b><br/>提报'+formatNum(chMap[p.name].bizD)+' / 出货'+formatNum(chMap[p.name].shipped)+' / '+chMap[p.name].count+'条'; } },
+      grid: { left: 100, right: 30, top: 10, bottom: 20 },
+      xAxis: { type: 'value', max: 1, axisLabel: { formatter: function(v) { return (v*100).toFixed(0)+'%'; } } },
+      yAxis: { type: 'category', data: chLabels },
+      series: [{
+        type: 'bar', data: chLabels.map(function(ch) { return { value: chMap[ch].dacr, itemStyle: { color: chMap[ch].dacr >= 0.8 ? '#15803D' : chMap[ch].dacr >= 0.5 ? '#D97706' : chMap[ch].dacr >= 0.3 ? '#EA580C' : '#DC2626' } }; }),
+        label: { show: true, position: 'right', formatter: function(p) { return (p.value*100).toFixed(1)+'%'; }, fontSize: 12, fontWeight: 700 }
+      }]
+    });
+    // 月度趋势图
+    var trendChart = echarts.init(document.getElementById('chart-dacr-trend'));
+    var trendMonths = months.slice(0, 6).reverse();
+    var trendData = trendMonths.map(function(m) {
+      var tBiz = 0, tShip = 0;
+      dacrList.forEach(function(r) {
+        if (r.months && r.months[m]) { tBiz += r.months[m]; }
+      });
+      orders.forEach(function(d) {
+        var dm = d.dateStr ? d.dateStr.slice(0,7) : '';
+        if (dm !== m) return;
+        if (d.channel === 'KA' || d.channel === '经销商' || d.channel === '新通路') tShip += (d.firstDayQty || 0);
+      });
+      return tBiz > 0 ? tShip / tBiz : 0;
+    });
+    trendChart.setOption({
+      tooltip: { formatter: function(p) { return p.axisValue+': <b>'+(p.value*100).toFixed(1)+'%</b>'; } },
+      grid: { left: 50, right: 20, top: 10, bottom: 30 },
+      xAxis: { type: 'category', data: trendMonths, axisLabel: { fontSize: 11 } },
+      yAxis: { type: 'value', min: 0, max: 1, axisLabel: { formatter: function(v) { return (v*100).toFixed(0)+'%'; } } },
+      series: [{ type: 'line', data: trendData, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 3, color: '#2563EB' }, itemStyle: { color: '#2563EB' }, areaStyle: { color: 'rgba(37,99,235,0.1)' } }]
+    });
+    // 热力图
+    var heatEl = document.getElementById('chart-dacr-heat');
+    if (heatEl && topN.length > 0) {
+      var topSkus = [...new Set(topN.map(function(r) { return r.sku+'|'+r.rdc; }))];
+      var heatChart = echarts.init(heatEl);
+      var heatY = topSkus.map(function(k) { var p=k.split('|'); var r=dacrMap[k.split('|')[0]+'|'+p[1]+'|经销商']||dacrMap[k.split('|')[0]+'|'+p[1]+'|KA']||dacrList.find(function(x){return x.sku+'|'+x.rdc===k;})||{}; return (r.sku||'')+'-'+(r.skuName||'').slice(0,8)+'@'+p[1]; });
+      var heatChLabels = ['经销商','KA','新通路'];
+      var heatData = [];
+      topSkus.forEach(function(k, yi) {
+        var parts = k.split('|');
+        heatChLabels.forEach(function(ch, xi) {
+          var key = parts[0]+'|'+parts[1]+'|'+ch;
+          var r = dacrMap[key];
+          if (r && r.bizD > 0 && r.dacr > 0) heatData.push([xi, yi, Math.min(r.dacr, 1)]);
+        });
+      });
+      heatChart.setOption({
+        tooltip: { position: 'top', formatter: function(p) {
+          var skuKey = topSkus[p.data[1]];
+          var ch = heatChLabels[p.data[0]];
+          var key = skuKey.split('|')[0]+'|'+skuKey.split('|')[1]+'|'+ch;
+          var r = dacrMap[key];
+          if (!r) return ch+': 无数据';
+          return '<b>'+r.sku+'</b> '+r.skuName+'<br/>'+r.rdc+' × '+ch+'<br/>DACR: <b>'+(r.dacr*100).toFixed(1)+'%</b><br/>提报 '+formatNum(r.bizD)+' / 出货 '+formatNum(r.shipped);
+        }},
+        grid: { left: 180, right: 20, top: 40, bottom: 10 },
+        xAxis: { type: 'category', data: heatChLabels, position: 'top', splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+        yAxis: { type: 'category', data: heatY, splitArea: { show: true }, axisLabel: { fontSize: 9 } },
+        visualMap: { min: 0, max: 1, calculable: true, orient: 'horizontal', left: 'center', top: 0, inRange: { color: ['#DC2626','#EA580C','#D97706','#FBBF24','#4ADE80'] }, text: ['可信', '虚高'], textStyle: { fontSize: 10 } },
+        series: [{ type: 'heatmap', data: heatData, label: { show: true, fontSize: 8, formatter: function(p) { return (p.data[2]*100).toFixed(0)+'%'; } }, cursor: 'pointer', emphasis: { itemStyle: { shadowBlur: 8 } } }]
+      });
+    }
+  }, 100);
+}
+
+function exportDACR() {
+  var data = (window._dacrData && window._dacrData.dacrList) || [];
+  if (!data.length) { showToast('无数据', true); return; }
+  var csv = '\uFEFF#,SKU代码,名称,RDC,渠道,业务提报量,实际出货量,DACR,可信度,虚高增量,建议\n';
+  data.forEach(function(r,i) {
+    var advice = r.lvl <= 2 ? '建议限制虚高补货' : (r.lvl===3 ? '建议按系统需求×1.3上限' : '可按业务需求采纳');
+    csv += [(i+1), r.sku, (r.skuName||'').replace(/,/g,'，'), r.rdc, r.channel, r.bizD, r.shipped, (r.dacr*100).toFixed(1)+'%', r.level||'', r.gap, advice].join(',') + '\n';
+  });
+  downloadFile('业务需求可信度DACR_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
 
 function renderBizDemand() {
