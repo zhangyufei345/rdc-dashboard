@@ -267,8 +267,8 @@ function detectAllMonths() {
   dataStore.orderDetail.forEach(d => { if (d.dateStr && d.dateStr.length >= 7) monthSet.add(d.dateStr.slice(0, 7)); });
   dataStore.transship.forEach(d => { if (d.dateStr && d.dateStr.length >= 7) monthSet.add(d.dateStr.slice(0, 7)); });
   dataStore.overall.dailyFulfill.forEach(d => { if (d.dateStr && d.dateStr.length >= 7) monthSet.add(d.dateStr.slice(0, 7)); });
-  // 只保留有效月份格式 (YYYY-MM) 且 >= 2026-06
-  window._availableMonths = [...monthSet].filter(m => /^\d{4}-\d{2}$/.test(m) && m >= '2026-06').sort();
+  // 只保留有效月份格式 (YYYY-MM) 且 >= 2026-05
+  window._availableMonths = [...monthSet].filter(m => /^\d{4}-\d{2}$/.test(m) && m >= '2026-05').sort();
   window._latestMonth = window._availableMonths.length > 0 ? window._availableMonths[window._availableMonths.length - 1] : null;
 }
 
