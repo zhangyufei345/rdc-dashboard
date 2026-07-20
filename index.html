@@ -6338,6 +6338,50 @@ function renderSlowMoving() {
   var systemicCount = crossBrands.filter(function(c) { return c.highCount >= 4; }).length;
   var regionalCount = crossBrands.filter(function(c) { return c.highCount >= 2 && c.highCount < 4; }).length;
 
+  // ========== RDC × 主根因 慢动金额矩阵（全量RDC，不受上方RDC筛选影响）==========
+  // 主根因优先级（严重度从高到低，取命中的最严重一项作为该SKU主根因，金额零重复）
+  var CAUSE_PRIORITY = ['⚡ 需求信号全面失真','严重呆滞','效期风险','未来需求下降','分仓需求虚高(过量补货)','业务提报需求虚高','需求变化待查','正常慢周转'];
+  function getPrimaryCause(rc) {
+    if (!rc) return '正常慢周转';
+    for (var i = 0; i < CAUSE_PRIORITY.length; i++) { if (rc.indexOf(CAUSE_PRIORITY[i]) >= 0) return CAUSE_PRIORITY[i]; }
+    return rc; // 未知根因原样返回（避免丢失）
+  }
+  // 基于全量慢动品重跑诊断，得到每个SKU的 rootCause
+  var slowKeysAll2 = new Set(slow6AllRdc.map(function(d) { return d.rdc + '|' + d.sku; }));
+  var transNetAll2 = {};
+  (dataStore.transship || []).forEach(function(t) { var k = t.rdc + '|' + t.material; if (!slowKeysAll2.has(k)) return; if (!transNetAll2[k]) transNetAll2[k] = { inn: 0, out: 0 }; transNetAll2[k].inn += (t.inboundQty || 0); transNetAll2[k].out += (t.deliveryQty || 0); });
+  var shipQtyAll2 = {};
+  (dataStore.orderDetail || []).forEach(function(o) { var k = normalizeRdcName(o.warehouse) + '|' + o.skuCode; if (!slowKeysAll2.has(k)) return; shipQtyAll2[k] = (shipQtyAll2[k] || 0) + (o.firstDayQty || 0); });
+  var bizDemandAll2 = {};
+  (dataStore.bizDemand || []).forEach(function(b) { var k = normalizeRdcName(b.rdc) + '|' + b.opCode; if (!slowKeysAll2.has(k)) return; bizDemandAll2[k] = (bizDemandAll2[k] || 0) + ((b.dealerDemand || 0) + (b.kaDemand || 0) + (b.newChannel || 0)); });
+  var detailRowsAll2 = slow6AllRdc.map(function(d) {
+    var key = d.rdc + '|' + d.sku;
+    var netIn = transNetAll2[key] ? (transNetAll2[key].inn - transNetAll2[key].out) : 0;
+    var ship = shipQtyAll2[key] || 0;
+    var demand = bizDemandAll2[key] || 0;
+    var fut = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0);
+    var fut5v = futureDemand5All[key] || 0;
+    var exMap = (dataStore.inventory && dataStore.inventory.expiry6) ? dataStore.inventory.expiry6[key] : null;
+    var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0;
+    var isNew = !maySlowKeysAll.has(key);
+    var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, demand: demand, fut: fut, fut5: fut5v, expiryRatio: expiryRatio, isNew: isNew });
+    return { rdc: d.rdc, sku: d.sku, inventoryAmt: d.planAmt, rootCause: diag.rc, fullRootCause: diag.rc };
+  });
+  // 聚合 RDC × 主根因 金额（元）
+  var causeRdcMatrix = {};      // {cause: {rdc: amt}}
+  var causeTotalAmt = {};       // {cause: amt}
+  var rdcCauseTotalAmt = {};    // {rdc: amt}
+  detailRowsAll2.forEach(function(d) {
+    var cause = getPrimaryCause(d.rootCause);
+    if (!causeRdcMatrix[cause]) causeRdcMatrix[cause] = {};
+    causeRdcMatrix[cause][d.rdc] = (causeRdcMatrix[cause][d.rdc] || 0) + (d.inventoryAmt || 0);
+    causeTotalAmt[cause] = (causeTotalAmt[cause] || 0) + (d.inventoryAmt || 0);
+    rdcCauseTotalAmt[d.rdc] = (rdcCauseTotalAmt[d.rdc] || 0) + (d.inventoryAmt || 0);
+  });
+  // 仅保留有数据的根因，按优先级排序
+  var causeYOrder = CAUSE_PRIORITY.filter(function(c) { return causeRdcMatrix[c] && Object.keys(causeRdcMatrix[c]).length; });
+  window._causeMatrix = { causeRdcMatrix: causeRdcMatrix, causeTotalAmt: causeTotalAmt, rdcCauseTotalAmt: rdcCauseTotalAmt, causeYOrder: causeYOrder, rdcs: allRdcs, causePriority: CAUSE_PRIORITY };
+
   var trendQty = [slow5, slow6].map(function(arr) { return arr.reduce(function(s,d) { return s + (d.availQtyPlan || d.availableQty || 0); }, 0); });
 
   var rdcLabel = rdcFilter === 'all' ? '全部RDC' : rdcFilter;
@@ -6372,6 +6416,13 @@ function renderSlowMoving() {
   }
   crossHtml += '</tbody></table></div><div style="text-align:right;padding:8px 0"><button class="btn-export" onclick="exportCrossBrand()">导出CSV</button></div></div>';
   html += crossHtml;
+
+  // RDC × 主根因 慢动金额矩阵卡片
+  var causeMatrixH = causeYOrder.length ? '' : '<div style="text-align:center;padding:30px;color:var(--text-secondary)">暂无慢动品根因数据</div>';
+  var causeMatrixHtml = '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🧩 RDC × 主根因 慢动金额矩阵</span><span style="font-size:11px;color:var(--text-secondary)">基于全部RDC（不受上方RDC筛选影响）｜每SKU取最严重主根因，金额零重复｜颜色=金额深浅</span></div>';
+  causeMatrixHtml += '<div class="chart-container" id="chart-slow-cause-matrix" style="height:' + Math.max(260, causeYOrder.length * 38 + 50) + 'px"></div>' + causeMatrixH;
+  causeMatrixHtml += '<div style="text-align:right;padding:8px 0"><button class="btn-export" onclick="exportCauseMatrix()">导出CSV</button></div></div>';
+  html += causeMatrixHtml;
 
   html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🔴 本月新增慢动品 Top 20（5月正常→6月慢动）</span><button class="btn-export" onclick="exportSlowMovingNew()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>5月覆盖</th><th>6月覆盖</th><th class="num">计划可用库存量</th><th class="num">计划可用金额（千元）</th><th>根因</th><th>建议</th></tr></thead><tbody>';
   if (topNew.length === 0) { html += '<tr><td colspan="10" style="text-align:center;padding:30px">暂无新增慢动品</td></tr>'; }
@@ -6427,6 +6478,41 @@ function renderSlowMoving() {
       series: [{ type: 'heatmap', data: heatData, label: { show: true, fontSize: 9, formatter: function(p) { return p.data[2] + '%'; } }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } } }]
     });
 
+    // RDC × 主根因 慢动金额矩阵 热力图
+    var causeChartEl = document.getElementById('chart-slow-cause-matrix');
+    if (causeChartEl && window._causeMatrix && window._causeMatrix.causeYOrder && window._causeMatrix.causeYOrder.length) {
+      var cm = window._causeMatrix;
+      var causeY = cm.causeYOrder;
+      var causeHeatData = [];
+      var causeMax = 0;
+      causeY.forEach(function(c, yi) {
+        cm.rdcs.forEach(function(r, xi) {
+          var v = (cm.causeRdcMatrix[c] && cm.causeRdcMatrix[c][r] != null) ? +(cm.causeRdcMatrix[c][r] / 1000).toFixed(1) : null;
+          if (v !== null && v > 0) { causeHeatData.push([xi, yi, v]); if (v > causeMax) causeMax = v; }
+        });
+      });
+      var causeChart = echarts.init(causeChartEl);
+      causeChart.setOption({
+        tooltip: {
+          position: 'top',
+          formatter: function(p) {
+            var rdc = cm.rdcs[p.data[0]];
+            var cause = causeY[p.data[1]];
+            var amtK = p.data[2];
+            var rdcTot = cm.rdcCauseTotalAmt[rdc] || 0;
+            var pct = rdcTot > 0 ? (amtK * 1000 / rdcTot * 100).toFixed(1) : '0.0';
+            return '<strong>' + cause + '</strong><br/>' + rdc + '：<b>' + amtK + ' 千元</b><br/>占该RDC慢动总额 ' + pct + '%';
+          }
+        },
+        grid: { left: 150, right: 20, top: 50, bottom: 10 },
+        xAxis: { type: 'category', data: ['华南','华北','东北','西北','华中','西南'], position: 'top', splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+        yAxis: { type: 'category', data: causeY, splitArea: { show: true }, axisLabel: { fontSize: 11 } },
+        visualMap: { min: 0, max: causeMax || 1, calculable: true, orient: 'horizontal', left: 'center', top: 0, inRange: { color: ['#F0F9FF','#FCA5A5','#DC2626'] }, text: ['高', '低'], textStyle: { fontSize: 10 } },
+        series: [{ type: 'heatmap', data: causeHeatData, label: { show: true, fontSize: 9, formatter: function(p) { return p.data[2]; } }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } } }]
+      });
+      window._chartInstances.push(causeChart);
+    }
+
     window._chartInstances = window._chartInstances || [];
     window._chartInstances.push(trendChart, rdcChart, brandChart, levelChart, heatChart);
   }, 100);
@@ -6467,6 +6553,36 @@ function exportCrossBrand() {
     ].join(',') + '\n';
   });
   downloadFile('跨RDC高占比品牌_' + new Date().toISOString().slice(0,10) + '.csv', csv);
+}
+
+function exportCauseMatrix() {
+  var cm = window._causeMatrix;
+  if (!cm || !cm.causeYOrder || cm.causeYOrder.length === 0) { showToast('暂无根因矩阵数据', true); return; }
+  var header = ['主根因'].concat(cm.rdcs).concat(['全国合计(千元)']);
+  var csv = '\uFEFF' + header.join(',') + '\n';
+  cm.causePriority.forEach(function(cause) {
+    if (!cm.causeRdcMatrix[cause]) return;
+    var row = [cause];
+    var rowTotal = 0;
+    cm.rdcs.forEach(function(r) {
+      var amtK = (cm.causeRdcMatrix[cause][r] || 0) / 1000;
+      row.push(amtK.toFixed(1));
+      rowTotal += amtK;
+    });
+    row.push(rowTotal.toFixed(1));
+    csv += row.join(',') + '\n';
+  });
+  // 合计行
+  var totRow = ['全国合计(千元)'];
+  var grand = 0;
+  cm.rdcs.forEach(function(r) {
+    var amtK = (cm.rdcCauseTotalAmt[r] || 0) / 1000;
+    totRow.push(amtK.toFixed(1));
+    grand += amtK;
+  });
+  totRow.push(grand.toFixed(1));
+  csv += totRow.join(',') + '\n';
+  downloadFile('RDC×主根因慢动金额矩阵_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
 
 // ==================== 慢动品根因分析逻辑说明 ====================
