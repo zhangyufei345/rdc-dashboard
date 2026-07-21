@@ -1355,7 +1355,7 @@ function renderOverview() {
     </div>
     <div class="kpi-row">
       <div class="kpi-card blue"><div class="kpi-label">月度订单满足率（MTD）</div><div class="kpi-value">${(monthFulfillRate*100).toFixed(1)}<span class="kpi-unit">%</span></div></div>
-      <div class="kpi-card green"><div class="kpi-label">日订单满足率（MTD）</div><div class="kpi-value">${(dayRate*100).toFixed(1)}<span class="kpi-unit">%</span></div></div>
+      <div class="kpi-card green"><div class="kpi-label">日订单满足率对比（MTD）</div><div class="kpi-value">${(dayRate*100).toFixed(1)}<span class="kpi-unit">%</span></div></div>
       <div class="kpi-card red"><div class="kpi-label">缺货总金额（截止至${dateLabel}）</div><div class="kpi-value">${formatMoney(totalShortAmount)}</div></div>
       <div class="kpi-card orange"><div class="kpi-label">缺货总箱数（截止至${dateLabel}）</div><div class="kpi-value">${formatNum(totalShortBoxes)}<span class="kpi-unit">箱</span></div></div>
       <div class="kpi-card teal"><div class="kpi-label">在途总箱数（截止至${dateLabel}）</div><div class="kpi-value">${formatNum(totalTransitBoxes)}<span class="kpi-unit">箱</span></div></div>
@@ -1364,7 +1364,7 @@ function renderOverview() {
     ${(renderOverviewHistory() || '')}
     <div class="row-2">
       <div class="card">
-        <div class="card-header"><span class="card-title">RDC日订单满足率趋势</span></div>
+        <div class="card-header"><span class="card-title">RDC日订单满足率对比</span></div>
         ${renderOverviewRdcCheckboxes()}
         <div class="chart-container" id="chart-fulfill-trend"></div>
       </div>
@@ -1606,7 +1606,7 @@ function renderOverview() {
       formatter: function(p) {
         const items = breakdown[p.name] || [];
         let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + p.name + '（总量：' + formatNum(p.value) + '支）</div>';
-        html += '<table style="font-size:11px;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid #ddd"><td style="padding:2px 6px;color:#888">#</td><td style="padding:2px 6px;color:#888">客户组</td><td style="padding:2px 6px;text-align:right;color:#888">订单量</td><td style="padding:2px 6px;text-align:right;color:#888">日满足率</td></tr>';
+        html += '<table style="font-size:11px;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid #ddd"><td style="padding:2px 6px;color:#888">#</td><td style="padding:2px 6px;color:#888">客户组</td><td style="padding:2px 6px;text-align:right;color:#888">订单量</td><td style="padding:2px 6px;text-align:right;color:#888">日满足率对比</td></tr>';
         items.slice(0, 10).forEach(function(d, i) {
           html += '<tr><td style="padding:2px 6px;color:#aaa;text-align:center">' + (i+1) + '</td><td style="padding:2px 6px">' + d.name + '</td><td style="padding:2px 6px;text-align:right">' + formatNum(d.qty) + '</td><td style="padding:2px 6px;text-align:right">' + d.rate + '%</td></tr>';
         });
@@ -1784,11 +1784,11 @@ function renderFulfillment() {
         <option value="all" ${filters.fulfillRDC==='all'?'selected':''}>所有RDC</option>
         ${RDC_LIST.map(r => '<option value="'+r+'"'+(filters.fulfillRDC===r?' selected':'')+'>'+r+'</option>').join('')}
       </select>
-      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">日满足率基于所选日期 · 月满足率基于全月数据</span>
+      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">日满足率对比基于所选日期 · 月满足率基于全月数据</span>
     </div>
     ${renderFulfillmentHistory() || ''}
     <div class="card">
-      <div class="card-header"><span class="card-title">日订单满足趋势（跳过双休日）</span></div>
+      <div class="card-header"><span class="card-title">日订单满足率对比（跳过双休日）</span></div>
       <div class="chart-container" id="chart-fulfill-weekday"></div>
     </div>
     <div class="card">
@@ -1875,7 +1875,7 @@ function renderFulfillment() {
 
   let tableHtml = '<table class="data-table"><thead><tr>' +
     '<th rowspan="2" style="vertical-align:middle">RDC</th>' +
-    '<th colspan="3" style="text-align:center;background:#FFFBEB">日满足率（' + filters.fulfillDate + '）</th>' +
+    '<th colspan="3" style="text-align:center;background:#FFFBEB">日满足率对比（' + filters.fulfillDate + '）</th>' +
     '<th colspan="3" style="text-align:center;background:#EFF6FF">月满足率（全月）</th>' +
     '</tr><tr>' +
     '<th style="text-align:center;background:#FFFBEB">KA</th><th style="text-align:center;background:#FFFBEB">经销商</th><th style="text-align:center;background:#FFFBEB">合计</th>' +
@@ -1917,7 +1917,7 @@ function renderFulfillment() {
   // 为每个带缺货的单元格添加tooltip弹框
   document.getElementById('table-rdc-channel-fulfill').innerHTML = tableHtml;
 
-  // 月度满足率历史对比（2025 vs 2026）
+  // 订单满足率历史同比矩阵 + 年度概览
   renderFulfillmentHistoryCharts();
 }
 
@@ -1929,58 +1929,19 @@ function renderFulfillmentHistory() {
   const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
     RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
   return '' +
-    '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">📅 月度订单满足率历史对比（2025 全年 vs 2026 1–6月）</span>' +
-        '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
-      '</div>' +
-      '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">折线为各年月度满足率；灰色虚线=2025全年，蓝色实线=2026 1–6月</div>' +
-      '<div class="chart-container" id="chart-fulfill-history-trend"></div>' +
-    '</div>' +
     '<div class="row-2" style="margin-bottom:16px">' +
       '<div class="card"><div class="card-header"><span class="card-title">RDC × 月份 月度满足率矩阵（含同比）</span></div><div class="table-wrap" id="table-fulfill-history-matrix"></div></div>' +
-      '<div class="card"><div class="card-header"><span class="card-title">年度同比概览（上半年）</span></div><div id="kpi-fulfill-history"></div></div>' +
+      '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
+        '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
+      '</div><div id="kpi-fulfill-history"></div></div>' +
     '</div>';
 }
 
-// 月度订单满足率历史对比卡片（图表 + 表格 + KPI 渲染）
+// 订单满足率历史同比（矩阵 + 年度概览，不含月度折线）
 function renderFulfillmentHistoryCharts() {
   if (!dataStore.history || !dataStore.history.fulfillment) return;
   const H = dataStore.history.fulfillment;
   const rdc = window._fulHtyRdc || 'all';
-  const months12 = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
-  function monthlyArr(year) {
-    const m = H[year].monthly;
-    if (rdc === 'all') {
-      return months12.map((_, i) => {
-        let s = 0, c = 0;
-        RDC_LIST.forEach(r => { const v = m[r] && m[r][i]; if (v != null) { s += v; c++; } });
-        return c ? s / c : null;
-      });
-    }
-    return (m[rdc] || []).slice();
-  }
-  const arr25 = monthlyArr('2025');
-  let arr26 = monthlyArr('2026');
-  while (arr26.length < 12) arr26.push(null);
-  const arr26pad = arr26;
-
-  // Chart: trend
-  const chart = initChart('chart-fulfill-history-trend');
-  chart.setOption({
-    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) {
-      let h = '<strong>' + p[0].axisValue + '</strong>';
-      p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value * 100).toFixed(1) + '%'; });
-      return h;
-    } },
-    legend: { data: ['2025', '2026'], top: 0, left: 'center', textStyle: { fontSize: 11 } },
-    grid: { left: 55, right: 20, top: 40, bottom: 30 },
-    xAxis: { type: 'category', data: months12, axisLabel: { fontSize: 11 } },
-    yAxis: { type: 'value', min: 0.5, max: 1.03, axisLabel: { formatter: v => (v * 100).toFixed(0) + '%' } },
-    series: [
-      { name: '2025', type: 'line', data: arr25, smooth: true, symbol: 'none', lineStyle: { width: 2, type: 'dashed' }, color: '#94a3b8' },
-      { name: '2026', type: 'line', data: arr26pad, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, color: '#2563EB' }
-    ]
-  });
 
   // Matrix table: RDC x month (1-6), cell = 2026 value, sub = 2025 value + YoY delta
   const h1 = [0, 1, 2, 3, 4, 5];
@@ -2019,23 +1980,35 @@ function renderFulfillmentHistoryCharts() {
   document.getElementById('table-fulfill-history-matrix').innerHTML = mHtml;
 
   // KPI overview (first-half YoY)
-  function avgOf(year, idxs) {
+  const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
+  function avgOf(type, year, idxs) {
     let s = 0, c = 0;
-    RDC_LIST.forEach(r => { idxs.forEach(i => { const v = H[year].monthly[r][i]; if (v != null) { s += v; c++; } }); });
+    rdcList.forEach(r => { idxs.forEach(i => { const v = H[year][type][r] && H[year][type][r][i]; if (v != null) { s += v; c++; } }); });
     return c ? s / c : 0;
   }
-  const h1_26 = avgOf('2026', h1), h1_25 = avgOf('2025', h1);
-  const jun_26 = avgOf('2026', [5]), jun_25 = avgOf('2025', [5]);
+  const h1_26 = avgOf('monthly', '2026', h1), h1_25 = avgOf('monthly', '2025', h1);
+  const jun_26 = avgOf('monthly', '2026', [5]), jun_25 = avgOf('monthly', '2025', [5]);
+  const h1_26d = avgOf('daily', '2026', h1), h1_25d = avgOf('daily', '2025', h1);
+  const jun_26d = avgOf('daily', '2026', [5]), jun_25d = avgOf('daily', '2025', [5]);
   function pp(cur, prev) { const d = cur - prev; return { color: d >= 0 ? 'var(--color-green)' : 'var(--color-red)', txt: (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp' }; }
   const a1 = pp(h1_26, h1_25), a2 = pp(jun_26, jun_25);
+  const a1d = pp(h1_26d, h1_25d), a2d = pp(jun_26d, jun_25d);
   let improved = 0, declined = 0;
-  RDC_LIST.forEach(r => h1.forEach(i => { const v26 = H['2026'].monthly[r][i], v25 = H['2025'].monthly[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improved++; else declined++; } }));
+  rdcList.forEach(r => h1.forEach(i => { const v26 = H['2026'].monthly[r][i], v25 = H['2025'].monthly[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improved++; else declined++; } }));
+  let improvedD = 0, declinedD = 0;
+  rdcList.forEach(r => h1.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
+  const totalCells = rdcList.length * h1.length;
   const kpiHtml = '<div style="padding:12px">' +
     '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026上半年月均满足率</span><span style="font-size:18px;font-weight:700">' + (h1_26 * 100).toFixed(1) + '%</span></div>' +
     '<div style="text-align:right;font-size:11px;color:' + a1.color + '">同比 ' + a1.txt + '（2025 H1：' + (h1_25 * 100).toFixed(1) + '%）</div>' +
     '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026年6月月均满足率</span><span style="font-size:18px;font-weight:700">' + (jun_26 * 100).toFixed(1) + '%</span></div>' +
     '<div style="text-align:right;font-size:11px;color:' + a2.color + '">同比 ' + a2.txt + '（2025年6月：' + (jun_25 * 100).toFixed(1) + '%）</div>' +
-    '<div style="margin-top:10px;font-size:12px;color:var(--text-secondary)">上半年 36 个「RDC×月」中：<span style="color:var(--color-green)">↑ ' + improved + ' 个改善</span> · <span style="color:var(--color-red)">↓ ' + declined + ' 个下滑</span></div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card);margin-top:12px"><span style="font-size:12px;color:var(--text-secondary)">2026上半年日满足率对比</span><span style="font-size:18px;font-weight:700">' + (h1_26d * 100).toFixed(1) + '%</span></div>' +
+    '<div style="text-align:right;font-size:11px;color:' + a1d.color + '">同比 ' + a1d.txt + '（2025 H1：' + (h1_25d * 100).toFixed(1) + '%）</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026年6月日满足率对比</span><span style="font-size:18px;font-weight:700">' + (jun_26d * 100).toFixed(1) + '%</span></div>' +
+    '<div style="text-align:right;font-size:11px;color:' + a2d.color + '">同比 ' + a2d.txt + '（2025年6月：' + (jun_25d * 100).toFixed(1) + '%）</div>' +
+    '<div style="margin-top:10px;font-size:12px;color:var(--text-secondary)">上半年 ' + totalCells + ' 个「RDC×月」月均满足率中：<span style="color:var(--color-green)">↑ ' + improved + ' 个改善</span> · <span style="color:var(--color-red)">↓ ' + declined + ' 个下滑</span></div>' +
+    '<div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">上半年 ' + totalCells + ' 个「RDC×月」日满足率对比中：<span style="color:var(--color-green)">↑ ' + improvedD + ' 个改善</span> · <span style="color:var(--color-red)">↓ ' + declinedD + ' 个下滑</span></div>' +
     '</div>';
   document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
 }
@@ -2373,7 +2346,7 @@ function renderShortageOrderDetail() {
     <!-- 日订单满足矩阵 -->
     <div class="card" style="margin-bottom:12px" id="card-brand-rdc-matrix">
       <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span class="card-title">日订单满足矩阵</span>
+        <span class="card-title">日订单满足率对比矩阵</span>
         <span style="font-size:11px;color:var(--text-secondary)">首日满足率 = (订单量 - 首日缺货) / 订单量</span>
       </div>
       <div style="display:flex;gap:10px;align-items:center;padding:0 12px 8px 12px">
@@ -2812,7 +2785,7 @@ function renderBrandChannel() {
         <div class="chart-container-sm" id="chart-channel-pie"></div>
       </div>
       <div class="card">
-        <div class="card-header"><span class="card-title">品牌日订单满足率趋势</span></div>
+        <div class="card-header"><span class="card-title">品牌日订单满足率对比</span></div>
         ${renderBrandCheckboxes()}
         <div class="chart-container-sm" id="chart-brand-trend"></div>
       </div>
@@ -2910,7 +2883,7 @@ function renderBrandChannel() {
     const firstQty = chOrders.reduce((s,d) => s + d.firstDayQty, 0);
     chTableData.push({ channel: ch, orderQty: totalQty, fulfillQty, firstQty, monthRate: totalQty>0?fulfillQty/totalQty:0, dayRate: totalQty>0?firstQty/totalQty:0 });
   });
-  const chTableHtml = '<table class="data-table"><thead><tr><th>渠道</th><th>订单支数</th><th>总履约支数</th><th>首日排单支数</th><th>月满足率</th><th>日满足率</th></tr></thead><tbody>' +
+  const chTableHtml = '<table class="data-table"><thead><tr><th>渠道</th><th>订单支数</th><th>总履约支数</th><th>首日排单支数</th><th>月满足率</th><th>日满足率对比</th></tr></thead><tbody>' +
     chTableData.map(d => `<tr><td>${d.channel}</td><td class="num">${formatNum(d.orderQty)}</td><td class="num">${formatNum(d.fulfillQty)}</td><td class="num">${formatNum(d.firstQty)}</td><td class="num"><span class="${d.monthRate>=0.95?'rate-good':d.monthRate>=0.9?'rate-warn':'rate-bad'}">${formatPct(d.monthRate)}</span></td><td class="num"><span class="${d.dayRate>=0.95?'rate-good':d.dayRate>=0.9?'rate-warn':'rate-bad'}">${formatPct(d.dayRate)}</span></td></tr>`).join('') +
     '</tbody></table>';
   document.getElementById('table-channel-summary').innerHTML = chTableHtml;
@@ -2997,7 +2970,7 @@ function renderCustomer() {
           const actualIndex = top30.length - 1 - p[0].dataIndex;
           if (actualIndex < 0 || actualIndex >= top30.length) return '';
           const d = top30[actualIndex];
-          return d.name + '<br/>订单支数：' + formatNum(d.orderQty) + '<br/>月满足率：' + (d.monthRate*100).toFixed(1)+'%<br/>日满足率：' + (d.dayRate*100).toFixed(1)+'%';
+          return d.name + '<br/>订单支数：' + formatNum(d.orderQty) + '<br/>月满足率：' + (d.monthRate*100).toFixed(1)+'%<br/>日满足率对比：' + (d.dayRate*100).toFixed(1)+'%';
         }
       },
       grid: { left: 120, right: 30, top: 10, bottom: 20 },
@@ -3078,7 +3051,7 @@ function renderCustomer() {
     const cgSummary = window._cgSummary;
     // 明细表按日订单满足率从低到高排序
     const tableSorted = [...cgSummary].sort((a, b) => a.dayRate - b.dayRate);
-    const tableHtml = '<table class="data-table"><thead><tr><th>#</th><th>客户组</th><th>订单支数</th><th>首日排单</th><th>总履约</th><th>拒绝量</th><th>日满足率</th><th>月满足率</th><th>操作</th></tr></thead><tbody>' +
+    const tableHtml = '<table class="data-table"><thead><tr><th>#</th><th>客户组</th><th>订单支数</th><th>首日排单</th><th>总履约</th><th>拒绝量</th><th>日满足率对比</th><th>月满足率</th><th>操作</th></tr></thead><tbody>' +
       tableSorted.map((d, i) => `<tr style="cursor:pointer" onclick="drillCustomerByName('${(d.name||'').replace(/'/g,"\\'")}')">
         <td>${i+1}</td><td title="${d.name}">${d.name.length>12?d.name.substring(0,12)+'...':d.name}</td>
         <td class="num">${formatNum(d.orderQty)}</td><td class="num">${formatNum(d.firstQty)}</td><td class="num">${formatNum(d.fulfillQty)}</td>
@@ -3242,7 +3215,7 @@ function renderCustomerDrillDetail(customer) {
         <div style="font-size:24px">👤</div>
         <div>
           <div style="font-size:18px;font-weight:700;color:#1D4ED8">${customer.name}</div>
-          <div style="font-size:12px;color:#3B82F6">订单支数：${formatNum(customer.orderQty)} | 月满足率：<strong>${formatPct(customer.monthRate)}</strong> | 日满足率：${formatPct(customer.dayRate)}</div>
+          <div style="font-size:12px;color:#3B82F6">订单支数：${formatNum(customer.orderQty)} | 月满足率：<strong>${formatPct(customer.monthRate)}</strong> | 日满足率对比：${formatPct(customer.dayRate)}</div>
         </div>
       </div>
     </div>
@@ -3332,7 +3305,7 @@ function exportCustomerCSV() {
     agg[d.customerGroup].firstQty += d.firstDayQty;
     if (d.rejectReason && d.rejectReason.trim()) agg[d.customerGroup].rejectQty += d.orderQty;
   });
-  let csv = '\uFEFF客户组,订单支数,首日排单支数,总履约支数,拒绝量,日满足率,月满足率\n';
+  let csv = '\uFEFF客户组,订单支数,首日排单支数,总履约支数,拒绝量,日满足率对比,月满足率\n';
   Object.entries(agg).forEach(([k,v]) => {
     csv += `"${k}",${v.orderQty},${v.firstQty},${v.fulfillQty},${v.rejectQty||0},${(v.orderQty>0?v.firstQty/v.orderQty:0).toFixed(4)},${(v.orderQty>0?v.fulfillQty/v.orderQty:0).toFixed(4)}\n`;
   });
