@@ -5111,6 +5111,12 @@ function renderInventoryTurnover() {
     return sum;
   }
 
+  // YTD sales cost and days for formula example
+  var hqYtdShipment = 0;
+  var hqShipArr = inv.shipmentCost['总部'];
+  for (var i = 0; i <= latestIdx; i++) hqYtdShipment += (hqShipArr && hqShipArr[i]) || 0;
+  var ytdDays = (latestIdx + 1) * 30;
+
   page.innerHTML = '' +
     // KPI cards
     '<div class="kpi-row">' +
@@ -5142,9 +5148,9 @@ function renderInventoryTurnover() {
     // Detail tables
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">各RDC全库位周转天数（天）</span></div><div class="table-wrap" id="table-inv-turnover"></div></div>' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">库存与出货成本明细（单位：千元）</span></div><div class="table-wrap" id="table-inv-detail"></div></div>' +
-    '<div class="card" style="background:#FFF7ED;border-color:#FED7AA"><div class="card-header"><span class="card-title">📐 周转天数公式</span></div><div style="font-size:13px;font-weight:500;color:#92400E;margin-bottom:4px">' + (inv.formula || '周转天数 = 期末库存 / 当期出货成本 × 30天') + '</div>' +
-    '<div style="font-size:11px;color:#9A3412">每月按30天计算 · 数据来源于库存周转Sheet</div>' +
-    '<div style="margin-top:6px;padding:6px 10px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#92400E">例（6月）：总仓周转 ' + hqTurnover + '天 = 期末库存' + fmtNum(hqInventory) + ' / 当月出货' + fmtNum(hqShipment) + ' × 30天</div></div>';
+    '<div class="card" style="background:#FFF7ED;border-color:#FED7AA"><div class="card-header"><span class="card-title">📐 周转天数公式</span></div><div style="font-size:13px;font-weight:500;color:#92400E;margin-bottom:4px">' + (inv.formula || '周转天数 = 月末存货金额 / YTD销售成本 × YTD天数（每月按30天计）') + '</div>' +
+    '<div style="font-size:11px;color:#9A3412">每月按30天计算 · YTD天数 = 累计月份数 × 30 · 数据来源于库存周转Sheet</div>' +
+    '<div style="margin-top:6px;padding:6px 10px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#92400E">例（6月）：总仓周转 ' + hqTurnover + '天 = 月末存货金额' + fmtNum(hqInventory) + ' / YTD销售成本' + fmtNum(hqYtdShipment) + ' × ' + ytdDays + '天</div></div>';
 
   // ---- Chart 1: Dual-axis (Inventory bar + Shipment line) ----
   // Build data by selected RDC or all
