@@ -899,15 +899,15 @@ function parseExcel(rawData, mode, options) {
       });
     }
 
-    // ---- Block 3: 品牌月度订单满足率 (cols 16-22) ----
-    // Header在row2 col16="品牌\\RDC", 数据从row3开始, col16=品牌名, col17-22=6个RDC满足率
+    // ---- Block 3: 品牌月度订单满足率 (col15=品牌名, cols16-21=6个RDC) ----
+    // 注意：xlsx 行化后 row2 col15="品牌\\RDC"，数据从 row3 开始；品牌名在 col15，6个RDC满足率在 col16-21。
     for (let i = 2; i < sh2.length; i++) {
       const r = sh2[i];
-      if (!r || r.length < 23) continue;
-      const rawBrand = getSafeStr(r, 16);
+      if (!r || r.length < 22) continue;
+      const rawBrand = getSafeStr(r, 15);
       if (!rawBrand || rawBrand === '' || rawBrand.includes('品牌') || rawBrand.includes('\\') || rawBrand === 'RDC') continue;
       // 只取有实际数据的品牌行（至少有一个RDC有值）
-      const hasData = [17,18,19,20,21,22].some(ci => r[ci] != null && r[ci] !== '' && !isNaN(Number(r[ci])));
+      const hasData = [16,17,18,19,20,21].some(ci => r[ci] != null && r[ci] !== '' && !isNaN(Number(r[ci])));
       if (!hasData) continue;
       const brand = normalizeBrandName(rawBrand);
       const brandKey = brand;
@@ -917,7 +917,7 @@ function parseExcel(rawData, mode, options) {
         const existing = dataStore.overall.brandFulfill.find(d => d.brand === brand);
         if (existing) {
           rdcKeys.forEach((rk, idx) => {
-            const v = getSafeNum(r, 17 + idx);
+            const v = getSafeNum(r, 16 + idx);
             if (v != null && !isNaN(v)) {
               const c = existing._counts[rk] || 0;
               existing[rk] = c === 0 ? v : (existing[rk] * c + v) / (c + 1);
@@ -931,7 +931,7 @@ function parseExcel(rawData, mode, options) {
       const entry = { brand };
       const counts = {};
       rdcKeys.forEach((rk, idx) => {
-        const v = getSafeNum(r, 17 + idx);
+        const v = getSafeNum(r, 16 + idx);
         entry[rk] = v;
         counts[rk] = (v != null && !isNaN(v)) ? 1 : 0;
       });
