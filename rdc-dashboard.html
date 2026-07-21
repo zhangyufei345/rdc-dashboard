@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = 'datasets';
 let db = null;
 
@@ -5341,6 +5341,19 @@ function init() {
         const mres = await fetch('./manifest.json', { cache: 'no-cache' });
         if (mres.ok) manifest = await mres.json();
       } catch (e) { manifest = null; }
+
+      // 自动检测新版本并强制刷新（根治浏览器陈旧缓存：品牌归并"还是没变"、出货成本显示0等）
+      try {
+        if (manifest && manifest.generatedAt) {
+          const flag = sessionStorage.getItem('rdc_deploy_flag');
+          if (flag !== manifest.generatedAt) {
+            sessionStorage.setItem('rdc_deploy_flag', manifest.generatedAt);
+            try { localStorage.removeItem('rdc_manifest_hashes'); } catch (e) {}
+            location.search = '?v=' + encodeURIComponent(manifest.generatedAt);
+            return;
+          }
+        }
+      } catch (e) {}
 
       if (manifest && manifest.files) {
         const stored = getStoredHashes() || {};
