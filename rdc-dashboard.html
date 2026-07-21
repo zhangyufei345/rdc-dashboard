@@ -453,6 +453,7 @@ async function saveToIDB() {
       transship: dataStore.transship,
       inventoryTurnover: dataStore.inventoryTurnover || null,
       inventory: dataStore.inventory || null,
+      history: dataStore.history || null,
       shortageReasons: window._shortageReasons || {},
       replStatus: window._replStatus || {},
       boxSpecMap: window._boxSpec || {},
@@ -484,6 +485,7 @@ async function loadFromIDB() {
           dataStore.transship = req.result.transship || [];
           dataStore.inventoryTurnover = req.result.inventoryTurnover || null;
           dataStore.inventory = req.result.inventory || null;
+          dataStore.history = req.result.history || null;
           window._shortageReasons = req.result.shortageReasons || {};
           // 尝试从localStorage恢复缺货原因（作为IndexedDB的补充备份）
           if (Object.keys(window._shortageReasons).length === 0) {
@@ -1359,6 +1361,7 @@ function renderOverview() {
       <div class="kpi-card teal"><div class="kpi-label">在途总箱数（截止至${dateLabel}）</div><div class="kpi-value">${formatNum(totalTransitBoxes)}<span class="kpi-unit">箱</span></div></div>
       <div class="kpi-card purple"><div class="kpi-label">涉及RDC数（截止至${dateLabel}）</div><div class="kpi-value">${affectedRdcs}<span class="kpi-unit">个</span></div></div>
     </div>
+    ${(renderOverviewHistory() || '')}
     <div class="row-2">
       <div class="card">
         <div class="card-header"><span class="card-title">RDC日订单满足率趋势</span></div>
@@ -1657,6 +1660,48 @@ function renderOverview() {
       <td class="num"><span class="badge ${d.rdcCount>=4?'badge-red':d.rdcCount>=2?'badge-orange':'badge-green'}">${d.rdcCount}</span></td>
       <td>${d.dcSupply}</td></tr>`).join('') + '</tbody></table>');
   document.getElementById('table-shortage-overview').innerHTML = tableHtml;
+
+  // 月度订单满足率历史趋势（2025 vs 2026）
+  renderOverviewHistoryCharts();
+}
+
+// 月度订单满足率历史趋势卡片（HTML 部分）
+function renderOverviewHistory() {
+  if (!dataStore.history || !dataStore.history.fulfillment) return '';
+  return '<div class="card" style="margin-bottom:16px">' +
+    '<div class="card-header"><span class="card-title">📅 月度订单满足率历史趋势（2025 全年 vs 2026 1–6月，全RDC均值）</span></div>' +
+    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">蓝色实线 = 2026 · 灰色虚线 = 2025</div>' +
+    '<div class="chart-container" id="chart-overview-history-fulfill"></div>' +
+  '</div>';
+}
+
+// 月度订单满足率历史趋势卡片（图表渲染）
+function renderOverviewHistoryCharts() {
+  if (!dataStore.history || !dataStore.history.fulfillment) return;
+  const H = dataStore.history.fulfillment;
+  const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  function avgArr(year) {
+    return months12.map((_, i) => {
+      let s = 0, c = 0;
+      RDC_LIST.forEach(r => { const v = H[year].monthly[r][i]; if (v != null) { s += v; c++; } });
+      return c ? s / c : null;
+    });
+  }
+  const arr25 = avgArr('2025');
+  let arr26 = avgArr('2026');
+  while (arr26.length < 12) arr26.push(null);
+  const chart = initChart('chart-overview-history-fulfill');
+  chart.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) { let h = '<strong>' + p[0].axisValue + '</strong>'; p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value * 100).toFixed(1) + '%'; }); return h; } },
+    legend: { data: ['2025', '2026'], top: 0, left: 'center', textStyle: { fontSize: 11 } },
+    grid: { left: 55, right: 20, top: 40, bottom: 30 },
+    xAxis: { type: 'category', data: months12, axisLabel: { fontSize: 11 } },
+    yAxis: { type: 'value', min: 0.5, max: 1.03, axisLabel: { formatter: v => (v * 100).toFixed(0) + '%' } },
+    series: [
+      { name: '2025', type: 'line', data: arr25, smooth: true, symbol: 'none', lineStyle: { width: 2, type: 'dashed' }, color: '#94a3b8' },
+      { name: '2026', type: 'line', data: arr26, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, color: '#2563EB' }
+    ]
+  });
 }
 
 // ============ FULFILLMENT PAGE ============
@@ -1741,6 +1786,7 @@ function renderFulfillment() {
       </select>
       <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">日满足率基于所选日期 · 月满足率基于全月数据</span>
     </div>
+    ${renderFulfillmentHistory() || ''}
     <div class="card">
       <div class="card-header"><span class="card-title">日订单满足趋势（跳过双休日）</span></div>
       <div class="chart-container" id="chart-fulfill-weekday"></div>
@@ -1870,6 +1916,128 @@ function renderFulfillment() {
 
   // 为每个带缺货的单元格添加tooltip弹框
   document.getElementById('table-rdc-channel-fulfill').innerHTML = tableHtml;
+
+  // 月度满足率历史对比（2025 vs 2026）
+  renderFulfillmentHistoryCharts();
+}
+
+// 月度订单满足率历史对比卡片（HTML 部分，由 renderFulfillment 调用）
+function renderFulfillmentHistory() {
+  if (!dataStore.history || !dataStore.history.fulfillment) return '';
+  window._fulHtyRdc = window._fulHtyRdc || 'all';
+  const rdc = window._fulHtyRdc;
+  const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
+    RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
+  return '' +
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">📅 月度订单满足率历史对比（2025 全年 vs 2026 1–6月）</span>' +
+        '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">折线为各年月度满足率；灰色虚线=2025全年，蓝色实线=2026 1–6月</div>' +
+      '<div class="chart-container" id="chart-fulfill-history-trend"></div>' +
+    '</div>' +
+    '<div class="row-2" style="margin-bottom:16px">' +
+      '<div class="card"><div class="card-header"><span class="card-title">RDC × 月份 月度满足率矩阵（含同比）</span></div><div class="table-wrap" id="table-fulfill-history-matrix"></div></div>' +
+      '<div class="card"><div class="card-header"><span class="card-title">年度同比概览（上半年）</span></div><div id="kpi-fulfill-history"></div></div>' +
+    '</div>';
+}
+
+// 月度订单满足率历史对比卡片（图表 + 表格 + KPI 渲染）
+function renderFulfillmentHistoryCharts() {
+  if (!dataStore.history || !dataStore.history.fulfillment) return;
+  const H = dataStore.history.fulfillment;
+  const rdc = window._fulHtyRdc || 'all';
+  const months12 = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+  function monthlyArr(year) {
+    const m = H[year].monthly;
+    if (rdc === 'all') {
+      return months12.map((_, i) => {
+        let s = 0, c = 0;
+        RDC_LIST.forEach(r => { const v = m[r] && m[r][i]; if (v != null) { s += v; c++; } });
+        return c ? s / c : null;
+      });
+    }
+    return (m[rdc] || []).slice();
+  }
+  const arr25 = monthlyArr('2025');
+  let arr26 = monthlyArr('2026');
+  while (arr26.length < 12) arr26.push(null);
+  const arr26pad = arr26;
+
+  // Chart: trend
+  const chart = initChart('chart-fulfill-history-trend');
+  chart.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) {
+      let h = '<strong>' + p[0].axisValue + '</strong>';
+      p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value * 100).toFixed(1) + '%'; });
+      return h;
+    } },
+    legend: { data: ['2025', '2026'], top: 0, left: 'center', textStyle: { fontSize: 11 } },
+    grid: { left: 55, right: 20, top: 40, bottom: 30 },
+    xAxis: { type: 'category', data: months12, axisLabel: { fontSize: 11 } },
+    yAxis: { type: 'value', min: 0.5, max: 1.03, axisLabel: { formatter: v => (v * 100).toFixed(0) + '%' } },
+    series: [
+      { name: '2025', type: 'line', data: arr25, smooth: true, symbol: 'none', lineStyle: { width: 2, type: 'dashed' }, color: '#94a3b8' },
+      { name: '2026', type: 'line', data: arr26pad, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, color: '#2563EB' }
+    ]
+  });
+
+  // Matrix table: RDC x month (1-6), cell = 2026 value, sub = 2025 value + YoY delta
+  const h1 = [0, 1, 2, 3, 4, 5];
+  let mHtml = '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th>';
+  ['1月', '2月', '3月', '4月', '5月', '6月'].forEach(mo => mHtml += '<th style="text-align:right">' + mo + '</th>');
+  mHtml += '<th style="text-align:right">上半年均值</th></tr></thead><tbody>';
+  RDC_LIST.forEach(r => {
+    mHtml += '<td><strong>' + r + '</strong></td>';
+    let s26 = 0, c26 = 0, s25 = 0, c25 = 0;
+    h1.forEach(i => {
+      const v26 = H['2026'].monthly[r][i];
+      const v25 = H['2025'].monthly[r][i];
+      let cell = '';
+      if (v26 != null) {
+        cell += '<div class="rate-' + (v26 >= 0.95 ? 'good' : v26 >= 0.9 ? 'warn' : 'bad') + '">' + (v26 * 100).toFixed(1) + '%</div>';
+        s26 += v26; c26++;
+      } else cell += '<div style="color:#cbd5e1">—</div>';
+      if (v25 != null) {
+        const d = (v26 != null) ? (v26 - v25) : null;
+        const dStr = d != null ? ('<span style="font-size:10px;color:' + (d >= 0 ? 'var(--color-green)' : 'var(--color-red)') + '">' + (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp</span>') : '';
+        cell += '<div style="font-size:10px;color:var(--text-tertiary)">25: ' + (v25 * 100).toFixed(1) + '%</div>' + dStr;
+        s25 += v25; c25++;
+      }
+      mHtml += '<td class="num" style="text-align:right">' + cell + '</td>';
+    });
+    const avg26 = c26 ? s26 / c26 : null;
+    const avg25 = c25 ? s25 / c25 : null;
+    let avgCell = avg26 != null ? (avg26 * 100).toFixed(1) + '%' : '—';
+    if (avg26 != null && avg25 != null) {
+      const d = avg26 - avg25;
+      avgCell += '<br/><span style="font-size:10px;color:' + (d >= 0 ? 'var(--color-green)' : 'var(--color-red)') + '">' + (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp</span>';
+    }
+    mHtml += '<td class="num" style="text-align:right;font-weight:600">' + avgCell + '</td></tr>';
+  });
+  mHtml += '</tbody></table>';
+  document.getElementById('table-fulfill-history-matrix').innerHTML = mHtml;
+
+  // KPI overview (first-half YoY)
+  function avgOf(year, idxs) {
+    let s = 0, c = 0;
+    RDC_LIST.forEach(r => { idxs.forEach(i => { const v = H[year].monthly[r][i]; if (v != null) { s += v; c++; } }); });
+    return c ? s / c : 0;
+  }
+  const h1_26 = avgOf('2026', h1), h1_25 = avgOf('2025', h1);
+  const jun_26 = avgOf('2026', [5]), jun_25 = avgOf('2025', [5]);
+  function pp(cur, prev) { const d = cur - prev; return { color: d >= 0 ? 'var(--color-green)' : 'var(--color-red)', txt: (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp' }; }
+  const a1 = pp(h1_26, h1_25), a2 = pp(jun_26, jun_25);
+  let improved = 0, declined = 0;
+  RDC_LIST.forEach(r => h1.forEach(i => { const v26 = H['2026'].monthly[r][i], v25 = H['2025'].monthly[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improved++; else declined++; } }));
+  const kpiHtml = '<div style="padding:12px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026上半年月均满足率</span><span style="font-size:18px;font-weight:700">' + (h1_26 * 100).toFixed(1) + '%</span></div>' +
+    '<div style="text-align:right;font-size:11px;color:' + a1.color + '">同比 ' + a1.txt + '（2025 H1：' + (h1_25 * 100).toFixed(1) + '%）</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026年6月月均满足率</span><span style="font-size:18px;font-weight:700">' + (jun_26 * 100).toFixed(1) + '%</span></div>' +
+    '<div style="text-align:right;font-size:11px;color:' + a2.color + '">同比 ' + a2.txt + '（2025年6月：' + (jun_25 * 100).toFixed(1) + '%）</div>' +
+    '<div style="margin-top:10px;font-size:12px;color:var(--text-secondary)">上半年 36 个「RDC×月」中：<span style="color:var(--color-green)">↑ ' + improved + ' 个改善</span> · <span style="color:var(--color-red)">↓ ' + declined + ' 个下滑</span></div>' +
+    '</div>';
+  document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
 }
 
 // ============ SHORTAGE PAGE ============
@@ -4960,6 +5128,7 @@ function renderInventoryTurnover() {
     inv.rdcOrder.map(function(r) { return '<option value="' + r + '"' + (invRdcFilter===r?' selected':'') + '>' + r + 'RDC</option>'; }).join('') +
     '</select>' +
     '</div>' +
+    (renderInventoryTurnoverHistory() || '') +
     // Chart 1: Inventory & Shipment dual-axis
     '<div class="card" style="margin-bottom:16px">' +
     '<div class="card-header"><span class="card-title">🔗 库存与出货联动趋势（双轴图）</span></div>' +
@@ -5181,6 +5350,69 @@ function renderInventoryTurnover() {
   for (var i = 0; i < 6; i++) table2Html += '<td class="num" style="color:#065F46">' + fmtNum(getVal(inv.headquarters, i)) + '</td>';
   table2Html += '<td class="num">-</td></tr></tbody></table>';
   document.getElementById('table-inv-detail').innerHTML = table2Html;
+
+  // 库存规模年度对比（2025 vs 2026）
+  renderInventoryTurnoverHistoryCharts();
+}
+
+// 库存规模年度对比卡片（HTML 部分）
+function renderInventoryTurnoverHistory() {
+  if (!dataStore.history || !dataStore.history.inventory) return '';
+  return '' +
+    '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
+      '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 全年 vs 2026 上半年）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元</span></div>' +
+      '<div id="kpi-inv-history"></div>' +
+      '<div class="row-2" style="margin-top:8px">' +
+        '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">总库存金额趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
+        '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">总出货成本趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-ship"></div></div>' +
+      '</div>' +
+    '</div>';
+}
+
+// 库存规模年度对比卡片（图表 + KPI 渲染）
+function renderInventoryTurnoverHistoryCharts() {
+  if (!dataStore.history || !dataStore.history.inventory) return;
+  const INV = dataStore.history.inventory;
+  const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  function sumKeys(map, i, skip) { let s = 0; Object.keys(map).forEach(k => { if (skip && k.indexOf(skip) >= 0) return; const v = map[k] && map[k][i]; if (v != null) s += v; }); return s; }
+  const amt25 = months12.map((_, i) => sumKeys(INV['2025'].inventoryAmount, i));
+  const amt26 = months12.map((_, i) => (i < 6 ? sumKeys(INV['2026'].inventoryAmount, i) : null));
+  // 出货成本：2026 总仓源数据缺失(null)，为口径一致，两年度均剔除总仓
+  const ship25 = months12.map((_, i) => sumKeys(INV['2025'].shipmentCost, i, '总仓'));
+  const ship26 = months12.map((_, i) => (i < 6 ? sumKeys(INV['2026'].shipmentCost, i, '总仓') : null));
+  let ytd26 = 0; for (let i = 0; i < 6; i++) ytd26 += sumKeys(INV['2026'].shipmentCost, i, '总仓');
+  let ann25 = 0; for (let i = 0; i < 12; i++) ann25 += sumKeys(INV['2025'].shipmentCost, i, '总仓');
+  const annualized26 = ytd26 / 6 * 12;
+  const shipYoY = ann25 > 0 ? (annualized26 - ann25) / ann25 : 0;
+  let avgAmt25 = 0, avgAmt26 = 0;
+  for (let i = 0; i < 12; i++) avgAmt25 += amt25[i];
+  for (let i = 0; i < 6; i++) avgAmt26 += amt26[i];
+  avgAmt25 /= 12; avgAmt26 /= 6;
+  const amtYoY = avgAmt25 > 0 ? (avgAmt26 - avgAmt25) / avgAmt25 : 0;
+  function fmtK(n) { return (n / 10000).toFixed(1) + '万'; }
+  function chgColor(d) { return d >= 0 ? 'var(--color-red)' : 'var(--color-green)'; }
+  const kpiHtml = '<div class="kpi-row" style="padding:0 12px 8px">' +
+    '<div class="kpi-card orange"><div class="kpi-label">2026上半年RDC出货成本（年化）</div><div class="kpi-value">' + fmtK(annualized26) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">2025（RDC）：' + fmtK(ann25) + '千 · 同比 <span style="color:' + chgColor(shipYoY) + '">' + (shipYoY >= 0 ? '+' : '') + (shipYoY * 100).toFixed(1) + '%</span><br/>（不含总仓：2026总仓源数据缺失）</div></div>' +
+    '<div class="kpi-card blue"><div class="kpi-label">月均总库存金额（上半年）</div><div class="kpi-value">' + fmtK(avgAmt26) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">2025月均：' + fmtK(avgAmt25) + '千 · 同比 <span style="color:' + chgColor(amtYoY) + '">' + (amtYoY >= 0 ? '+' : '') + (amtYoY * 100).toFixed(1) + '%</span></div></div>' +
+    '</div>';
+  document.getElementById('kpi-inv-history').innerHTML = kpiHtml;
+
+  function lineChart(elId, title25, title26, arr25, arr26) {
+    const c = initChart(elId);
+    c.setOption({
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) { let h = '<strong>' + p[0].axisValue + '</strong>'; p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value / 10000).toFixed(1) + '万'; }); return h; } },
+      legend: { data: [title25, title26], top: 0, left: 'center', textStyle: { fontSize: 11 } },
+      grid: { left: 60, right: 20, top: 40, bottom: 30 },
+      xAxis: { type: 'category', data: months12, axisLabel: { fontSize: 10, interval: 0 } },
+      yAxis: { type: 'value', axisLabel: { formatter: v => (v / 10000).toFixed(0) + '万' } },
+      series: [
+        { name: title25, type: 'line', data: arr25, smooth: true, symbol: 'none', lineStyle: { width: 2, type: 'dashed' }, color: '#94a3b8' },
+        { name: title26, type: 'line', data: arr26, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, color: '#2563EB' }
+      ]
+    });
+  }
+  lineChart('chart-inv-history-amount', '2025总库存', '2026总库存', amt25, amt26);
+  lineChart('chart-inv-history-ship', '2025出货成本', '2026出货成本', ship25, ship26);
 }
 
 // ============ INITIALIZATION ============
@@ -5302,6 +5534,7 @@ function init() {
       if (f === 'data.json') return 0;
       if (f.indexOf('data-') === 0) return 1;
       if (f === 'inventory.json') return 2;
+      if (f === 'history.json') return 2.5;
       return 3;
     }
     function applyPreparsed(filename, j) {
@@ -5309,6 +5542,7 @@ function init() {
       if (filename === 'inventory.json') parseInventoryExcel(wb);
       else if (filename === 'data.json') { window._boxSpec = (j && j.boxSpecMap) || {}; parseExcel(wb, 'replace'); }
       else if (filename.indexOf('data-') === 0) parseExcel(wb, 'append', { skipTransship: true });
+      else if (filename === 'history.json') { dataStore.history = j; }
     }
     async function bootLoad() {
       // 1) IndexedDB 恢复（秒开首屏）
@@ -5815,6 +6049,7 @@ function renderInventoryStructure() {
       </select>
       <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当前：${filterCondition}</span>
     </div>
+    ${(renderInventoryStructureHistory() || '')}
     <div class="kpi-row">
       <div class="kpi-card blue"><div class="kpi-label">${kpiRdcLabel}库存（${curMonth}）</div><div class="kpi-value">${fmtK(totalInv)}<span class="kpi-unit">千元</span></div>${fmtChangeHtml(totalInv, totalInvPrev)}</div>
       <div class="kpi-card green"><div class="kpi-label">计划可用库存</div><div class="kpi-value">${fmtK(healthyInv)}<span class="kpi-unit">千元</span></div>${fmtChangeHtml(healthyInv, healthyInvPrev)}</div>
@@ -5972,6 +6207,50 @@ function renderInventoryStructure() {
     }).join('') +
     '</tbody></table>';
   document.getElementById('table-is-rdc-cov').innerHTML = rdcCovTableHtml;
+
+  // 库存规模年度对比（2025 vs 2026）
+  renderInventoryStructureHistoryCharts();
+}
+
+function renderInventoryStructureHistory() {
+  if (!dataStore.history || !dataStore.history.inventory) return '';
+  return '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
+    '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 全年 vs 2026 上半年）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 总量=各RDC+总仓</span></div>' +
+    '<div id="kpi-inv-structure-history"></div>' +
+    '<div class="chart-container" style="height:260px;margin-top:8px" id="chart-inv-structure-history"></div>' +
+  '</div>';
+}
+
+function renderInventoryStructureHistoryCharts() {
+  if (!dataStore.history || !dataStore.history.inventory) return;
+  const INV = dataStore.history.inventory;
+  const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  function sumKeys(map, i) { let s = 0; Object.keys(map).forEach(k => { const v = map[k] && map[k][i]; if (v != null) s += v; }); return s; }
+  const amt25 = months12.map((_, i) => sumKeys(INV['2025'].inventoryAmount, i));
+  const amt26 = months12.map((_, i) => (i < 6 ? sumKeys(INV['2026'].inventoryAmount, i) : null));
+  let avg25 = 0, avg26 = 0;
+  for (let i = 0; i < 12; i++) avg25 += amt25[i];
+  for (let i = 0; i < 6; i++) avg26 += amt26[i];
+  avg25 /= 12; avg26 /= 6;
+  const amtYoY = avg25 > 0 ? (avg26 - avg25) / avg25 : 0;
+  function fmtK(n) { return (n / 10000).toFixed(1) + '万'; }
+  const kpiHtml = '<div class="kpi-row" style="padding:0 12px 8px">' +
+    '<div class="kpi-card blue"><div class="kpi-label">月均总库存金额</div><div class="kpi-value">' + fmtK(avg26) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">2026上半年 vs 2025月均 ' + fmtK(avg25) + '千 · 同比 <span style="color:' + (amtYoY >= 0 ? 'var(--color-red)' : 'var(--color-green)') + '">' + (amtYoY >= 0 ? '+' : '') + (amtYoY * 100).toFixed(1) + '%</span></div></div>' +
+    '<div class="kpi-card green" style="flex:2.4"><div class="kpi-label">说明</div><div style="font-size:11px;color:var(--text-secondary);line-height:1.6">2025 库存结构（状态级）未纳入源数据，故仅做总量级年度对比；状态级月度趋势见本页「各状态月度趋势」（2–6月，来自总体情况）。</div></div>' +
+    '</div>';
+  document.getElementById('kpi-inv-structure-history').innerHTML = kpiHtml;
+  const c = initChart('chart-inv-structure-history');
+  c.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) { let h = '<strong>' + p[0].axisValue + '</strong>'; p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value / 10000).toFixed(1) + '万'; }); return h; } },
+    legend: { data: ['2025总库存', '2026总库存'], top: 0, left: 'center', textStyle: { fontSize: 11 } },
+    grid: { left: 60, right: 20, top: 40, bottom: 30 },
+    xAxis: { type: 'category', data: months12, axisLabel: { fontSize: 10, interval: 0 } },
+    yAxis: { type: 'value', axisLabel: { formatter: v => (v / 10000).toFixed(0) + '万' } },
+    series: [
+      { name: '2025总库存', type: 'line', data: amt25, smooth: true, symbol: 'none', lineStyle: { width: 2, type: 'dashed' }, color: '#94a3b8' },
+      { name: '2026总库存', type: 'line', data: amt26, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, color: '#2563EB' }
+    ]
+  });
 }
 
 function drillStatusDetail(data, label) {
