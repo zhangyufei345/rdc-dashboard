@@ -712,35 +712,27 @@ function parseInventoryTurnoverSheet(shI) {
       for (let ci = 9; ci <= 14; ci++) invData.inventoryByRdc[label].push(getSafeNum(r, ci));
     }
   }
-  if (shI[8]) { invData.inventoryByRdc['总部'] = []; for (let ci = 9; ci <= 14; ci++) invData.inventoryByRdc['总部'].push(getSafeNum(shI[8], ci)); }
+  if (shI[9]) { invData.inventoryByRdc['总部'] = []; for (let ci = 9; ci <= 14; ci++) invData.inventoryByRdc['总部'].push(getSafeNum(shI[9], ci)); }
 
-  // R14-R20 (cols 8-14): Shipment cost by RDC
-  for (let ri = 13; ri <= 19; ri++) {
+  // R14-R21 (cols 8-14): Shipment cost by RDC（含总仓）
+  // 跳过 row13 表头("仓库")；row21 为总仓，同时映射到渲染层使用的'总部'键
+  for (let ri = 14; ri <= 21; ri++) {
     const r = shI[ri];
     if (r && r[8] && String(r[8]).length > 0) {
       const label = String(r[8]).trim();
-      invData.shipmentCost[label] = [];
+      if (label === '仓库') continue;
+      const arr = [];
       for (let ci = 9; ci <= 14; ci++) {
         const v = r[ci];
         if (v != null) {
           const sv = String(v).replace(/,/g,'').replace(/[^\d.-]/g,'');
-          invData.shipmentCost[label].push(parseFloat(sv)||0);
+          arr.push(parseFloat(sv)||0);
         } else {
-          invData.shipmentCost[label].push(0);
+          arr.push(0);
         }
       }
-    }
-  }
-  if (shI[19]) {
-    invData.shipmentCost['总部'] = [];
-    for (let ci = 9; ci <= 14; ci++) {
-      const v = shI[19][ci];
-      if (v != null) {
-        const sv = String(v).replace(/,/g,'').replace(/[^\d.-]/g,'');
-        invData.shipmentCost['总部'].push(parseFloat(sv)||0);
-      } else {
-        invData.shipmentCost['总部'].push(0);
-      }
+      invData.shipmentCost[label] = arr;
+      if (label === '总仓') invData.shipmentCost['总部'] = arr;
     }
   }
 
