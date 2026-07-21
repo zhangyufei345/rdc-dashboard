@@ -5132,7 +5132,7 @@ function renderInventoryTurnover() {
     // Chart 1: Inventory & Shipment dual-axis
     '<div class="card" style="margin-bottom:16px">' +
     '<div class="card-header"><span class="card-title">🔗 库存与出货联动趋势（双轴图）</span></div>' +
-    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">柱状图=各RDC库存金额 · 折线图=出货成本 · 左轴=库存 · 右轴=出货</div>' +
+    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">柱状图=各RDC库存金额 · 折线图=出货成本 · 左轴=库存 · 右轴=出货 · 不含总仓/华东</div>' +
     '<div class="chart-container" style="height:280px" id="chart-inv-dual"></div>' +
     '</div>' +
     '<div class="row-2" style="margin-bottom:16px">' +
@@ -5178,11 +5178,11 @@ function renderInventoryTurnover() {
     }
     if (!foundShip) dualShipData = months.map(function() { return 0; });
   } else {
-    // allRDC: sum all RDC inventory (excluding HQ)
+    // allRDC: sum all RDC inventory (excluding 总部/总仓 and 华东RDC)
     dualInvData = months.map(function(_, i) {
       var sum = 0;
       invRdcKeys.forEach(function(k) {
-        if (k.indexOf('总部') < 0) {
+        if (k.indexOf('总部') < 0 && k.indexOf('华东RDC') < 0) {
           var arr = inv.inventoryByRdc[k];
           sum += (arr && arr[i]) || 0;
         }
@@ -5192,7 +5192,7 @@ function renderInventoryTurnover() {
     dualShipData = months.map(function(_, i) {
       var sum = 0;
       shipRdcKeys.forEach(function(k) {
-        if (k.indexOf('总部') < 0) {
+        if (k.indexOf('总部') < 0 && k.indexOf('华东RDC') < 0) {
           var arr = inv.shipmentCost[k];
           sum += (arr && arr[i]) || 0;
         }
@@ -5362,7 +5362,7 @@ function renderInventoryTurnoverHistory() {
   const rdcLabel = (rdcFilter === 'allRDC' || rdcFilter === 'all') ? '全部RDC' : (rdcFilter + 'RDC');
   return '' +
     '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
-      '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元</span></div>' +
+      '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 6大RDC口径（不含总仓/华东）</span></div>' +
       '<div id="kpi-inv-history"></div>' +
       '<div class="row-2" style="margin-top:8px">' +
         '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">库存金额趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
@@ -5378,12 +5378,13 @@ function renderInventoryTurnoverHistoryCharts() {
   const rdcFilter = window._invRdc || 'allRDC';
   const isAll = rdcFilter === 'allRDC' || rdcFilter === 'all';
   const rdcKey = isAll ? null : (rdcFilter + 'RDC');
-  const rdcLabel = isAll ? '合计' : rdcKey;
+  const rdcLabel = isAll ? '6大RDC合计' : rdcKey;
 
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
 
   function valOrNull(map, k, i) { const arr = map && map[k]; return (arr && arr.length > i) ? arr[i] : null; }
-  function sumAll(map, i) { let s = 0; Object.keys(map || {}).forEach(k => { const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
+  const EXCLUDE_KEYS = ['总仓', '华东RDC'];
+  function sumAll(map, i) { let s = 0; Object.keys(map || {}).forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
 
   const amt25 = months12.map((_, i) => isAll ? sumAll(INV['2025'].inventoryAmount, i) : valOrNull(INV['2025'].inventoryAmount, rdcKey, i));
   const amt26 = months12.map((_, i) => (i < 6 ? (isAll ? sumAll(INV['2026'].inventoryAmount, i) : valOrNull(INV['2026'].inventoryAmount, rdcKey, i)) : null));
