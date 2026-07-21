@@ -2608,7 +2608,7 @@ function renderBrandChannel() {
   const monthOrderData = monthFilter
     ? dataStore.orderDetail.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth))
     : dataStore.orderDetail;
-  const brandFl = dataStore.overall.brandFulfill;
+  const brandFl = getNormalizedBrandFulfill();
 
   // 品牌矩阵用全月数据，截至日期取订单明细最新日期
   const allOrderDates = dataStore.orderDetail.map(d => d.dateStr);
@@ -7048,6 +7048,34 @@ function normalizeBrandName(name) {
   // 品牌名称标准化映射表
   const map = { '传统品牌': '传统', '百爱神': '传统', '春蕾': '传统', '海鸥': '传统', '雅霜': '传统', '友谊': '传统' };
   return map[name] || name;
+}
+
+/**
+ * 对 brandFulfill 做标准化归并（保险层）：
+ * 兼容旧 IndexedDB 缓存、旧 data.json 或列解析异常导致的原始品牌名，
+ * 确保友谊/春蕾/海鸥/百爱神/雅霜在矩阵中始终显示为"传统"。
+ */
+function getNormalizedBrandFulfill() {
+  const list = (dataStore.overall && dataStore.overall.brandFulfill) || [];
+  const rdcKeys = ['huanan','huabei','dongbei','xibei','huazhong','xinan'];
+  const map = {};
+  list.forEach(item => {
+    const brand = normalizeBrandName(item.brand);
+    if (!brand) return;
+    if (!map[brand]) {
+      map[brand] = { brand };
+      rdcKeys.forEach(rk => { map[brand][rk] = 0; map[brand]['_count_' + rk] = 0; });
+    }
+    rdcKeys.forEach(rk => {
+      const v = item[rk];
+      if (v != null && !isNaN(v) && v !== 0) {
+        const c = map[brand]['_count_' + rk] || 0;
+        map[brand][rk] = c === 0 ? v : (map[brand][rk] * c + v) / (c + 1);
+        map[brand]['_count_' + rk] = c + 1;
+      }
+    });
+  });
+  return Object.values(map);
 }
 
 /**
