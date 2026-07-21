@@ -821,7 +821,7 @@ function parseExcel(rawData, mode, options) {
       dataStore.shortage.push({
         date: d, dateStr: fmtDate(d),
         materialCode: getSafeStr(r,1), materialName: getSafeStr(r,2),
-        brand: getSafeStr(r,3), productType: getSafeStr(r,4),
+        brand: normalizeBrandName(getSafeStr(r,3)), productType: getSafeStr(r,4),
         abcClass: getSafeStr(r,5), dcStock: getSafeNum(r,6),
         dcSupply: getSafeStr(r,7), rdcShortTotal: getSafeNum(r,8),
         rdcShortAmount: getSafeNum(r,9), rdcShortBoxes: getSafeNum(r,10),
@@ -904,20 +904,39 @@ function parseExcel(rawData, mode, options) {
     for (let i = 2; i < sh2.length; i++) {
       const r = sh2[i];
       if (!r || r.length < 23) continue;
-      const brand = getSafeStr(r, 16);
-      if (!brand || brand === '' || brand.includes('品牌') || brand.includes('\\') || brand === 'RDC') continue;
+      const rawBrand = getSafeStr(r, 16);
+      if (!rawBrand || rawBrand === '' || rawBrand.includes('品牌') || rawBrand.includes('\\') || rawBrand === 'RDC') continue;
       // 只取有实际数据的品牌行（至少有一个RDC有值）
       const hasData = [17,18,19,20,21,22].some(ci => r[ci] != null && r[ci] !== '' && !isNaN(Number(r[ci])));
       if (!hasData) continue;
+      const brand = normalizeBrandName(rawBrand);
       const brandKey = brand;
-      if (existingBrandKeys.has(brandKey)) continue;
+      const rdcKeys = ['huanan','huabei','dongbei','xibei','huazhong','xinan'];
+      if (existingBrandKeys.has(brandKey)) {
+        // 同名品牌已存在：按RDC求平均（处理友谊/春蕾/海鸥/百爱神/雅霜归并为"传统"）
+        const existing = dataStore.overall.brandFulfill.find(d => d.brand === brand);
+        if (existing) {
+          rdcKeys.forEach((rk, idx) => {
+            const v = getSafeNum(r, 17 + idx);
+            if (v != null && !isNaN(v)) {
+              const c = existing._counts[rk] || 0;
+              existing[rk] = c === 0 ? v : (existing[rk] * c + v) / (c + 1);
+              existing._counts[rk] = c + 1;
+            }
+          });
+        }
+        continue;
+      }
       existingBrandKeys.add(brandKey);
-      dataStore.overall.brandFulfill.push({
-        brand,
-        huanan: getSafeNum(r,17), huabei: getSafeNum(r,18),
-        dongbei: getSafeNum(r,19), xibei: getSafeNum(r,20),
-        huazhong: getSafeNum(r,21), xinan: getSafeNum(r,22)
+      const entry = { brand };
+      const counts = {};
+      rdcKeys.forEach((rk, idx) => {
+        const v = getSafeNum(r, 17 + idx);
+        entry[rk] = v;
+        counts[rk] = (v != null && !isNaN(v)) ? 1 : 0;
       });
+      entry._counts = counts;
+      dataStore.overall.brandFulfill.push(entry);
     }
 
     // Sheet4: 业务需求满足情况 (1 title row)
@@ -957,7 +976,7 @@ function parseExcel(rawData, mode, options) {
       dataStore.orderDetail.push({
         date: d, dateStr: fmtDate(d),
         orderNo: getSafeStr(r,1), channel: getSafeStr(r,2),
-        brand: getSafeStr(r,3), skuCode: getSafeStr(r,4),
+        brand: normalizeBrandName(getSafeStr(r,3)), skuCode: getSafeStr(r,4),
         skuName: getSafeStr(r,5), rejectReason: getSafeStr(r,6),
         customerGroup: getSafeStr(r,7), warehouse: getSafeStr(r,8),
         orderQty: getSafeNum(r,9), firstDayQty: getSafeNum(r,10),
