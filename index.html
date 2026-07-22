@@ -676,70 +676,58 @@ function getSafeStr(row, idx) {
 
 // 解析"库存周转"Sheet（data.xlsx 或 inventory.xlsx 中）
 function parseInventoryTurnoverSheet(shI) {
-  if (!shI || shI.length < 24) return null;
-  const invData = { allLocation: {}, sharedLocation: {}, subLocation: {}, inventoryByRdc: {}, shipmentCost: {}, rdcOrder: ['东北','华北','华南','华中','西南','西北'], months: ['1月','2月','3月','4月','5月','6月'], formula: '' };
-  const rdcLabels = ['东北RDC','华北RDC','华南RDC','华中RDC','西南RDC','西北RDC'];
+  if (!shI || shI.length < 10) return null;
+  const RDC_SHORT = ['东北','华北','华东','华南','华中','西南','西北'];
+  const RDC_FULL = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西南RDC','西北RDC'];
+  const ALL_RDC_NAMES = ['东北','华北','华东','华南','华中','西南','西北','总仓'];
+  function num(v){ if(v==null||v==='') return 0; const s=String(v).replace(/,/g,'').replace(/[^\d.\-]/g,''); const n=parseFloat(s); return isNaN(n)?0:n; }
+  function rowVals(r, c1, c2){ const a=[]; for(let c=c1;c<=c2;c++) a.push(num(r?r[c]:null)); return a; }
 
-  // R10-R15: 各RDC分仓 turnover days (cols 1-6)
-  for (let ri = 9; ri <= 14; ri++) {
-    const r = shI[ri];
-    if (r && r[0] && String(r[0]).length > 0) {
-      const rdcName = rdcLabels[ri - 9];
-      invData.allLocation[rdcName] = [];
-      for (let ci = 1; ci <= 6; ci++) invData.allLocation[rdcName].push(getSafeNum(r, ci));
-    }
+  const invData = { allLocation: {}, sharedLocation: {}, subLocation: {}, inventoryByRdc: {}, shipmentCost: {}, rdcOrder: [], months: ['1月','2月','3月','4月','5月','6月'], formula: '' };
+
+  // 找到「出货成本统计」表头所在行（右表 I 列），其上为库存金额、其下为出货成本
+  let splitPoint = shI.length;
+  let sharedHeaderRow = -1;
+  for (let i=0;i<shI.length;i++){
+    const r=shI[i]; if(!r) continue;
+    const right = r[8]!=null ? String(r[8]).trim() : '';
+    if (right.indexOf('出货成本统计')>=0) { splitPoint = i; break; }
+  }
+  for (let i=0;i<shI.length;i++){
+    const r=shI[i]; if(!r) continue;
+    if (r[0] && String(r[0]).indexOf('RDC共享库位库存周转天数')>=0){ sharedHeaderRow=i; break; }
   }
 
-  // R19-R24: 各RDC各分库位 turnover days (cols 1-6)
-  for (let ri = 18; ri <= 23; ri++) {
-    const r = shI[ri];
-    if (r && r[0] && String(r[0]).length > 0) {
-      const rdcName = rdcLabels[ri - 18];
-      invData.subLocation[rdcName] = [];
-      for (let ci = 1; ci <= 6; ci++) invData.subLocation[rdcName].push(getSafeNum(r, ci));
+  for (let i=0;i<shI.length;i++){
+    const r=shI[i]; if(!r) continue;
+    const left = r[0]!=null ? String(r[0]).trim() : '';
+    const right = r[8]!=null ? String(r[8]).trim() : '';
+
+    // 左表：周转天数（B-G 列）
+    if (left === 'RDC（全库位）') invData.totalAllLocation = rowVals(r,1,6);
+    else if (left === 'RDC（共享仓）') invData.totalSharedLocation = rowVals(r,1,6);
+    else if (left === '总仓') invData.headquarters = rowVals(r,1,6);
+    else if (left.indexOf('RDC分仓')>=0 && (sharedHeaderRow<0 || i<sharedHeaderRow)) {
+      const idx = RDC_SHORT.findIndex(x=>left.indexOf(x)===0);
+      if (idx>=0){ const name=RDC_FULL[idx]; invData.allLocation[name]=rowVals(r,1,6); if(invData.rdcOrder.indexOf(name)<0) invData.rdcOrder.push(name); }
     }
-  }
-
-  // R3: RDC全库位 turnover, R4: 共享库位, R5: 总仓
-  if (shI[2]) { invData.totalAllLocation = []; for (let ci = 1; ci <= 6; ci++) invData.totalAllLocation.push(getSafeNum(shI[2], ci)); }
-  if (shI[3]) { invData.totalSharedLocation = []; for (let ci = 1; ci <= 6; ci++) invData.totalSharedLocation.push(getSafeNum(shI[3], ci)); }
-  if (shI[4]) { invData.headquarters = []; for (let ci = 1; ci <= 6; ci++) invData.headquarters.push(getSafeNum(shI[4], ci)); }
-
-  // R3-R9 (cols 8-14): Inventory by RDC
-  for (let ri = 2; ri <= 8; ri++) {
-    const r = shI[ri];
-    if (r && r[8] && String(r[8]).length > 0) {
-      const label = String(r[8]).trim();
-      invData.inventoryByRdc[label] = [];
-      for (let ci = 9; ci <= 14; ci++) invData.inventoryByRdc[label].push(getSafeNum(r, ci));
+    else if (sharedHeaderRow>=0 && i>sharedHeaderRow) {
+      const idx = RDC_SHORT.findIndex(x=>left===x);
+      if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,6); }
     }
-  }
-  if (shI[9]) { invData.inventoryByRdc['总部'] = []; for (let ci = 9; ci <= 14; ci++) invData.inventoryByRdc['总部'].push(getSafeNum(shI[9], ci)); }
 
-  // R14-R21 (cols 8-14): Shipment cost by RDC（含总仓）
-  // 跳过 row13 表头("仓库")；row21 为总仓，同时映射到渲染层使用的'总部'键
-  for (let ri = 14; ri <= 21; ri++) {
-    const r = shI[ri];
-    if (r && r[8] && String(r[8]).length > 0) {
-      const label = String(r[8]).trim();
-      if (label === '仓库') continue;
-      const arr = [];
-      for (let ci = 9; ci <= 14; ci++) {
-        const v = r[ci];
-        if (v != null) {
-          const sv = String(v).replace(/,/g,'').replace(/[^\d.-]/g,'');
-          arr.push(parseFloat(sv)||0);
-        } else {
-          arr.push(0);
-        }
+    // 右表：库存金额（出货成本统计之前）/ 出货成本（之后），I 列标签为 RDC 简称
+    if (right && ALL_RDC_NAMES.indexOf(right)>=0){
+      if (i < splitPoint) invData.inventoryByRdc[right] = rowVals(r,9,14);
+      else {
+        invData.shipmentCost[right] = rowVals(r,9,14);
+        if (right==='总仓') invData.shipmentCost['总部'] = rowVals(r,9,14);
       }
-      invData.shipmentCost[label] = arr;
-      if (label === '总仓') invData.shipmentCost['总部'] = arr;
     }
   }
 
-  // Formula from R25
-  if (shI[24] && shI[24][8]) invData.formula = String(shI[24][8]);
+  for (let i=0;i<shI.length;i++){ const r=shI[i]; if(r && r[8] && String(r[8]).indexOf('周转天数=')>=0){ invData.formula=String(r[8]); break; } }
+  if (invData.rdcOrder.length===0) invData.rdcOrder = ['东北RDC','华北RDC','华南RDC','华中RDC','西南RDC','西北RDC'];
   return invData;
 }
 
@@ -5183,7 +5171,7 @@ function renderInventoryTurnover() {
     // Chart 1: Inventory & Shipment dual-axis
     '<div class="card" style="margin-bottom:16px">' +
     '<div class="card-header"><span class="card-title">🔗 库存与出货联动趋势（双轴图）</span></div>' +
-    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">柱状图=各RDC库存金额 · 折线图=出货成本 · 左轴=库存 · 右轴=出货 · 不含总仓/华东</div>' +
+    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">柱状图=各RDC库存金额 · 折线图=出货成本 · 左轴=库存 · 右轴=出货 · 不含总仓</div>' +
     '<div class="chart-container" style="height:280px" id="chart-inv-dual"></div>' +
     '</div>' +
     '<div class="row-2" style="margin-bottom:16px">' +
@@ -5229,11 +5217,11 @@ function renderInventoryTurnover() {
     }
     if (!foundShip) dualShipData = months.map(function() { return 0; });
   } else {
-    // allRDC: sum all RDC inventory (excluding 总部/总仓 and 华东RDC)
+    // allRDC: sum all RDC inventory (excluding 总仓/总部)
     dualInvData = months.map(function(_, i) {
       var sum = 0;
       invRdcKeys.forEach(function(k) {
-        if (k.indexOf('总部') < 0 && k.indexOf('华东RDC') < 0) {
+        if (k.indexOf('总仓') < 0) {
           var arr = inv.inventoryByRdc[k];
           sum += (arr && arr[i]) || 0;
         }
@@ -5243,7 +5231,7 @@ function renderInventoryTurnover() {
     dualShipData = months.map(function(_, i) {
       var sum = 0;
       shipRdcKeys.forEach(function(k) {
-        if (k.indexOf('总部') < 0 && k.indexOf('华东RDC') < 0) {
+        if (k.indexOf('总仓') < 0) {
           var arr = inv.shipmentCost[k];
           sum += (arr && arr[i]) || 0;
         }
@@ -5271,7 +5259,7 @@ function renderInventoryTurnover() {
   // ---- Chart 2: Turnover days trend ----
   const chart2 = initChart('chart-inv-turnover-trend');
   var trendSeries = [];
-  var trendColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6'];
+  var trendColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6','#EC4899'];
   inv.rdcOrder.forEach(function(rdc, idx) {
     var rdcName = rdc + 'RDC';
     var vals = inv.allLocation[rdcName];
@@ -5290,7 +5278,7 @@ function renderInventoryTurnover() {
 
   // ---- Chart 3: All-location vs Shared-location comparison ----
   const chart3 = initChart('chart-inv-compare');
-  var compareLabels = ['东北','华北','华南','华中','西南','西北'];
+  var compareLabels = ['东北','华北','华东','华南','华中','西南','西北'];
   var allVals = [];
   var sharedVals = [];
   compareLabels.forEach(function(rdc) {
@@ -5345,7 +5333,7 @@ function renderInventoryTurnover() {
       }
     }
   });
-  total6mInv += getVal(inv.inventoryByRdc['总部'], latestIdx);
+  total6mInv += getVal(inv.inventoryByRdc['总仓'], latestIdx);
 
   // Inventory rows
   inv.rdcOrder.forEach(function(rdc) {
@@ -5380,7 +5368,7 @@ function renderInventoryTurnover() {
   }
 
   // HQ inventory
-  var hqInvVals = inv.inventoryByRdc['总部'];
+  var hqInvVals = inv.inventoryByRdc['总仓'];
   if (hqInvVals) {
     table2Html += '<tr style="background:#EEF2FF;font-weight:500"><td style="color:#1D4ED8">总库存</td>';
     for (var i = 0; i < 6; i++) table2Html += '<td class="num" style="color:#1D4ED8">' + fmtNum(hqInvVals[i]) + '</td>';
@@ -5413,7 +5401,7 @@ function renderInventoryTurnoverHistory() {
   const rdcLabel = (rdcFilter === 'allRDC' || rdcFilter === 'all') ? '全部RDC' : (rdcFilter + 'RDC');
   return '' +
     '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
-      '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 6大RDC口径（不含总仓/华东）</span></div>' +
+      '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 7大RDC口径（不含总仓）</span></div>' +
       '<div id="kpi-inv-history"></div>' +
       '<div class="row-2" style="margin-top:8px">' +
         '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">库存金额趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
@@ -5429,12 +5417,12 @@ function renderInventoryTurnoverHistoryCharts() {
   const rdcFilter = window._invRdc || 'allRDC';
   const isAll = rdcFilter === 'allRDC' || rdcFilter === 'all';
   const rdcKey = isAll ? null : (rdcFilter + 'RDC');
-  const rdcLabel = isAll ? '6大RDC合计' : rdcKey;
+  const rdcLabel = isAll ? '7大RDC合计' : rdcKey;
 
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
 
   function valOrNull(map, k, i) { const arr = map && map[k]; return (arr && arr.length > i) ? arr[i] : null; }
-  const EXCLUDE_KEYS = ['总仓', '华东RDC'];
+  const EXCLUDE_KEYS = ['总仓'];
   function sumAll(map, i) { let s = 0; Object.keys(map || {}).forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
 
   const amt25 = months12.map((_, i) => isAll ? sumAll(INV['2025'].inventoryAmount, i) : valOrNull(INV['2025'].inventoryAmount, rdcKey, i));
