@@ -5055,28 +5055,26 @@ function exportReplenishmentCSV() {
 // RDC multi-select helpers for inventory turnover page
 function getInvRdcSelection() {
   const inv = dataStore.inventoryTurnover;
-  const raw = window._invRdc || ['allRDC'];
   if (!inv || !inv.rdcOrder) return { isAll: true, selected: [] };
-  const isAll = raw.indexOf('allRDC') >= 0 || raw.length === 0 || raw.length === inv.rdcOrder.length;
-  const selected = isAll ? inv.rdcOrder.slice() : raw.filter(function(x){ return inv.rdcOrder.indexOf(x) >= 0; });
-  return { isAll: isAll, selected: selected };
+  const raw = window._invRdc || [];
+  const selected = raw.filter(function(x){ return inv.rdcOrder.indexOf(x) >= 0; });
+  const isAll = selected.length === 0 || selected.length === inv.rdcOrder.length;
+  return { isAll: isAll, selected: isAll ? inv.rdcOrder.slice() : selected };
 }
 function toggleInvRdc(rdc, checked) {
   const inv = dataStore.inventoryTurnover;
   if (!inv || !inv.rdcOrder) return;
-  var arr = (window._invRdc || ['allRDC']).slice();
-  if (arr.indexOf('allRDC') >= 0) arr = checked ? [rdc] : inv.rdcOrder.filter(function(x){ return x !== rdc; });
-  else {
-    if (checked) { if (arr.indexOf(rdc) < 0) arr.push(rdc); }
-    else arr = arr.filter(function(x){ return x !== rdc; });
-  }
-  if (arr.length === 0) arr = ['allRDC'];
-  else if (arr.length === inv.rdcOrder.length) arr = ['allRDC'];
+  var arr = (window._invRdc || []).filter(function(x){ return inv.rdcOrder.indexOf(x) >= 0; });
+  if (checked) { if (arr.indexOf(rdc) < 0) arr.push(rdc); }
+  else arr = arr.filter(function(x){ return x !== rdc; });
+  if (arr.length === 0) arr = inv.rdcOrder.slice(); // 取消最后一个时恢复全选，避免空白
   window._invRdc = arr;
   renderInventoryTurnover();
 }
 function toggleInvRdcAll(checked) {
-  window._invRdc = checked ? ['allRDC'] : [];
+  const inv = dataStore.inventoryTurnover;
+  if (!inv || !inv.rdcOrder) return;
+  window._invRdc = checked ? inv.rdcOrder.slice() : [inv.rdcOrder[0]];
   renderInventoryTurnover();
 }
 
