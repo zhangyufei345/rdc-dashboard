@@ -568,7 +568,7 @@ async function autoLoadData() {
     } catch(e) { /* 库存文件不存在，跳过 */ }
 
     if (loadedCount > 0) {
-      const toastMsg = '📦 已自动加载 ' + loadedCount + ' 个月份数据' + (hasTransship ? '（含转储）' : '') + (dataStore.inventory ? ' | 库存: ✓' : '');
+      const toastMsg = '📦 已自动加载 ' + loadedCount + ' 个月份数据' + (dataStore.transship.length > 0 ? '（含转储）' : '') + (dataStore.inventory ? ' | 库存: ✓' : '');
       showToast(toastMsg);
       return true;
     }
@@ -1233,7 +1233,7 @@ function renderAllShortageTable(sData) {
   const rdcMap = [
     { key: 'huabei', name: '华北RDC' }, { key: 'xinan', name: '西南RDC' },
     { key: 'dongbei', name: '东北RDC' }, { key: 'huazhong', name: '华中RDC' },
-    { key: 'huanan', name: '华南RDC' }, { key: 'huadong', name: '华东' },
+    { key: 'huanan', name: '华南RDC' },
     { key: 'xibei', name: '西北RDC' }
   ];
   return '<table class="data-table"><thead><tr>' +
@@ -5742,10 +5742,11 @@ function parseInventoryExcel(rawData) {
     else wb = XLSX.read(rawData, { type: 'array' });
     const sheetNames = wb.SheetNames;
     const sa = (s) => Array.isArray(s) ? s : XLSX.utils.sheet_to_json(s, { header: 1, defval: null, raw: true });
+    const findByName = (kw) => { const i = sheetNames.findIndex(n => n.includes(kw)); return i >= 0 ? sa(wb.Sheets[sheetNames[i]]) : null; };
 
     // Sheet1: 库存周转 (now separate, parse if needed)
     // Sheet2: 总体情况 - 包含多RDC区块，逐个解析后汇总
-    const shSummary = sa(wb.Sheets[sheetNames[1]]);
+    const shSummary = findByName('总体情况') || [];
     const summary = { status: {}, coverage: {} };
     const rdcStatus = {}; // keyed by RDC name
 
@@ -5817,12 +5818,12 @@ function parseInventoryExcel(rawData) {
     });
 
     // Sheet 3/4: 库存状态分析 (5月/6月)
-    const status5 = parseStatusSheet(sa(wb.Sheets[sheetNames[2]])); // 5月
-    const status6 = parseStatusSheet(sa(wb.Sheets[sheetNames[3]])); // 6月
+    const status5Arr = findByName('5月库存状态'); const status5 = parseStatusSheet(status5Arr || []);
+    const status6Arr = findByName('6月库存状态'); const status6 = parseStatusSheet(status6Arr || []);
 
     // Sheet 5/6: 库存覆盖分析 (5月/6月)
-    const cov5 = parseCoverageSheet(sa(wb.Sheets[sheetNames[4]])); // 5月
-    const cov6 = parseCoverageSheet(sa(wb.Sheets[sheetNames[5]])); // 6月
+    const cov5 = parseCoverageSheet(findByName('5月库存覆盖') || []); // 5月
+    const cov6 = parseCoverageSheet(findByName('6月库存覆盖') || []); // 6月
 
     // 从6月覆盖明细按RDC汇总，并将覆盖月数分类映射为标准周期
     const rdcCoverage = {};
@@ -5835,8 +5836,8 @@ function parseInventoryExcel(rawData) {
       p.amt[cov] = (p.amt[cov] || 0) + (d.inventoryAmt || 0);
     });
 
-    // Sheet 0: 库存周转（如果存在则解析，供库存周转模块使用）
-    const invTurnoverSheet = sheetNames[0] && String(sheetNames[0]).indexOf('周转') >= 0 ? sa(wb.Sheets[sheetNames[0]]) : null;
+    // Sheet: 库存周转（按名称查找，供库存周转模块使用；华东仓保留）
+    const invTurnoverSheet = findByName('周转');
     const turnoverData = invTurnoverSheet ? parseInventoryTurnoverSheet(invTurnoverSheet) : null;
     if (turnoverData) dataStore.inventoryTurnover = turnoverData;
 
@@ -5858,13 +5859,53 @@ function parseInventoryExcel(rawData) {
       }
       return m;
     }
-    const expiry6 = buildExpiryMap(sa(wb.Sheets[sheetNames[3]]));
+    const expiry6 = buildExpiryMap(status6Arr || []);
 
     // Save data
     dataStore.inventory = {
       summary, rdcStatus, status5, status6, cov5, cov6, rdcCoverage, expiry6,
       loadedAt: new Date().toISOString()
     };
+
+    // 转储数据（现位于库存文件，按名称查找；与 parseExcel 中逻辑一致）
+    const transArr = findByName('转储');
+    if (transArr) {
+      const existTk = new Set(dataStore.transship.map(d => d.dateStr + '|' + d.material + '|' + d.location));
+      for (let i = 1; i < transArr.length; i++) {
+        const r = transArr[i];
+        if (!r || r.length < 16) continue;
+        const d = normalizeDate(r[1]);
+        if (!d) continue;
+        const loc = getSafeStr(r, 3);
+        if (loc.startsWith('30')) continue;
+        let rdc = '未知';
+        if (loc.startsWith('20')) rdc = '东北RDC';
+        else if (loc.startsWith('40')) rdc = '华南RDC';
+        else if (loc.startsWith('60')) rdc = '西北RDC';
+        else if (loc.startsWith('70')) rdc = '华中RDC';
+        else if (loc.startsWith('80')) rdc = '西南RDC';
+        else if (loc.startsWith('90')) rdc = '华北RDC';
+        let transType = '常规转储';
+        if (loc.endsWith('23') || loc.endsWith('06')) transType = '免费单转储';
+        else if (loc.endsWith('03')) transType = 'KA常规转储';
+        const unit = getSafeStr(r, 15);
+        const tKey = fmtDate(d) + '|' + getSafeStr(r, 5) + '|' + loc;
+        if (existTk.has(tKey)) continue;
+        existTk.add(tKey);
+        dataStore.transship.push({
+          date: d, dateStr: fmtDate(d),
+          location: loc, rdc: rdc, factory: getSafeStr(r, 4),
+          material: getSafeStr(r, 5), materialName: getSafeStr(r, 6),
+          poQty: getSafeNum(r, 7), planQty: getSafeNum(r, 10),
+          confirmQty: getSafeNum(r, 12), invoiceQty: getSafeNum(r, 14),
+          unit: unit, isBox: unit === '箱',
+          transType: transType,
+          shipFactory: getSafeStr(r, 16),
+          inboundQty: getSafeNum(r, 19),
+          deliveryQty: getSafeNum(r, 21)
+        });
+      }
+    }
 
     function getSN(row, idx) { const v = row[idx]; return (v == null || v === '' || isNaN(Number(v))) ? 0 : Number(v); }
 
