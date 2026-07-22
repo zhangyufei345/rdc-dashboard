@@ -90,6 +90,17 @@ function main() {
     totalRows = 0; // 仅用于日志，每行文件重置
   }
 
+  // history.json 单独纳入 manifest：看板按 manifest 加载预解析文件，若缺 history.json
+  // 则 dataStore.history 恒为 null，导致「库存金额趋势/出货成本趋势(2025 vs 2026)」及
+  // 「订单满足率历史趋势」等历史图表全部空白。哈希直接取自 history.json 内容本身。
+  const historyJson = path.join(ROOT, 'history.json');
+  if (fs.existsSync(historyJson)) {
+    manifest.files['history.json'] = sha256File(historyJson);
+    console.log('   history.json 已纳入 manifest（历史趋势图数据源）');
+  } else {
+    console.log('   (未找到 history.json，跳过；历史趋势图将空白)');
+  }
+
   fs.writeFileSync(path.join(ROOT, 'manifest.json'), JSON.stringify(manifest, null, 2));
   console.log(`\n✅ 完成。manifest.json 含 ${Object.keys(manifest.files).length} 个数据文件哈希。`);
   console.log('   网页将优先加载 JSON；哈希未变时直接复用本地缓存，秒开。');
