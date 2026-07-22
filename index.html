@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 3;
+const DB_VERSION = 4; // v4: 清空旧缓存，强制用新解析逻辑（RDC简称→全称映射）重新解析
 const STORE_NAME = 'datasets';
 let db = null;
 
