@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 6; // v6: 修复 parseInventoryExcel 无法访问 normalizeDate 导致转储解析失败的 bug
+const DB_VERSION = 7; // v7: 修复库存覆盖表"库存总金额"列缺失导致库存结构KPI为0，totalAmt回退为拆分金额列之和
 const STORE_NAME = 'datasets';
 let db = null;
 
@@ -5464,7 +5464,6 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span></div>' +
       '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json + inventory.xlsx「6月库存覆盖数据」X–AC 列（未来需求）｜快照日期 2026-07-23｜单位：亿元（千元 ÷ 100,000）</div>' +
-      '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:12px;font-size:13px;color:#991B1B;margin-bottom:12px"><b>单位勘误：</b>早期版本误将「千元」按 ÷10,000 转「亿元」（应为 ÷100,000），金额被放大 10 倍。本页已修正：2026 年末全国库存约 <b>2.81 亿元</b>（场景A）、约 <b>2.11 亿元</b>（场景B）。</div>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
         '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:var(--color-blue)">场景 A · 季节性外推：</b>假设 2026 下半年重复 2025 季节形态。<b>年末 ≈ 2.81 亿</b>，同比 +8.7%。</div>' +
         '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 需求驱动外推：</b>用 6 月覆盖 sheet 的 7–12 月未来需求推演。<b>年末 ≈ 2.11 亿</b>，低于季节性。</div>' +
@@ -6059,8 +6058,11 @@ function parseInventoryExcel(rawData) {
           skuName: String(r[2]||'').trim(), brand: normalizeBrandName(String(r[3]||'').trim()),
           supplyChainAttr: String(r[4]||'').trim(), lifecycle: String(r[5]||'').trim(),
           abc: String(r[7]||'').trim(), isHainan: String(r[8]||'').trim() === '是',
-          availableQty: getSN(r,9), availQtyPlan: getSN(r,15), inventoryAmt: getSN(r,10),
-          totalAmt: getSN(r,10), staleAmt: getSN(r,17), expiredAmt: getSN(r,18),
+          availableQty: getSN(r,9), availQtyPlan: getSN(r,15),
+          // 源表「库存总金额」(col10) 全行为空 → 回退为该行 6 个金额拆分列之和（与饼图/趋势口径一致）
+          totalAmt: (getSN(r,10) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
+          inventoryAmt: (getSN(r,10) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
+          staleAmt: getSN(r,17), expiredAmt: getSN(r,18),
           returnAmt: getSN(r,19), nearExpiryAmt: getSN(r,20), planAmt: getSN(r,21), inTransitAmt: getSN(r,22),
           // Coverage months (col 23-28: 2026-06 to 2026-11)
           cov06: getSN(r,23), cov07: getSN(r,24), cov08: getSN(r,25),
