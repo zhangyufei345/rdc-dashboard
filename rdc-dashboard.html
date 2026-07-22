@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 5; // v5: 清空缓存，强制重新解析 inventory.json（恢复转储数据）
+const DB_VERSION = 6; // v6: 修复 parseInventoryExcel 无法访问 normalizeDate 导致转储解析失败的 bug
 const STORE_NAME = 'datasets';
 let db = null;
 
@@ -674,6 +674,22 @@ function getSafeStr(row, idx) {
   return v == null ? '' : String(v).trim();
 }
 
+function normalizeDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  if (typeof val === 'number') {
+    const d = new Date((val - 25569) * 86400 * 1000);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d;
+    const m = val.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+    if (m) return new Date(+m[1], +m[2]-1, +m[3]);
+  }
+  return null;
+}
+
 // 解析"库存周转"Sheet（data.xlsx 或 inventory.xlsx 中）
 function parseInventoryTurnoverSheet(shI) {
   if (!shI || shI.length < 10) return null;
@@ -755,22 +771,6 @@ function parseExcel(rawData, mode, options) {
     function sheetToArray(sheet) {
       if (Array.isArray(sheet)) return sheet;                 // 已行化，直接返回
       return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true, dateNF: 'yyyy-mm-dd' });
-    }
-
-    function normalizeDate(val) {
-      if (!val) return null;
-      if (val instanceof Date) return val;
-      if (typeof val === 'number') {
-        const d = new Date((val - 25569) * 86400 * 1000);
-        if (!isNaN(d.getTime())) return d;
-      }
-      if (typeof val === 'string') {
-        const d = new Date(val);
-        if (!isNaN(d.getTime())) return d;
-        const m = val.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-        if (m) return new Date(+m[1], +m[2]-1, +m[3]);
-      }
-      return null;
     }
 
     // Mode handling: clear all data if replace mode
