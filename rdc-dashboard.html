@@ -5081,7 +5081,7 @@ function renderInventoryTurnover() {
   var rdcTotalInventory = 0, rdcTotalInventoryPrev = 0;
   var rdcTotalShipment = 0, rdcTotalShipmentPrev = 0;
   inv.rdcOrder.forEach(function(rdc) {
-    var rdcName = rdc + 'RDC';
+    var rdcName = rdc;
     // Find inventory for this RDC
     var invKeys = Object.keys(inv.inventoryByRdc);
     for (var k = 0; k < invKeys.length; k++) {
@@ -5122,7 +5122,7 @@ function renderInventoryTurnover() {
   // Find fastest/slowest RDC
   let minTurn = 9999, maxTurn = 0, minRdc = '', maxRdc = '';
   inv.rdcOrder.forEach(function(rdc) {
-    var rdcName = rdc + 'RDC';
+    var rdcName = rdc;
     var vals = inv.allLocation[rdcName];
     if (vals) {
       var v = vals[latestIdx] || 0;
@@ -5164,7 +5164,7 @@ function renderInventoryTurnover() {
     '<label>RDC：</label>' +
     '<select onchange="window._invRdc=this.value;renderInventoryTurnover()" style="padding:4px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px">' +
     '<option value="allRDC"' + (invRdcFilter==='allRDC' || invRdcFilter==='all'?' selected':'') + '>全部RDC</option>' +
-    inv.rdcOrder.map(function(r) { return '<option value="' + r + '"' + (invRdcFilter===r?' selected':'') + '>' + r + 'RDC</option>'; }).join('') +
+    inv.rdcOrder.map(function(r) { return '<option value="' + r + '"' + (invRdcFilter===r?' selected':'') + '>' + r + '</option>'; }).join('') +
     '</select>' +
     '</div>' +
     (renderInventoryTurnoverHistory() || '') +
@@ -5261,7 +5261,7 @@ function renderInventoryTurnover() {
   var trendSeries = [];
   var trendColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6','#EC4899'];
   inv.rdcOrder.forEach(function(rdc, idx) {
-    var rdcName = rdc + 'RDC';
+    var rdcName = rdc;
     var vals = inv.allLocation[rdcName];
     if (vals) {
       trendSeries.push({ name: rdcName, type: 'line', data: vals, smooth: true, symbol: 'none', lineStyle: { width: 2 }, color: trendColors[idx] });
@@ -5303,7 +5303,7 @@ function renderInventoryTurnover() {
   // ---- Table 1: Turnover days ----
   var table1Html = '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right;color:#10B981">共享库6月</th></tr></thead><tbody>';
   inv.rdcOrder.forEach(function(rdc) {
-    var rdcName = rdc + 'RDC';
+    var rdcName = rdc;
     var allV = inv.allLocation[rdcName] || [];
     var subV = inv.subLocation[rdcName] || [];
     table1Html += '<tr><td>' + rdcName + '</td>';
@@ -5398,7 +5398,7 @@ function renderInventoryTurnover() {
 function renderInventoryTurnoverHistory() {
   if (!dataStore.history || !dataStore.history.inventory) return '';
   const rdcFilter = window._invRdc || 'allRDC';
-  const rdcLabel = (rdcFilter === 'allRDC' || rdcFilter === 'all') ? '全部RDC' : (rdcFilter + 'RDC');
+  const rdcLabel = (rdcFilter === 'allRDC' || rdcFilter === 'all') ? '全部RDC' : rdcFilter;
   return '' +
     '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
       '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 7大RDC口径（不含总仓）</span></div>' +
@@ -5416,7 +5416,7 @@ function renderInventoryTurnoverHistoryCharts() {
   const INV = dataStore.history.inventory;
   const rdcFilter = window._invRdc || 'allRDC';
   const isAll = rdcFilter === 'allRDC' || rdcFilter === 'all';
-  const rdcKey = isAll ? null : (rdcFilter + 'RDC');
+  const rdcKey = isAll ? null : rdcFilter;
   const rdcLabel = isAll ? '7大RDC合计' : rdcKey;
 
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
