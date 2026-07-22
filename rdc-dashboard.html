@@ -5083,10 +5083,23 @@ function renderInventoryTurnover() {
   setTitle('库存周转'); <!-- v2 -->
   const page = document.getElementById('page-inventory');
   if (!page) return;
+  if (typeof window._invTab === 'undefined') window._invTab = 'turnover';
+
+  // TAB 切换：库存周转分析 / 年末库存预测
+  const isForecast = (window._invTab === 'forecast');
+  const tabBar = '<div style="display:flex;gap:8px;margin-bottom:16px">' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + (isForecast ? '' : 'background:var(--color-blue);color:#fff;') + '" onclick="window._invTab=\'turnover\';renderInventoryTurnover()">📊 库存周转分析</button>' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + (isForecast ? 'background:var(--color-blue);color:#fff;' : '') + '" onclick="window._invTab=\'forecast\';renderInventoryTurnover()">🔮 年末库存预测</button>' +
+    '</div>';
+
+  if (isForecast) {
+    renderInventoryForecast(page, tabBar);
+    return;
+  }
 
   const inv = dataStore.inventoryTurnover;
   if (!inv || !inv.months || !inv.inventoryByRdc || !inv.shipmentCost) {
-    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">暂无库存周转数据，请导入包含库存周转Sheet的Excel文件</div>';
+    page.innerHTML = tabBar + '<div style="text-align:center;padding:80px;color:var(--text-secondary)">暂无库存周转数据，请导入包含库存周转Sheet的Excel文件</div>';
     return;
   }
 
@@ -5195,7 +5208,7 @@ function renderInventoryTurnover() {
   for (var i = 0; i <= latestIdx; i++) hqYtdShipment += (hqShipArr && hqShipArr[i]) || 0;
   var ytdDays = (latestIdx + 1) * 30;
 
-  page.innerHTML = '' +
+  page.innerHTML = tabBar +
     // KPI cards
     '<div class="kpi-row">' +
     '<div class="kpi-card blue"><div class="kpi-label">RDC 6月全库位周转</div><div class="kpi-value">' + totalAllTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalAllTurnover, totalAllTurnoverPrev) + '</div></div>' +
@@ -5415,6 +5428,114 @@ function renderInventoryTurnover() {
 
   // 库存规模年度对比（2025 vs 2026）
   renderInventoryTurnoverHistoryCharts();
+}
+
+// 年末库存预测 TAB（内嵌 inventory_2026_forecast 推演结论，数据基准 2026-07-23 快照）
+function renderInventoryForecast(page, tabBar) {
+  const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  // 单位：亿元（history.json 千元 ÷ 100,000）
+  const nat25  = [3.24,3.22,2.90,2.69,2.57,2.29,2.07,2.12,2.35,2.20,2.17,2.59];
+  const nat26A = [2.92,3.13,2.56,2.65,2.58,2.31];
+  const nat26S = [2.17,2.23,2.52,2.37,2.34,2.81];
+  const nat26D = [2.10,2.15,2.51,2.22,2.08,2.11];
+  const nat26 = nat26A.concat(nat26S);
+  const nat26Demand = new Array(6).fill(null).concat(nat26D);
+
+  const cover = [
+    ['东北仓',1049038,726694,1.44,'正常','覆盖充足，处于健康区间'],
+    ['西北仓', 717430,612103,1.17,'正常','覆盖略紧但可接受'],
+    ['华北仓',1422385,1427576,1.00,'偏瘦','刚好覆盖 7 月，需关注 8–9 月补货'],
+    ['华中仓',2260058,3262317,0.69,'偏瘦','库存明显不足，缺货风险高'],
+    ['西南仓', 922224,1411188,0.65,'偏瘦','库存明显不足，缺货风险高'],
+    ['华南仓',5043012,2117490,2.38,'冗余','覆盖过高，可向瘦库存 RDC 调拨']
+  ];
+  const proj = [
+    ['总仓',   2.02, 2.02, '总仓无未来需求，两种方法结果相同'],
+    ['东北RDC',0.04, 0.01, '需求驱动下 12 月需求低，库存需求大幅下降'],
+    ['华北RDC',0.10, 0.01, ''],
+    ['华南RDC',0.21, 0.03, '当前冗余，若严格按需求备货可大幅压库'],
+    ['华中RDC',0.34, 0.02, ''],
+    ['西北RDC',0.02, 0.01, ''],
+    ['西南RDC',0.07, 0.01, ''],
+    ['全国合计',2.81, 2.11, '差异来自 RDC 是否按未来需求备货']
+  ];
+
+  page.innerHTML = tabBar +
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span></div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json + inventory.xlsx「6月库存覆盖数据」X–AC 列（未来需求）｜快照日期 2026-07-23｜单位：亿元（千元 ÷ 100,000）</div>' +
+      '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:12px;font-size:13px;color:#991B1B;margin-bottom:12px"><b>单位勘误：</b>早期版本误将「千元」按 ÷10,000 转「亿元」（应为 ÷100,000），金额被放大 10 倍。本页已修正：2026 年末全国库存约 <b>2.81 亿元</b>（场景A）、约 <b>2.11 亿元</b>（场景B）。</div>' +
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
+        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:var(--color-blue)">场景 A · 季节性外推：</b>假设 2026 下半年重复 2025 季节形态。<b>年末 ≈ 2.81 亿</b>，同比 +8.7%。</div>' +
+        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 需求驱动外推：</b>用 6 月覆盖 sheet 的 7–12 月未来需求推演。<b>年末 ≈ 2.11 亿</b>，低于季节性。</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">全国库存金额月度走势（单位：亿元）</span></div>' +
+      '<div class="chart-container" id="chart-forecast" style="height:420px"></div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 实际；蓝实线=2026 实际 H1+季节性投影 H2；紫虚线=2026 需求驱动投影 H2。阴影区为投影区间。</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">当前库存 vs 未来需求覆盖分析（6 月末）</span></div>' +
+      '<div class="table-wrap" id="table-forecast-cover"></div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 6 月末库存量 ÷ 7 月未来需求。&gt;2 个月冗余，1–2 个月正常，&lt;1 个月偏瘦（缺货风险）。</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">各地点年末库存金额推演（单位：亿元）</span></div>' +
+      '<div class="table-wrap" id="table-forecast-proj"></div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">场景 A 按历史季节性 12 月补货；场景 B 按已锁定 10–12 月较低需求维持当前覆盖水平。总仓两法结果相同。</div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><span class="card-title">结论与建议</span></div>' +
+      '<div style="font-size:13px;line-height:1.8">' +
+        '<div>1. <b>年末库存区间：</b>2026 年全国（总仓+6 在营 RDC）年末库存大概率落在 <b>2.1–2.8 亿元</b> 之间（场景A 2.81 亿 / 场景B 2.11 亿）。</div>' +
+        '<div>2. <b>冗余判断：结构性分化，不是全面冗余。</b>华南（2.38 月）相对冗余；华中（0.69）、西南（0.65）、华北（1.00）偏瘦，下半年缺货风险高；东北（1.44）、西北（1.17）正常。</div>' +
+        '<div>3. <b>总仓</b>全年维持约 2.0 亿，是库存主体，与 RDC 需求节奏基本匹配。</div>' +
+        '<div>4. <b>行动建议：</b>优先把华南冗余库存向华中/西南调拨或前置补货；华北视 8–9 月需求密集度提前补库，避免 9 月旺季断货。</div>' +
+        '<div>5. <b>提升精度：</b>若未来需求按 SKU/品牌细分并补入 7–8 月实际出货滚动校准，投影误差可进一步缩小。</div>' +
+      '</div>' +
+    '</div>';
+
+  // 图表：全国月度库存走势（双场景）
+  const chart = initChart('chart-forecast');
+  chart.setOption({
+    tooltip:{trigger:'axis'},
+    legend:{data:['2025 全国实际','2026 全国(实际+季节性投影)','2026 全国(实际+需求驱动投影)'],top:0},
+    grid:{left:60,right:24,top:50,bottom:40},
+    xAxis:{type:'category',data:months},
+    yAxis:{type:'value',name:'亿元',min:1.5,max:3.5},
+    series:[
+      {name:'2025 全国实际',type:'line',data:nat25,lineStyle:{type:'dashed',color:'#9aa7b4'},itemStyle:{color:'#9aa7b4'},symbol:'circle'},
+      {name:'2026 全国(实际+季节性投影)',type:'line',data:nat26,lineStyle:{width:3,color:'#2f6fed'},itemStyle:{color:'#2f6fed'},
+        markArea:{silent:true,itemStyle:{color:'rgba(47,111,237,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}},
+      {name:'2026 全国(实际+需求驱动投影)',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'}}
+    ]
+  });
+
+  // 覆盖表
+  let cb = '';
+  cover.forEach(function(r){
+    let tag = '';
+    if (r[4]==='冗余') tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#FDECEA;color:#D83A2F">冗余</span>';
+    else if (r[4]==='偏瘦') tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#FFF3E0;color:#C77700">偏瘦</span>';
+    else tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#E6F7EE;color:#1C9C5E">正常</span>';
+    cb += '<tr><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+r[1].toLocaleString()+'</td><td>'+r[2].toLocaleString()+'</td><td><b>'+r[3].toFixed(2)+'</b></td><td>'+tag+'</td><td style="text-align:left">'+r[5]+'</td></tr>';
+  });
+  document.getElementById('table-forecast-cover').innerHTML =
+    '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th><th>库存量（支）</th><th>7 月需求（支）</th><th>覆盖月数</th><th>判断</th><th style="text-align:left">说明</th></tr></thead><tbody>'+cb+'</tbody></table>';
+
+  // 推演表
+  let pb = '';
+  proj.forEach(function(r){
+    const style = r[0]==='全国合计' ? 'style="background:#EEF2FF;font-weight:700"' : '';
+    pb += '<tr '+style+'><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+r[1].toFixed(2)+'</td><td>'+r[2].toFixed(2)+'</td><td style="text-align:left">'+r[3]+'</td></tr>';
+  });
+  document.getElementById('table-forecast-proj').innerHTML =
+    '<table class="data-table"><thead><tr><th style="text-align:left">地点</th><th>场景 A（季节性）</th><th>场景 B（需求驱动）</th><th style="text-align:left">差异说明</th></tr></thead><tbody>'+pb+'</tbody></table>';
 }
 
 // 库存规模年度对比卡片（HTML 部分）
