@@ -5052,6 +5052,34 @@ function exportReplenishmentCSV() {
 }
 
 // ============ INVENTORY TURNOVER ============
+// RDC multi-select helpers for inventory turnover page
+function getInvRdcSelection() {
+  const inv = dataStore.inventoryTurnover;
+  const raw = window._invRdc || ['allRDC'];
+  if (!inv || !inv.rdcOrder) return { isAll: true, selected: [] };
+  const isAll = raw.indexOf('allRDC') >= 0 || raw.length === 0 || raw.length === inv.rdcOrder.length;
+  const selected = isAll ? inv.rdcOrder.slice() : raw.filter(function(x){ return inv.rdcOrder.indexOf(x) >= 0; });
+  return { isAll: isAll, selected: selected };
+}
+function toggleInvRdc(rdc, checked) {
+  const inv = dataStore.inventoryTurnover;
+  if (!inv || !inv.rdcOrder) return;
+  var arr = (window._invRdc || ['allRDC']).slice();
+  if (arr.indexOf('allRDC') >= 0) arr = checked ? [rdc] : inv.rdcOrder.filter(function(x){ return x !== rdc; });
+  else {
+    if (checked) { if (arr.indexOf(rdc) < 0) arr.push(rdc); }
+    else arr = arr.filter(function(x){ return x !== rdc; });
+  }
+  if (arr.length === 0) arr = ['allRDC'];
+  else if (arr.length === inv.rdcOrder.length) arr = ['allRDC'];
+  window._invRdc = arr;
+  renderInventoryTurnover();
+}
+function toggleInvRdcAll(checked) {
+  window._invRdc = checked ? ['allRDC'] : [];
+  renderInventoryTurnover();
+}
+
 function renderInventoryTurnover() {
   setTitle('库存周转'); <!-- v2 -->
   const page = document.getElementById('page-inventory');
@@ -5077,10 +5105,15 @@ function renderInventoryTurnover() {
     return '<span style="font-size:12px;color:' + color + '">环比 ' + arrow + Math.abs(chg) + '%</span>';
   }
 
+  // RDC multi-select state
+  const rdcSel = getInvRdcSelection();
+  const selectedRdcs = rdcSel.selected;
+  const isAllSelected = rdcSel.isAll;
+
   // KPI cards - RDC totals (exclude 总部/总仓)
   var rdcTotalInventory = 0, rdcTotalInventoryPrev = 0;
   var rdcTotalShipment = 0, rdcTotalShipmentPrev = 0;
-  inv.rdcOrder.forEach(function(rdc) {
+  selectedRdcs.forEach(function(rdc) {
     var rdcName = rdc;
     // Find inventory for this RDC
     var invKeys = Object.keys(inv.inventoryByRdc);
@@ -5119,9 +5152,9 @@ function renderInventoryTurnover() {
   const hqShipment = getVal(inv.shipmentCost['总部'], latestIdx);
   const hqShipmentPrev = getVal(inv.shipmentCost['总部'], prevIdx);
 
-  // Find fastest/slowest RDC
+  // Find fastest/slowest RDC (among selected)
   let minTurn = 9999, maxTurn = 0, minRdc = '', maxRdc = '';
-  inv.rdcOrder.forEach(function(rdc) {
+  selectedRdcs.forEach(function(rdc) {
     var rdcName = rdc;
     var vals = inv.allLocation[rdcName];
     if (vals) {
@@ -5131,11 +5164,24 @@ function renderInventoryTurnover() {
     }
   });
 
-  // RDC filter (for tables/charts)
-  window._invRdc = window._invRdc || 'allRDC';
-  const invRdcFilter = window._invRdc;
-
   function fmtNum(n) { return n == null ? '-' : n.toLocaleString(); }
+
+  // Build checkbox HTML for RDC multi-select
+  function rdcCheckboxHtml() {
+    var allChecked = isAllSelected ? 'checked' : '';
+    var html = '<div class="filter-bar" style="margin-bottom:12px;align-items:flex-start">' +
+      '<label style="margin-top:4px;font-size:12px;color:var(--text-secondary)">RDC：</label>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">' +
+      '<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">' +
+      '<input type="checkbox" value="allRDC" onchange="toggleInvRdcAll(this.checked)" ' + allChecked + '> 全部RDC</label>';
+    inv.rdcOrder.forEach(function(r) {
+      var checked = (isAllSelected || selectedRdcs.indexOf(r) >= 0) ? 'checked' : '';
+      html += '<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">' +
+        '<input type="checkbox" value="' + r + '" onchange="toggleInvRdc(\'' + r + '\', this.checked)" ' + checked + '> ' + r + '</label>';
+    });
+    html += '</div></div>';
+    return html;
+  }
 
   // YTD shipment for formula calculation
   function calcYTD(shipArr, monthIdx) {
@@ -5160,13 +5206,7 @@ function renderInventoryTurnover() {
     '<div class="kpi-card purple"><div class="kpi-label">最快/慢RDC</div><div class="kpi-value">' + minTurn + '/' + maxTurn + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + (minRdc ? '最快' + minRdc + '<br/>最慢' + maxRdc : '') + '</div></div>' +
     '<div class="kpi-card teal"><div class="kpi-label">总仓周转</div><div class="kpi-value">' + hqTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(hqTurnover, hqTurnoverPrev) + '</div></div>' +
     '</div>' +
-    '<div class="filter-bar" style="margin-bottom:12px">' +
-    '<label>RDC：</label>' +
-    '<select onchange="window._invRdc=this.value;renderInventoryTurnover()" style="padding:4px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px">' +
-    '<option value="allRDC"' + (invRdcFilter==='allRDC' || invRdcFilter==='all'?' selected':'') + '>全部RDC</option>' +
-    inv.rdcOrder.map(function(r) { return '<option value="' + r + '"' + (invRdcFilter===r?' selected':'') + '>' + r + '</option>'; }).join('') +
-    '</select>' +
-    '</div>' +
+    rdcCheckboxHtml() +
     (renderInventoryTurnoverHistory() || '') +
     // Chart 1: Inventory & Shipment dual-axis
     '<div class="card" style="margin-bottom:16px">' +
@@ -5186,59 +5226,44 @@ function renderInventoryTurnover() {
     '<div style="margin-top:6px;padding:6px 10px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#92400E">例（6月）：总仓周转 ' + hqTurnover + '天 = 月末存货金额' + fmtNum(hqInventory) + ' / YTD销售成本' + fmtNum(hqYtdShipment) + ' × ' + ytdDays + '天</div></div>';
 
   // ---- Chart 1: Dual-axis (Inventory bar + Shipment line) ----
-  // Build data by selected RDC or all
-  var dualInvData = [];
-  var dualShipData = [];
-  var dualLabels = [];
+  // Sum inventory/shipment across selected RDCs (exclude 总仓/总部)
   var invRdcKeys = Object.keys(inv.inventoryByRdc);
   var shipRdcKeys = Object.keys(inv.shipmentCost);
 
-  // If filtering by specific RDC, get that RDC's inventory data; else if allRDC, sum all RDCs
-  if (invRdcFilter !== 'allRDC' && invRdcFilter !== 'all') {
-    var filterRdcName = invRdcFilter;
-    // Try to find inventory for this RDC
-    var foundInv = false;
+  function findInvArr(rdc) {
     for (var k = 0; k < invRdcKeys.length; k++) {
-      if (invRdcKeys[k].indexOf(filterRdcName) >= 0) {
-        dualInvData = inv.inventoryByRdc[invRdcKeys[k]] || [];
-        foundInv = true;
-        break;
+      if (invRdcKeys[k].indexOf(rdc) >= 0 && invRdcKeys[k].indexOf('总部') < 0 && invRdcKeys[k].indexOf('共享') < 0) {
+        return inv.inventoryByRdc[invRdcKeys[k]];
       }
     }
-    if (!foundInv) dualInvData = months.map(function() { return 0; });
-    // Shipment for this RDC
-    var foundShip = false;
-    for (var k = 0; k < shipRdcKeys.length; k++) {
-      if (shipRdcKeys[k].indexOf(filterRdcName) >= 0) {
-        dualShipData = inv.shipmentCost[shipRdcKeys[k]] || [];
-        foundShip = true;
-        break;
-      }
-    }
-    if (!foundShip) dualShipData = months.map(function() { return 0; });
-  } else {
-    // allRDC: sum all RDC inventory (excluding 总仓/总部)
-    dualInvData = months.map(function(_, i) {
-      var sum = 0;
-      invRdcKeys.forEach(function(k) {
-        if (k.indexOf('总仓') < 0) {
-          var arr = inv.inventoryByRdc[k];
-          sum += (arr && arr[i]) || 0;
-        }
-      });
-      return sum;
-    });
-    dualShipData = months.map(function(_, i) {
-      var sum = 0;
-      shipRdcKeys.forEach(function(k) {
-        if (k.indexOf('总仓') < 0) {
-          var arr = inv.shipmentCost[k];
-          sum += (arr && arr[i]) || 0;
-        }
-      });
-      return sum;
-    });
+    return null;
   }
+  function findShipArr(rdc) {
+    for (var k = 0; k < shipRdcKeys.length; k++) {
+      if (shipRdcKeys[k].indexOf(rdc) >= 0 && shipRdcKeys[k].indexOf('总部') < 0 && shipRdcKeys[k].indexOf('共享') < 0) {
+        return inv.shipmentCost[shipRdcKeys[k]];
+      }
+    }
+    return null;
+  }
+
+  var dualInvData = months.map(function(_, i) {
+    var sum = 0;
+    selectedRdcs.forEach(function(rdc) {
+      var arr = findInvArr(rdc);
+      sum += (arr && arr[i]) || 0;
+    });
+    return sum;
+  });
+  var dualShipData = months.map(function(_, i) {
+    var sum = 0;
+    selectedRdcs.forEach(function(rdc) {
+      var arr = findShipArr(rdc);
+      sum += (arr && arr[i]) || 0;
+    });
+    return sum;
+  });
+  var dualLabels = months;
 
   const chart1 = initChart('chart-inv-dual');
   chart1.setOption({
@@ -5260,11 +5285,11 @@ function renderInventoryTurnover() {
   const chart2 = initChart('chart-inv-turnover-trend');
   var trendSeries = [];
   var trendColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6','#EC4899'];
-  inv.rdcOrder.forEach(function(rdc, idx) {
+  selectedRdcs.forEach(function(rdc, idx) {
     var rdcName = rdc;
     var vals = inv.allLocation[rdcName];
     if (vals) {
-      trendSeries.push({ name: rdcName, type: 'line', data: vals, smooth: true, symbol: 'none', lineStyle: { width: 2 }, color: trendColors[idx] });
+      trendSeries.push({ name: rdcName, type: 'line', data: vals, smooth: true, symbol: 'none', lineStyle: { width: 2 }, color: trendColors[idx % trendColors.length] });
     }
   });
   chart2.setOption({
@@ -5278,14 +5303,13 @@ function renderInventoryTurnover() {
 
   // ---- Chart 3: All-location vs Shared-location comparison ----
   const chart3 = initChart('chart-inv-compare');
-  var compareLabels = ['东北','华北','华东','华南','华中','西南','西北'];
+  var compareLabels = selectedRdcs.map(function(r){ return r.replace('RDC',''); });
   var allVals = [];
   var sharedVals = [];
-  compareLabels.forEach(function(rdc) {
-    var rdcName = rdc + 'RDC';
-    var allD = inv.allLocation[rdcName];
+  selectedRdcs.forEach(function(rdc) {
+    var allD = inv.allLocation[rdc];
     allVals.push(allD ? allD[latestIdx] : 0);
-    var subD = inv.subLocation[rdcName];
+    var subD = inv.subLocation[rdc];
     sharedVals.push(subD ? subD[latestIdx] : 0);
   });
   chart3.setOption({
@@ -5302,7 +5326,7 @@ function renderInventoryTurnover() {
 
   // ---- Table 1: Turnover days ----
   var table1Html = '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right;color:#10B981">共享库6月</th></tr></thead><tbody>';
-  inv.rdcOrder.forEach(function(rdc) {
+  selectedRdcs.forEach(function(rdc) {
     var rdcName = rdc;
     var allV = inv.allLocation[rdcName] || [];
     var subV = inv.subLocation[rdcName] || [];
@@ -5323,11 +5347,11 @@ function renderInventoryTurnover() {
   // ---- Table 2: Inventory & Shipment detail ----
   var table2Html = '<table class="data-table"><thead><tr><th>项目</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right">6月库占比</th></tr></thead><tbody>';
 
-  // Find 6月 inventory proportion
+  // Find 6月 inventory proportion (selected RDCs + 总仓)
   var total6mInv = 0;
-  inv.rdcOrder.forEach(function(rdc) {
+  selectedRdcs.forEach(function(rdc) {
     for (var k = 0; k < invRdcKeys.length; k++) {
-      if (invRdcKeys[k].indexOf(rdc) >= 0) {
+      if (invRdcKeys[k].indexOf(rdc) >= 0 && invRdcKeys[k].indexOf('总部') < 0 && invRdcKeys[k].indexOf('共享') < 0) {
         total6mInv += getVal(inv.inventoryByRdc[invRdcKeys[k]], latestIdx);
         break;
       }
@@ -5336,10 +5360,10 @@ function renderInventoryTurnover() {
   total6mInv += getVal(inv.inventoryByRdc['总仓'], latestIdx);
 
   // Inventory rows
-  inv.rdcOrder.forEach(function(rdc) {
+  selectedRdcs.forEach(function(rdc) {
     var found = false;
     for (var k = 0; k < invRdcKeys.length; k++) {
-      if (invRdcKeys[k].indexOf(rdc) >= 0) {
+      if (invRdcKeys[k].indexOf(rdc) >= 0 && invRdcKeys[k].indexOf('总部') < 0 && invRdcKeys[k].indexOf('共享') < 0) {
         var vals = inv.inventoryByRdc[invRdcKeys[k]];
         if (vals) {
           table2Html += '<tr><td>' + rdc + '</td>';
@@ -5397,8 +5421,8 @@ function renderInventoryTurnover() {
 // 库存规模年度对比卡片（HTML 部分）
 function renderInventoryTurnoverHistory() {
   if (!dataStore.history || !dataStore.history.inventory) return '';
-  const rdcFilter = window._invRdc || 'allRDC';
-  const rdcLabel = (rdcFilter === 'allRDC' || rdcFilter === 'all') ? '全部RDC' : rdcFilter;
+  const rdcSel = getInvRdcSelection();
+  const rdcLabel = rdcSel.isAll ? '全部RDC' : (rdcSel.selected.length > 3 ? rdcSel.selected.length + '个RDC' : rdcSel.selected.join('、'));
   return '' +
     '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
       '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 7大RDC口径（不含总仓）</span></div>' +
@@ -5414,21 +5438,21 @@ function renderInventoryTurnoverHistory() {
 function renderInventoryTurnoverHistoryCharts() {
   if (!dataStore.history || !dataStore.history.inventory) return;
   const INV = dataStore.history.inventory;
-  const rdcFilter = window._invRdc || 'allRDC';
-  const isAll = rdcFilter === 'allRDC' || rdcFilter === 'all';
-  const rdcKey = isAll ? null : rdcFilter;
-  const rdcLabel = isAll ? '7大RDC合计' : rdcKey;
+  const rdcSel = getInvRdcSelection();
+  const selectedRdcs = rdcSel.selected;
+  const isAll = rdcSel.isAll;
+  const rdcLabel = isAll ? '7大RDC合计' : (selectedRdcs.length > 3 ? selectedRdcs.length + '个RDC' : selectedRdcs.join('、'));
 
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
 
   function valOrNull(map, k, i) { const arr = map && map[k]; return (arr && arr.length > i) ? arr[i] : null; }
   const EXCLUDE_KEYS = ['总仓'];
-  function sumAll(map, i) { let s = 0; Object.keys(map || {}).forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
+  function sumSelected(map, i) { let s = 0; selectedRdcs.forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
 
-  const amt25 = months12.map((_, i) => isAll ? sumAll(INV['2025'].inventoryAmount, i) : valOrNull(INV['2025'].inventoryAmount, rdcKey, i));
-  const amt26 = months12.map((_, i) => (i < 6 ? (isAll ? sumAll(INV['2026'].inventoryAmount, i) : valOrNull(INV['2026'].inventoryAmount, rdcKey, i)) : null));
-  const ship25 = months12.map((_, i) => isAll ? sumAll(INV['2025'].shipmentCost, i) : valOrNull(INV['2025'].shipmentCost, rdcKey, i));
-  const ship26 = months12.map((_, i) => (i < 6 ? (isAll ? sumAll(INV['2026'].shipmentCost, i) : valOrNull(INV['2026'].shipmentCost, rdcKey, i)) : null));
+  const amt25 = months12.map((_, i) => sumSelected(INV['2025'].inventoryAmount, i));
+  const amt26 = months12.map((_, i) => (i < 6 ? sumSelected(INV['2026'].inventoryAmount, i) : null));
+  const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
+  const ship26 = months12.map((_, i) => (i < 6 ? sumSelected(INV['2026'].shipmentCost, i) : null));
 
   // 上半年合计对比
   let h1_26 = 0; for (let i = 0; i < 6; i++) h1_26 += (ship26[i] || 0);
