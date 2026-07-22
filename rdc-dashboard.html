@@ -718,9 +718,10 @@ function parseInventoryTurnoverSheet(shI) {
 
     // 右表：库存金额（出货成本统计之前）/ 出货成本（之后），I 列标签为 RDC 简称
     if (right && ALL_RDC_NAMES.indexOf(right)>=0){
-      if (i < splitPoint) invData.inventoryByRdc[right] = rowVals(r,9,14);
+      const mapKey = right === '总仓' ? '总仓' : RDC_FULL[RDC_SHORT.indexOf(right)];
+      if (i < splitPoint) invData.inventoryByRdc[mapKey] = rowVals(r,9,14);
       else {
-        invData.shipmentCost[right] = rowVals(r,9,14);
+        invData.shipmentCost[mapKey] = rowVals(r,9,14);
         if (right==='总仓') invData.shipmentCost['总部'] = rowVals(r,9,14);
       }
     }
