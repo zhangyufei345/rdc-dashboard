@@ -7602,6 +7602,7 @@ function renderSlowMoving() {
   page.innerHTML = html;
 
   setTimeout(function() {
+    window._chartInstances = window._chartInstances || [];
     var trendChart = echarts.init(document.getElementById('chart-slow-trend'));
     trendChart.setOption({ tooltip: { trigger: 'axis' }, grid: { left: 50, right: 20, top: 20, bottom: 30 }, xAxis: { type: 'category', data: ['5月','6月'] }, yAxis: { type: 'value', axisLabel: { formatter: function(v) { return (v/10000).toFixed(0)+'万'; } } }, series: [{ data: trendQty, type: 'line', smooth: true, areaStyle: { color: 'rgba(239,68,68,0.2)' }, itemStyle: { color: '#EF4444' } }] });
 
