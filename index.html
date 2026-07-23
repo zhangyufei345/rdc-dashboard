@@ -6219,18 +6219,44 @@ function parseInventoryExcel(rawData) {
 
     function parseStatusSheet(arr) {
       const result = [];
+      if (!arr || arr.length < 2) return result;
+      // 动态定位列：按表头名称查找列索引（适配 5月/6月 sheet 列结构差异）
+      const header = arr[0] || [];
+      function colIdx(name) {
+        for (let i = 0; i < header.length; i++) {
+          const v = String(header[i] || '').trim();
+          if (v === name || v.indexOf(name) >= 0) return i;
+        }
+        return -1;
+      }
+      const C_LOC = colIdx('库存地点名称');
+      const C_RDC = colIdx('RDC');
+      const C_SKU = colIdx('产品编码');
+      const C_NAME = colIdx('产品名称');
+      const C_BRAND = colIdx('品牌');
+      const C_QTY = colIdx('库存数量');
+      const C_AMT = colIdx('库存金额');
+      const C_STATUS = colIdx('状态');
+      const C_AGE = colIdx('临期天数');
+      const C_LIFE = colIdx('总货架寿命');
+      const C_HAINAN = colIdx('海南花露水');
       for (let i = 1; i < arr.length; i++) {
         const r = arr[i];
-        if (!r || r.length < 15 || !r[0]) continue;
-        const status = String(r[13] || '').trim(); // 状态列
-        const isStale = String(r[14] || '').trim(); // 呆滞标记
+        if (!r || !r[0]) continue;
+        const status = String(r[C_STATUS] || '').trim();
         result.push({
-          location: String(r[0]||'').trim(), rdc: mapRDCName(String(r[1]||'').trim()),
-          sku: String(r[3]||'').trim(), skuName: String(r[4]||'').trim(),
-          brand: normalizeBrandName(String(r[6]||'').trim()), spec: String(r[7]||'').trim(),
-          availableQty: getSN(r,9), ageDays: getSN(r,10),
-          amount: getSN(r,11), status: status, isStale: isStale,
-          isHainan: String(r[14] || '').trim() === '是'
+          location: String(r[C_LOC>=0?C_LOC:0]||'').trim(),
+          rdc: mapRDCName(String(r[C_RDC>=0?C_RDC:1]||'').trim()),
+          sku: String(r[C_SKU>=0?C_SKU:3]||'').trim(),
+          skuName: String(r[C_NAME>=0?C_NAME:4]||'').trim(),
+          brand: normalizeBrandName(String(r[C_BRAND>=0?C_BRAND:6]||'').trim()),
+          spec: '',
+          availableQty: getSN(r, C_QTY>=0?C_QTY:9),
+          ageDays: getSN(r, C_AGE>=0?C_AGE:10),
+          amount: getSN(r, C_AMT>=0?C_AMT:11),
+          status: status,
+          isStale: '',
+          isHainan: String(r[C_HAINAN>=0?C_HAINAN:14] || '').trim() === '是'
         });
       }
       return result;
