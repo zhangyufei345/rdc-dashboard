@@ -6285,6 +6285,19 @@ function renderInventoryStructure() {
   const returnInvPrev = kpi5.returnInv;
   const totalChange = totalInvPrev > 0 ? (totalInv - totalInvPrev) / totalInvPrev : 0;
 
+  // 6月日均出货成本 (从 history.json shipmentCost，跟随 RDC 筛选；海南花露水维度不可拆，按 RDC 汇总)
+  const histShip = dataStore.history && dataStore.history.inventory;
+  const shipKeys = rdcFilter === 'all' ? rdc6 : [rdcFilter];
+  function sumShip(y, i) {
+    if (!histShip || !histShip[y] || !histShip[y].shipmentCost) return 0;
+    let s = 0; shipKeys.forEach(r => { s += (histShip[y].shipmentCost[r] && histShip[y].shipmentCost[r][i]) || 0; });
+    return s;
+  }
+  const shipCost6 = sumShip('2026', 5); // 6月合计 千元
+  const shipCost5 = sumShip('2026', 4); // 5月合计 千元
+  const dailyShip6 = shipCost6 / 30;    // 千元/日
+  const dailyShip5 = shipCost5 / 30;
+
   // Recalculate coverage from filtered cov6
   const rdcCoverageFiltered = {};
   const recalcCoverage = {};
@@ -6377,6 +6390,7 @@ function renderInventoryStructure() {
       <div class="kpi-card orange"><div class="kpi-label">7月~1/2效期库存</div><div class="kpi-value">${fmtK(nearExpiryInv)}<span class="kpi-unit">千元</span></div>${fmtChangeHtml(nearExpiryInv, nearExpiryInvPrev)}</div>
       <div class="kpi-card red"><div class="kpi-label">退货库位</div><div class="kpi-value">${fmtK(returnInv)}<span class="kpi-unit">千元</span></div>${fmtChangeHtml(returnInv, returnInvPrev)}</div>
       <div class="kpi-card purple"><div class="kpi-label">库存状态分类</div><div class="kpi-value">${statusLabels.length}<span class="kpi-unit">类</span></div><div style="font-size:11px">含残次/过期/效期/退货/可用/在途</div></div>
+      <div class="kpi-card" style="border-top:3px solid #06B6D4"><div class="kpi-label">6月日均出货成本</div><div class="kpi-value">${(shipCost6/300).toFixed(1)}<span class="kpi-unit">万元/日</span></div>${fmtChangeHtml(dailyShip6, dailyShip5)}</div>
     </div>
     <div class="row-2">
       <div class="card">
