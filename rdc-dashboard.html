@@ -5450,10 +5450,11 @@ function renderInventoryTurnover() {
 }
 
 // 年末库存预测 TAB（动态滚动库存模拟，数据基准 2026-07-23 快照）
-// 算法：补货量 = MAX(0, 当月需求 + 目标期末库存 - 期初库存)；
-// 目标期末库存 = 覆盖天数/30 × 下月需求(60%准确率补偿)。
+// 算法：补货量 = MIN(MAX(0, 当月需求 + 目标期末库存 - 期初库存), 当月需求 × 渐进比率)
+// 目标期末库存 = 覆盖天数/30 × 下月需求
 // 覆盖天数：默认 14 天（2周含安全库存），西北 19 天（再加 5 天）。
-// 总仓固定 = 6月末值，不参与模拟；华东RDC停运不计入。
+// 起始库存：只算"可出货" = 计划可用库存 + 在途库存（不含残次/过期/退货/近效期）
+// 总仓固定 = 6月末值，不参与预测；华东RDC停运不计入。
 function renderInventoryForecast(page, tabBar) {
   const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
   const rdc6 = ['东北RDC','华北RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
@@ -5479,14 +5480,13 @@ function renderInventoryForecast(page, tabBar) {
   const nat26A = months.slice(0,6).map((_, i) => sumRdcs('2026', i, rdc7) / 100000);
   const twYuan = (sumRdcs('2026', 5, rdc6.concat(['总仓'])) - sumRdcs('2026', 5, rdc6)) * 1000; // 元
   const twYi = twYuan / 1e8;
-  const startInvRdcYuan = {}; // 元
-  rdc6.forEach(r => {
-    startInvRdcYuan[r] = (hist && hist['2026'] && hist['2026'].inventoryAmount[r] && hist['2026'].inventoryAmount[r][5] || 0) * 1000;
-  });
 
   // === 2. 从 cov6 算单品成本 + 7-12月 需求(元) ===
+  // 起始库存：只算"可出货" = 计划可用库存(planAmt) + 在途库存(inTransitAmt)
+  //   不含 残次/过期/退货/近效期（这些不能用于正常出货）
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
   const demandYuan = {}; rdc6.forEach(r => demandYuan[r] = [0,0,0,0,0,0]);
+  const startInvRdcYuan = {}; rdc6.forEach(r => startInvRdcYuan[r] = 0);
   let skuCount = 0;
   cov6.forEach(d => {
     if (rdc6.indexOf(d.rdc) < 0) return;
@@ -5494,6 +5494,8 @@ function renderInventoryForecast(page, tabBar) {
     if (qty <= 0 || amt <= 0) return;
     const unitCost = amt / qty; skuCount++;
     covFields.forEach((f, t) => { demandYuan[d.rdc][t] += (d[f] || 0) * unitCost; });
+    // 可出货库存 = plan + inTransit
+    startInvRdcYuan[d.rdc] += (d.planAmt || 0) + (d.inTransitAmt || 0);
   });
 
   // === 3. 滚动库存模拟 Jul-Dec (元) —— 所有参数（覆盖天数、渐进比率）可在上方 ⚙ 面板调 ===
@@ -5528,15 +5530,14 @@ function renderInventoryForecast(page, tabBar) {
   const nationalYiH2 = rdcOnlyH2.map(v => (v + twYuan) / 1e8);
   const nat26Demand = nat26A.concat(rdcOnlyYiH2);
 
-  // === 7. 各地点年末推演 (亿元) ===
-  const proj = [['总仓', twYi, '总仓按 6 月水位固定，不参与补货模拟']];
+  // === 7. 各地点年末推演 (亿元) —— 只含 6 RDC；总仓/全国合计作为信息脚注 ===
+  const proj = [];
   rdc6.forEach(r => {
     const v = forecastYuan[r][5] / 1e8;
     proj.push([r, v, '覆盖'+CP[r]+'天，渐进'+GRADUAL.toFixed(1)+'倍']);
   });
   const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][5], 0) / 1e8;
-  proj.push(['6RDC合计', rdcSumYi, '各 RDC 年末库存之和']);
-  proj.push(['全国合计', rdcSumYi + twYi, '6RDC + 总仓固定']);
+  proj.push(['6RDC合计', rdcSumYi, '各 RDC 年末可出货库存之和']);
 
   // === 8. 覆盖表 (从 cov6 算: 库存量 ÷ 7月需求) ===
   const cover = [];
@@ -5600,15 +5601,15 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">各地点年末库存金额推演（单位：亿元）</span></div>' +
       '<div class="table-wrap" id="table-forecast-proj"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">渐进入市（参数可调，⬆ 面板）。总仓按 6 月实际固定。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">渐进入市（参数可调，⬆ 面板）。起始库存 = 计划可用库存 + 在途库存（不含残次/过期/退货/近效期）。<b>总仓固定 '+twYi.toFixed(2)+' 亿</b>｜全国合计（参考）= <b>'+(rdcSumYi+twYi).toFixed(2)+' 亿</b></div>' +
     '</div>' +
 
     '<div class="card">' +
       '<div class="card-header"><span class="card-title">结论与建议</span></div>' +
       '<div style="font-size:13px;line-height:1.8">' +
-        '<div>1. <b>年末库存：</b>2026 年末（6RDC+总仓）<b>'+ nationalYiH2[5].toFixed(2) + ' 亿</b>（渐进入市），其中 6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '。图表为 6RDC 月度走势，与年度对比卡片口径一致。</div>' +
+        '<div>1. <b>6RDC 年末库存：</b>可出货库存（计划+在途）合计 <b>'+ rdcSumYi.toFixed(2) + ' 亿</b>（渐进入市，参数可调 ⬆）。</div>' +
         '<div>2. <b>冗余判断：</b>'+ cover.map(c => c[0].replace('RDC','') + ' ' + c[4] + '（' + c[3].toFixed(2) + '月）').join('；') + '。</div>' +
-        '<div>3. <b>总仓</b>维持约 '+ twYi.toFixed(2) + ' 亿固定，是库存主体。6RDC 年末合计 '+ rdcSumYi.toFixed(2) + ' 亿（渐进'+GRADUAL.toFixed(1)+'倍覆盖'+months[5]+'库存）。</div>' +
+        '<div>3. <b>总仓</b>固定 '+ twYi.toFixed(2) + ' 亿不参与预测（补给池）。全国合计（参考）= '+ (rdcSumYi + twYi).toFixed(2) + ' 亿 = 6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '。6RDC 起始可出货库存 '+ (rdc6.reduce((s,r)=>s+startInvRdcYuan[r],0)/1e8).toFixed(2) + ' 亿。</div>' +
         '<div>4. <b>行动建议：</b>覆盖率 < 1 的 RDC 优先补货（向冗余 RDC 调拨或前置总仓出货）；覆盖率 > 2 的 RDC 可压缩补货释放库存。</div>' +
         '<div>5. <b>提升精度：</b>接入 7-8 月实际出货后滚动校准；按 SKU/品牌细分需求；优化覆盖天数与准确率参数。</div>' +
       '</div>' +
