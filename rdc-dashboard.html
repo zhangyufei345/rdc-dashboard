@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 9; // v9: 库存周转/库存金额趋势/年末预测 新增「海南花露水」筛选；history.json 增 hainanHistory 字段
+const DB_VERSION = 10; // v10: parseInventoryExcel 存 _rawSheets 供拉回分析 hnMap 直读原始数据列
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
