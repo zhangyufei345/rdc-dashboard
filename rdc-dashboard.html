@@ -5298,13 +5298,13 @@ function renderInventoryTurnover() {
 
   const chart1 = initChart('chart-inv-dual');
   chart1.setOption({
-    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 } },
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(p) { let h = '<strong>' + p[0].axisValue + '</strong>'; p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value / 100000).toFixed(2) + ' 亿'; }); return h; } },
     legend: { data: ['库存金额','出货成本'], top: 0, left: 'center', itemGap: 20, textStyle: { fontSize: 11 } },
     grid: { left: 60, right: 60, top: 50, bottom: 30 },
     xAxis: { type: 'category', data: months, axisLabel: { fontSize: 11 } },
     yAxis: [
-      { type: 'value', name: '库存(千元)', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: function(v) { return (v/10000).toFixed(0) + '万'; } } },
-      { type: 'value', name: '出货(千元)', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: function(v) { return (v/10000).toFixed(0) + '万'; } } }
+      { type: 'value', name: '库存(亿元)', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: function(v) { return (v/100000).toFixed(2) + ' 亿'; } } },
+      { type: 'value', name: '出货(亿元)', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: function(v) { return (v/100000).toFixed(2) + ' 亿'; } } }
     ],
     series: [
       { name: '库存金额', type: 'bar', data: dualInvData, color: '#3B82F6', barWidth: '30%', yAxisIndex: 0, itemStyle: { borderRadius: [4,4,0,0] } },
@@ -5721,11 +5721,11 @@ function renderInventoryTurnoverHistoryCharts() {
   function lineChart(elId, title25, title26, arr25, arr26) {
     const c = initChart(elId);
     c.setOption({
-      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) { let h = '<strong>' + p[0].axisValue + '</strong>'; p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value / 10000).toFixed(1) + '万'; }); return h; } },
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function (p) { let h = '<strong>' + p[0].axisValue + '</strong>'; p.forEach(s => { if (s.value != null) h += '<br/>' + s.marker + s.seriesName + '：' + (s.value / 100000).toFixed(2) + ' 亿'; }); return h; } },
       legend: { data: [title25, title26], top: 0, left: 'center', textStyle: { fontSize: 11 } },
       grid: { left: 60, right: 20, top: 40, bottom: 30 },
       xAxis: { type: 'category', data: months12, axisLabel: { fontSize: 10, interval: 0 } },
-      yAxis: { type: 'value', axisLabel: { formatter: v => (v / 10000).toFixed(0) + '万' } },
+      yAxis: { type: 'value', name: '亿元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: v => (v / 100000).toFixed(2) + ' 亿' } },
       series: [
         { name: title25, type: 'line', data: arr25, smooth: true, symbol: 'none', lineStyle: { width: 2, type: 'dashed' }, color: '#94a3b8' },
         { name: title26, type: 'line', data: arr26, smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, color: '#2563EB' }
