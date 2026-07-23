@@ -5694,7 +5694,9 @@ function reRenderForecast() {
 // 数据源策略：
 //   2025 全年 + 2026 1-4 月  ← history.hainanHistory.byRdc（来自「海南花露水历史数据」sheet）
 //   2026 5-6 月              ← inventory.cov6 中 isHainan===true 的 totalAmt 之和
-// 注意：周转天数/共享库/出货成本不跟随此筛选（无海南花露水维度数据）。
+// 海南花露水出货成本估算（按库存金额占比）：
+//   2025 全年 + 2026 1-4 月  ← history.hainanHistory 中海南花露水金额占比
+//   2026 5-6 月              ← cov6 中 isHainan===true 的 totalAmt 占比
 function getHainanAdjustedAmount(year, rdc, monthIdx) {
   const hainanFilter = window._invHainan || 'all';
   const baseArr = dataStore.history && dataStore.history.inventory
@@ -5716,6 +5718,37 @@ function getHainanAdjustedAmount(year, rdc, monthIdx) {
     hainanAmt = Math.round(hainanAmt / 10) / 100; // 元→千元，保留两位
   }
   return hainanFilter === 'yes' ? hainanAmt : Math.max(0, baseAll - hainanAmt);
+}
+
+// 海南花露水出货成本估算：按库存金额占比近似
+// 返回 { yes: 海南花露水出货成本(千元), no: 不含海南花露水出货成本(千元) }
+function getHainanAdjustedShipment(year, rdc, monthIdx) {
+  const baseArr = dataStore.history && dataStore.history.inventory
+    && dataStore.history.inventory[year]
+    && dataStore.history.inventory[year].shipmentCost[rdc];
+  const baseAll = (baseArr && baseArr.length > monthIdx) ? (baseArr[monthIdx] || 0) : 0;
+  if ((window._invHainan || 'all') === 'all') return { yes: baseAll, no: baseAll };
+  // 海南花露水占比 = 海南库存金额 / 全量库存金额
+  const allAmt = dataStore.history && dataStore.history.inventory
+    && dataStore.history.inventory[year]
+    && dataStore.history.inventory[year].inventoryAmount[rdc];
+  const baseInv = (allAmt && allAmt.length > monthIdx) ? (allAmt[monthIdx] || 0) : 0;
+  if (baseInv <= 0) return { yes: 0, no: baseAll };
+  const hh = dataStore.history && dataStore.history.hainanHistory;
+  let hainanInv = 0;
+  if (year === '2025' || (year === '2026' && monthIdx <= 3)) {
+    const arr = hh && hh.byRdc && hh.byRdc[year] && hh.byRdc[year][rdc];
+    hainanInv = (arr && arr.length > monthIdx) ? (arr[monthIdx] || 0) : 0;
+  } else if (year === '2026' && (monthIdx === 4 || monthIdx === 5)) {
+    const cov = (dataStore.inventory && dataStore.inventory.cov6) || [];
+    cov.forEach(d => {
+      if (d.rdc !== rdc) return;
+      if (d.isHainan === true) hainanInv += d.totalAmt || 0;
+    });
+    hainanInv = Math.round(hainanInv / 10) / 100;
+  }
+  const ratio = Math.min(1, Math.max(0, hainanInv / baseInv));
+  return { yes: baseAll * ratio, no: baseAll * (1 - ratio) };
 }
 
 // 库存规模年度对比卡片（HTML 部分）
@@ -5759,8 +5792,20 @@ function renderInventoryTurnoverHistoryCharts() {
 
   const amt25 = months12.map((_, i) => sumSelectedHainan('2025', i));
   const amt26 = months12.map((_, i) => (i < 6 ? sumSelectedHainan('2026', i) : null));
-  const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
-  const ship26 = months12.map((_, i) => (i < 6 ? sumSelected(INV['2026'].shipmentCost, i) : null));
+  // 出货成本：'all' 用全量；'yes'/'no' 按库存金额占比估算（出货成本本身无海南花露水维度数据）
+  const _hFlag = (window._invHainan || 'all');
+  function sumSelectedShip(year, i) {
+    if (_hFlag === 'all') return sumSelected(INV[year].shipmentCost, i);
+    let s = 0;
+    selectedRdcs.forEach(k => {
+      if (EXCLUDE_KEYS.indexOf(k) >= 0) return;
+      const adj = getHainanAdjustedShipment(year, k, i);
+      s += (_hFlag === 'yes' ? adj.yes : adj.no);
+    });
+    return s;
+  }
+  const ship25 = months12.map((_, i) => sumSelectedShip('2025', i));
+  const ship26 = months12.map((_, i) => (i < 6 ? sumSelectedShip('2026', i) : null));
 
   // 上半年合计对比
   let h1_26 = 0; for (let i = 0; i < 6; i++) h1_26 += (ship26[i] || 0);
@@ -5800,7 +5845,8 @@ function renderInventoryTurnoverHistoryCharts() {
     });
   }
   lineChart('chart-inv-history-amount', '2025' + rdcLabel + '库存' + hainanSuffix, '2026' + rdcLabel + '库存' + hainanSuffix, amt25, amt26);
-  lineChart('chart-inv-history-ship', '2025' + rdcLabel + '出货成本', '2026' + rdcLabel + '出货成本', ship25, ship26);
+  // 出货成本按库存金额占比估算（非真实分摊，图例标注「·估」）
+  lineChart('chart-inv-history-ship', '2025' + rdcLabel + '出货成本' + hainanSuffix + (hainanSuffix ? '·估' : ''), '2026' + rdcLabel + '出货成本' + hainanSuffix + (hainanSuffix ? '·估' : ''), ship25, ship26);
 }
 
 // ============ INITIALIZATION ============
