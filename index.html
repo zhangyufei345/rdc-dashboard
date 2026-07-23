@@ -5507,25 +5507,17 @@ function renderInventoryForecast(page, tabBar) {
   const rdcOnlyH2 = [0,1,2,3,4,5].map(t => rdc6.reduce((s,r) => s + forecastYuan[r][t], 0));
   const rdcOnlyYiH2 = rdcOnlyH2.map(v => v / 1e8);
   const nationalYiH2 = rdcOnlyH2.map(v => (v + twYuan) / 1e8);
-
-  // === 6. 场景A 季节性: 2026 H2 = 2026 H1 × (2025 H2 / 2025 H1)，6RDC 口径 ===
-  const h1_25 = nat25.slice(0,6).reduce((s,v) => s+v, 0);
-  const h2_25 = nat25.slice(6,12).reduce((s,v) => s+v, 0);
-  const seasonalRatio = h1_25 > 0 ? h2_25 / h1_25 : 1;
-  const nat26SeasonalH2 = nat26A.map(v => v * seasonalRatio);
-  const nat26SeasonalNationalH2 = nat26SeasonalH2.map(v => v + twYi); // 6RDC + 总仓固定
-  const nat26 = nat26A.concat(nat26SeasonalH2);
   const nat26Demand = nat26A.concat(rdcOnlyYiH2);
 
   // === 7. 各地点年末推演 (亿元) ===
-  const proj = [['总仓', twYi, twYi, '总仓按 6 月水位固定，不参与补货模拟']];
+  const proj = [['总仓', twYi, '总仓按 6 月水位固定，不参与补货模拟']];
   rdc6.forEach(r => {
     const v = forecastYuan[r][5] / 1e8;
-    proj.push([r, v, v, '覆盖'+CP[r]+'天，渐进'+GRADUAL.toFixed(1)+'倍']);
+    proj.push([r, v, '覆盖'+CP[r]+'天，渐进'+GRADUAL.toFixed(1)+'倍']);
   });
   const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][5], 0) / 1e8;
-  proj.push(['6RDC合计', rdcSumYi, rdcSumYi, '各 RDC 年末库存之和']);
-  proj.push(['全国合计', rdcSumYi + twYi, rdcSumYi + twYi, '6RDC + 总仓固定']);
+  proj.push(['6RDC合计', rdcSumYi, '各 RDC 年末库存之和']);
+  proj.push(['全国合计', rdcSumYi + twYi, '6RDC + 总仓固定']);
 
   // === 8. 覆盖表 (从 cov6 算: 库存量 ÷ 7月需求) ===
   const cover = [];
@@ -5552,10 +5544,9 @@ function renderInventoryForecast(page, tabBar) {
   page.innerHTML = tabBar +
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC；推演表口径：6RDC + 总仓｜<b>算法参数可调</b>（⬇ 面板）｜渐进入市：每月补 ≤ 月需×渐进比率</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC；推演表口径：6RDC + 总仓｜<b>可调参数</b>（⬇ 面板）：各 RDC 覆盖天数 + 渐进比率（月补 ≤ 月需×倍）</div>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
-        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:var(--color-blue)">场景 A · 季节性外推（全国=6RDC+总仓）：</b>2026 H2 = 2026 H1 × '+ seasonalRatio.toFixed(2) + '（2025 H2/H1 比例）。<b>年末 ≈ '+ nat26SeasonalNationalH2[5].toFixed(2) + ' 亿</b>。</div>' +
-        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'）。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。</div>' +
+        '<div style="flex:1;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'倍），各 RDC 覆盖天数可调。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。参数见下方 ⚙ 面板。</div>' +
       '</div>' +
     '</div>' +
 
@@ -5578,7 +5569,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">6RDC 库存金额月度走势（单位：亿元）</span></div>' +
       '<div class="chart-container" id="chart-forecast" style="height:420px"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；蓝实线=2026 实际 H1（7RDC）+季节性投影 H2（6RDC）；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，月补 ≤ 月需×1.2）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。阴影区为 H2 投影区间。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，参数可调 ⬆ 面板）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
@@ -5590,13 +5581,13 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">各地点年末库存金额推演（单位：亿元）</span></div>' +
       '<div class="table-wrap" id="table-forecast-proj"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">场景 A 季节性按 H2/H1 比例缩放；场景 B 渐进入市（可调参数，⬆ 面板）。总仓固定。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">渐进入市（参数可调，⬆ 面板）。总仓按 6 月实际固定。</div>' +
     '</div>' +
 
     '<div class="card">' +
       '<div class="card-header"><span class="card-title">结论与建议</span></div>' +
       '<div style="font-size:13px;line-height:1.8">' +
-        '<div>1. <b>年末库存区间：</b>2026 年末（6RDC+总仓）落在 <b>'+ nationalYiH2[5].toFixed(2) + ' 亿</b>（渐进入市）/ <b>'+ nat26SeasonalNationalH2[5].toFixed(2) + ' 亿</b>（季节性）之间。图表为 6RDC 月度走势，与年度对比卡片口径一致。</div>' +
+        '<div>1. <b>年末库存：</b>2026 年末（6RDC+总仓）<b>'+ nationalYiH2[5].toFixed(2) + ' 亿</b>（渐进入市），其中 6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '。图表为 6RDC 月度走势，与年度对比卡片口径一致。</div>' +
         '<div>2. <b>冗余判断：</b>'+ cover.map(c => c[0].replace('RDC','') + ' ' + c[4] + '（' + c[3].toFixed(2) + '月）').join('；') + '。</div>' +
         '<div>3. <b>总仓</b>维持约 '+ twYi.toFixed(2) + ' 亿固定，是库存主体。6RDC 年末合计 '+ rdcSumYi.toFixed(2) + ' 亿（渐进'+GRADUAL.toFixed(1)+'倍覆盖'+months[5]+'库存）。</div>' +
         '<div>4. <b>行动建议：</b>覆盖率 < 1 的 RDC 优先补货（向冗余 RDC 调拨或前置总仓出货）；覆盖率 > 2 的 RDC 可压缩补货释放库存。</div>' +
@@ -5608,15 +5599,14 @@ function renderInventoryForecast(page, tabBar) {
   const chart = initChart('chart-forecast');
   chart.setOption({
     tooltip:{trigger:'axis'},
-    legend:{data:['2025 7RDC 实际','2026 实际+季节性','2026 实际+渐进'],top:0},
+    legend:{data:['2025 7RDC 实际','2026 实际+渐进入市'],top:0},
     grid:{left:60,right:24,top:50,bottom:40},
     xAxis:{type:'category',data:months},
     yAxis:{type:'value',name:'亿元',min:0,max:1.2},
     series:[
       {name:'2025 7RDC 实际',type:'line',data:nat25,lineStyle:{type:'dashed',color:'#9aa7b4'},itemStyle:{color:'#9aa7b4'},symbol:'circle'},
-      {name:'2026 季节性外推',type:'line',data:nat26,lineStyle:{width:3,color:'#2f6fed'},itemStyle:{color:'#2f6fed'},
-        markArea:{silent:true,itemStyle:{color:'rgba(47,111,237,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}},
-      {name:'2026 实际+渐进',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'}}
+      {name:'2026 实际+渐进入市',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'},
+        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}}
     ]
   });
 
@@ -5637,10 +5627,10 @@ function renderInventoryForecast(page, tabBar) {
   proj.forEach(function(r){
     const isTotal = (r[0]==='全国合计' || r[0]==='6RDC合计');
     const style = isTotal ? 'style="background:#EEF2FF;font-weight:700"' : '';
-    pb += '<tr '+style+'><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+r[1].toFixed(2)+'</td><td>'+r[2].toFixed(2)+'</td><td style="text-align:left">'+r[3]+'</td></tr>';
+    pb += '<tr '+style+'><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+r[1].toFixed(2)+'</td><td style="text-align:left">'+r[2]+'</td></tr>';
   });
   document.getElementById('table-forecast-proj').innerHTML =
-    '<table class="data-table"><thead><tr><th style="text-align:left">地点</th><th>场景 A（季节性）</th><th>场景 B（渐进入市）</th><th style="text-align:left">差异说明</th></tr></thead><tbody>'+pb+'</tbody></table>';
+    '<table class="data-table"><thead><tr><th style="text-align:left">地点</th><th>渐进入市（亿元）</th><th style="text-align:left">说明</th></tr></thead><tbody>'+pb+'</tbody></table>';
 }
 
 // 推演参数变更后自动刷新（被 ⚙ 面板 onchange 调用）
