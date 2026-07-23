@@ -4200,12 +4200,14 @@ function renderPullbackAnalysis(page) {
   // 直接从原始 sheet 构建 花露水 SKU 集合（绕开 parseCoverageSheet 的 isHainan 字段缓存问题）
   var rawSheets = window.__rawInventorySheets || (window.__rawInventorySheets = inv._rawSheets || {});
   var cov6Raw = rawSheets['6月库存覆盖数据'];
-  var hnMap = {};
+  var hnMap = {}, bm = {};
   if (cov6Raw && cov6Raw.length > 2) {
     for (var ri = 2; ri < cov6Raw.length; ri++) {
       var rr = cov6Raw[ri]; if (!rr || !rr[1]) continue;
-      // 6月库存覆盖: col8='海南花露水', col1=SKU
-      if (String(rr[8]||'').trim() === '是') hnMap[String(rr[1]).trim()] = true;
+      // 6月库存覆盖: col8='海南花露水', col1=SKU, col3='品牌'
+      var _sku = String(rr[1]).trim();
+      if (String(rr[8]||'').trim() === '是') hnMap[_sku] = true;
+      if (!bm[_sku] && rr[3]) bm[_sku] = String(rr[3]).trim();
     }
   }
   // 兜底：产品名称含'花露水'也视为花露水
