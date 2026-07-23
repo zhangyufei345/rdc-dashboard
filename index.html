@@ -4196,9 +4196,19 @@ function renderPullbackAnalysis(page) {
     page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab='+"'transship';renderTransship()"+'">📦 转储数据分析</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab='+"'pullback';renderTransship()"+'">🔙 拉回数据分析</button></div><div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg)">暂无原始拉回数据</div></div>';
     return;
   }
-  var inv = dataStore.inventory, pm = inv.productMaster||{}, cov6 = inv.cov6||[];
-  var bm = {}, hnMap = {};
-  cov6.forEach(function(d){ bm[d.sku]=d.brand||'未知'; if(d.isHainan===true) hnMap[d.sku]=true; });
+  var inv = dataStore.inventory, pm = inv.productMaster||{};
+  // 直接从原始 sheet 构建 花露水 SKU 集合（绕开 parseCoverageSheet 的 isHainan 字段缓存问题）
+  var rawSheets = window.__rawInventorySheets || (window.__rawInventorySheets = inv._rawSheets || {});
+  var cov6Raw = rawSheets['6月库存覆盖数据'];
+  var hnMap = {};
+  if (cov6Raw && cov6Raw.length > 2) {
+    for (var ri = 2; ri < cov6Raw.length; ri++) {
+      var rr = cov6Raw[ri]; if (!rr || !rr[1]) continue;
+      // 6月库存覆盖: col8='海南花露水', col1=SKU
+      if (String(rr[8]||'').trim() === '是') hnMap[String(rr[1]).trim()] = true;
+    }
+  }
+  // 兜底：产品名称含'花露水'也视为花露水
   function isHN(sku, name){ return !!(hnMap[sku] || (name||'').indexOf('花露水')>=0); }
   if (typeof window._pullHainan==='undefined') window._pullHainan='all';
   function normRdc(n){ return (n||'').trim().replace('仓','RDC'); }
@@ -6519,6 +6529,7 @@ function parseInventoryExcel(rawData) {
       summary, rdcStatus, status5, status6, cov5, cov6, rdcCoverage, expiry6,
       hainanHistoryStatus, productMaster, pullbackByRdcMonth,
       pullbackRaw: pullbackArr || [],  // 原始行化数据，供拉回分析 TAB 使用
+      _rawSheets: (typeof sheets === 'object' ? sheets : {}),  // 原始 sheet 数组，供拉回分析 hnMap 构建
       loadedAt: new Date().toISOString()
     };
 
