@@ -5216,16 +5216,7 @@ function renderInventoryTurnover() {
       html += '<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">' +
         '<input type="checkbox" value="' + r + '" onchange="toggleInvRdc(\'' + r + '\', this.checked)" ' + checked + '> ' + r + '</label>';
     });
-    html += '</div>';
-    // 海南花露水筛选器（影响库存金额维度）
-    var hainanSel = window._invHainan || 'all';
-    html += '<label style="margin-left:12px;font-size:12px;color:var(--text-secondary)">海南花露水：</label>' +
-      '<select onchange="window._invHainan=this.value;renderInventoryTurnover()" style="min-width:100px;font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
-        '<option value="all" ' + (hainanSel==='all'?'selected':'') + '>全部</option>' +
-        '<option value="yes" ' + (hainanSel==='yes'?'selected':'') + '>仅海南花露水</option>' +
-        '<option value="no" ' + (hainanSel==='no'?'selected':'') + '>不含海南花露水</option>' +
-      '</select>';
-    html += '</div>';
+    html += '</div></div>';
     return html;
   }
 
@@ -5723,12 +5714,19 @@ function renderInventoryTurnoverHistory() {
   if (!dataStore.history || !dataStore.history.inventory) return '';
   const rdcSel = getInvRdcSelection();
   const rdcLabel = rdcSel.isAll ? '全部RDC' : (rdcSel.selected.length > 3 ? rdcSel.selected.length + '个RDC' : rdcSel.selected.join('、'));
+  const hainanSel = window._invHainan || 'all';
+  const hainanDropdown = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">海南花露水：</label>' +
+    '<select onchange="window._invHainan=this.value;renderInventoryTurnover()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+      '<option value="all" ' + (hainanSel==='all'?'selected':'') + '>全部</option>' +
+      '<option value="yes" ' + (hainanSel==='yes'?'selected':'') + '>仅海南花露水</option>' +
+      '<option value="no" ' + (hainanSel==='no'?'selected':'') + '>不含海南花露水</option>' +
+    '</select>';
   return '' +
     '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
       '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 7大RDC口径（不含总仓）</span></div>' +
       '<div id="kpi-inv-history"></div>' +
       '<div class="row-2" style="margin-top:8px">' +
-        '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">库存金额趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
+        '<div class="card" style="background:var(--bg-card)"><div class="card-header" style="display:flex;align-items:center"><span class="card-title">库存金额趋势（2025 vs 2026）</span><div style="margin-left:auto;display:flex;align-items:center">' + hainanDropdown + '</div></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
         '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">出货成本趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-ship"></div></div>' +
       '</div>' +
     '</div>';
