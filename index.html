@@ -5438,8 +5438,13 @@ function renderInventoryTurnover() {
 function renderInventoryForecast(page, tabBar) {
   const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
   const rdc6 = ['东北RDC','华北RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
-  const COVERAGE_DAYS = {'东北RDC':14,'华北RDC':14,'华南RDC':14,'华中RDC':14,'西南RDC':14,'西北RDC':19};
-  const ACCURACY = 0.6;
+  // 可调参数：从 window._forecastParams 读取（默认在 initForecastParams 设置）
+  if (!window._forecastParams) window._forecastParams = {
+    coverageDays: {'东北RDC':14,'华北RDC':14,'华南RDC':14,'华中RDC':14,'西南RDC':14,'西北RDC':19},
+    gradualRatio: 1.2
+  };
+  const CP = window._forecastParams.coverageDays;
+  const GRADUAL = window._forecastParams.gradualRatio;
   const covFields = ['cov07','cov08','cov09','cov10','cov11','cov12']; // Jul..Dec
 
   // === 1. 从 history.json 读 2025/2026 1-6月 actual (千元) ===
@@ -5472,17 +5477,11 @@ function renderInventoryForecast(page, tabBar) {
     covFields.forEach((f, t) => { demandYuan[d.rdc][t] += (d[f] || 0) * unitCost; });
   });
 
-  // === 3. 60% 准确率补偿 ===
-  const adjDemandYuan = {};
-  rdc6.forEach(r => { adjDemandYuan[r] = demandYuan[r].map(v => v / ACCURACY); });
-
-  // === 4. 滚动库存模拟 Jul-Dec (元) ===
-  // 渐进入市（B策略）：cap 每月补货量 ≤ 当月需求 × 1.2（≈ 每周补当周 × 1.2，月累积 ≈ 1.2× 月需求）
-  const MAX_REPLENISH_RATIO = 1.2;
+  // === 3. 滚动库存模拟 Jul-Dec (元) —— 所有参数（覆盖天数、渐进比率）可在上方 ⚙ 面板调 ===
   const forecastYuan = {};
   rdc6.forEach(rdc => {
-    const cf = COVERAGE_DAYS[rdc] / 30;
-    const d = adjDemandYuan[rdc];
+    const cf = CP[rdc] / 30;
+    const d = demandYuan[rdc]; // 直接用原始需求（不做准确率补偿，14天覆盖已含安全库存）
     let cur = startInvRdcYuan[rdc];
     const end = [];
     for (let t = 0; t < 6; t++) {
@@ -5490,12 +5489,11 @@ function renderInventoryForecast(page, tabBar) {
       const nextD = t < 5 ? d[t+1] : d[t];
       const targetEnd = nextD * cf;
       if (cur >= demand + targetEnd) {
-        // 库存充裕，无需补货，自然消耗
-        cur = cur - demand;
+        cur = cur - demand; // 库存充裕，自然消耗
       } else {
-        // 渐进补货：需求不足部分 + 差额，但不超过当月需求 × 1.2
+        // 渐进补货：不足多少补多少，但 ≤ 当月需求 × 渐进比率
         const deficiency = demand + targetEnd - cur;
-        const maxRep = demand * MAX_REPLENISH_RATIO;
+        const maxRep = demand * GRADUAL;
         const rep = Math.min(deficiency, maxRep);
         cur = cur + rep - demand;
       }
@@ -5523,7 +5521,7 @@ function renderInventoryForecast(page, tabBar) {
   const proj = [['总仓', twYi, twYi, '总仓按 6 月水位固定，不参与补货模拟']];
   rdc6.forEach(r => {
     const v = forecastYuan[r][5] / 1e8;
-    proj.push([r, v, v, '滚动模拟（覆盖'+COVERAGE_DAYS[r]+'天，'+(ACCURACY*100|0)+'%准确率补偿）']);
+    proj.push([r, v, v, '覆盖'+CP[r]+'天，渐进'+GRADUAL.toFixed(1)+'倍']);
   });
   const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][5], 0) / 1e8;
   proj.push(['6RDC合计', rdcSumYi, rdcSumYi, '各 RDC 年末库存之和']);
@@ -5547,13 +5545,33 @@ function renderInventoryForecast(page, tabBar) {
   });
 
   // === 9. 渲染 HTML ===
+  // 保存 context 供参数面板 onChange 自动重推
+  window._fcRenderContext = window._fcRenderContext || {};
+  window._fcRenderContext.page = page;
+  window._fcRenderContext.tabBar = tabBar;
   page.innerHTML = tabBar +
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC（与「库存金额趋势」年度对比卡片一致，华东停运不计入）；推演表口径：6RDC + 总仓｜算法：滚动库存模拟，覆盖周期 14 天（西北 19 天），需求按 '+ (ACCURACY*100|0) + '% 准确率放大 1/' + ACCURACY + ' 倍</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC；推演表口径：6RDC + 总仓｜<b>算法参数可调</b>（⬇ 面板）｜渐进入市：每月补 ≤ 月需×渐进比率</div>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
         '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:var(--color-blue)">场景 A · 季节性外推（全国=6RDC+总仓）：</b>2026 H2 = 2026 H1 × '+ seasonalRatio.toFixed(2) + '（2025 H2/H1 比例）。<b>年末 ≈ '+ nat26SeasonalNationalH2[5].toFixed(2) + ' 亿</b>。</div>' +
-        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×1.2）+ 60% 准确率滚动推演。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。</div>' +
+        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'）。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:16px;background:#F0FDF4;border:1px solid #BBF7D0">' +
+      '<div class="card-header" style="cursor:pointer" onclick="var p=document.getElementById(\'fc-params-body\'),a=document.getElementById(\'fc-arrow\');p.style.display=p.style.display===\'none\'?\'block\':\'none\';a.textContent=a.textContent===\'▶\'?\'▼\':\'▶\'">' +
+        '<span class="card-title"><span id="fc-arrow">▶</span> ⚙ 推演参数</span>' +
+      '</div>' +
+      '<div id="fc-params-body" style="display:none;padding:6px 0">' +
+        '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">修改后自动刷新推演结果</div>' +
+        '<table class="data-table" style="margin-bottom:6px">' +
+          '<thead><tr><th>RDC</th><th>覆盖天数</th></tr></thead><tbody>' +
+          rdc6.map(function(r){return '<tr><td style="font-weight:600">'+r+'</td><td><input type="number" min="7" max="60" value="'+CP[r]+'" style="width:60px;padding:3px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px" onchange="window._forecastParams.coverageDays[\''+r+'\']=Number(this.value);reRenderForecast()"></td></tr>';}).join('') +
+          '</tbody></table>' +
+        '<label style="font-size:12px;display:flex;align-items:center;gap:6px">' +
+          '渐进比率（每月补≤月需×<input type="number" min="1" max="3" step="0.1" value="'+GRADUAL+'" style="width:55px;padding:3px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px" onchange="window._forecastParams.gradualRatio=Number(this.value);reRenderForecast()"> 倍）' +
+        '</label>' +
       '</div>' +
     '</div>' +
 
@@ -5572,15 +5590,15 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">各地点年末库存金额推演（单位：亿元）</span></div>' +
       '<div class="table-wrap" id="table-forecast-proj"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">场景 A 季节性按 H2/H1 比例缩放；场景 B 按补货策略 + 60% 准确率滚动推演。总仓两种方法结果相同（固定）。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">场景 A 季节性按 H2/H1 比例缩放；场景 B 渐进入市（可调参数，⬆ 面板）。总仓固定。</div>' +
     '</div>' +
 
     '<div class="card">' +
       '<div class="card-header"><span class="card-title">结论与建议</span></div>' +
       '<div style="font-size:13px;line-height:1.8">' +
-        '<div>1. <b>年末库存区间：</b>2026 年末（6RDC+总仓）落在 <b>'+ nationalYiH2[5].toFixed(2) + ' 亿</b>（滚动模拟）/ <b>'+ nat26SeasonalNationalH2[5].toFixed(2) + ' 亿</b>（季节性）之间。图表为 6RDC 月度走势，与年度对比卡片口径一致。</div>' +
+        '<div>1. <b>年末库存区间：</b>2026 年末（6RDC+总仓）落在 <b>'+ nationalYiH2[5].toFixed(2) + ' 亿</b>（渐进入市）/ <b>'+ nat26SeasonalNationalH2[5].toFixed(2) + ' 亿</b>（季节性）之间。图表为 6RDC 月度走势，与年度对比卡片口径一致。</div>' +
         '<div>2. <b>冗余判断：</b>'+ cover.map(c => c[0].replace('RDC','') + ' ' + c[4] + '（' + c[3].toFixed(2) + '月）').join('；') + '。</div>' +
-        '<div>3. <b>总仓</b>维持约 '+ twYi.toFixed(2) + ' 亿固定，是库存主体。6RDC 年末合计 '+ rdcSumYi.toFixed(2) + ' 亿（已含 60% 准确率补偿）。</div>' +
+        '<div>3. <b>总仓</b>维持约 '+ twYi.toFixed(2) + ' 亿固定，是库存主体。6RDC 年末合计 '+ rdcSumYi.toFixed(2) + ' 亿（渐进'+GRADUAL.toFixed(1)+'倍覆盖'+months[5]+'库存）。</div>' +
         '<div>4. <b>行动建议：</b>覆盖率 < 1 的 RDC 优先补货（向冗余 RDC 调拨或前置总仓出货）；覆盖率 > 2 的 RDC 可压缩补货释放库存。</div>' +
         '<div>5. <b>提升精度：</b>接入 7-8 月实际出货后滚动校准；按 SKU/品牌细分需求；优化覆盖天数与准确率参数。</div>' +
       '</div>' +
@@ -5622,7 +5640,13 @@ function renderInventoryForecast(page, tabBar) {
     pb += '<tr '+style+'><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+r[1].toFixed(2)+'</td><td>'+r[2].toFixed(2)+'</td><td style="text-align:left">'+r[3]+'</td></tr>';
   });
   document.getElementById('table-forecast-proj').innerHTML =
-    '<table class="data-table"><thead><tr><th style="text-align:left">地点</th><th>场景 A（季节性）</th><th>场景 B（滚动模拟）</th><th style="text-align:left">差异说明</th></tr></thead><tbody>'+pb+'</tbody></table>';
+    '<table class="data-table"><thead><tr><th style="text-align:left">地点</th><th>场景 A（季节性）</th><th>场景 B（渐进入市）</th><th style="text-align:left">差异说明</th></tr></thead><tbody>'+pb+'</tbody></table>';
+}
+
+// 推演参数变更后自动刷新（被 ⚙ 面板 onchange 调用）
+function reRenderForecast() {
+  const ctx = window._fcRenderContext;
+  if (ctx && ctx.page && ctx.tabBar) renderInventoryForecast(ctx.page, ctx.tabBar);
 }
 
 // 库存规模年度对比卡片（HTML 部分）
