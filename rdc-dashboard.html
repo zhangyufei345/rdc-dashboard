@@ -421,6 +421,11 @@ const DB_VERSION = 9; // v9: 库存周转/库存金额趋势/年末预测 新增
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
   console.error('[GlobalError]', e.error || e.message);
+  var errMsg = (e.error && e.error.message) || e.message || 'Unknown';
+  // ECharts 5.5.0 PagePopupController 已知 bug（非致命，不影响 KPI 渲染）
+  if (errMsg.indexOf("'PagePopupController'") >= 0 || errMsg.indexOf('setValueAndClosePopup') >= 0) {
+    return;
+  }
   var banner = document.getElementById('global-error-banner');
   if (!banner) {
     banner = document.createElement('div');
@@ -428,7 +433,7 @@ window.addEventListener('error', function(e) {
     banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#FEF2F2;color:#991B1B;padding:10px 16px;border-bottom:2px solid #DC2626;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.15);font-family:monospace;white-space:pre-wrap;max-height:200px;overflow:auto';
     document.body.appendChild(banner);
   }
-  banner.textContent = '⚠ ' + ((e.error && e.error.message) || e.message || 'Unknown') + '\n@ ' + ((e.error && e.error.stack) || '').split('\n').slice(0,2).join(' | ');
+  banner.textContent = '⚠ ' + errMsg + '\n@ ' + ((e.error && e.error.stack) || '').split('\n').slice(0,2).join(' | ');
   banner.style.display = 'block';
 });
 window.addEventListener('unhandledrejection', function(e) {
