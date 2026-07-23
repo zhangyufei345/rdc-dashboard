@@ -6333,7 +6333,7 @@ function renderInventoryStructure() {
 
   // 6月日均出货成本 (从 history.json shipmentCost，跟随 RDC 筛选；海南花露水维度不可拆，按 RDC 汇总)
   const histShip = dataStore.history && dataStore.history.inventory;
-  const shipKeys = rdcFilter === 'all' ? rdc6 : [rdcFilter];
+  const shipKeys = rdcFilter === 'all' ? allRdcs : [rdcFilter];
   function sumShip(y, i) {
     if (!histShip || !histShip[y] || !histShip[y].shipmentCost) return 0;
     let s = 0; shipKeys.forEach(r => { s += (histShip[y].shipmentCost[r] && histShip[y].shipmentCost[r][i]) || 0; });

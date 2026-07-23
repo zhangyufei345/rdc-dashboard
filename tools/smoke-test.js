@@ -105,6 +105,86 @@ if (parseCov) {
   log('warn', 'parseCoverageSheet 函数找不到');
 }
 
+// 3c. 静态分析：函数级"未声明引用"检测（只报真正全局未定义的）
+console.log('\n  [3c] 静态分析：render 函数的"全局未定义"引用');
+
+// 收集整个文件的所有声明（const/let/var/function 参数）
+const allDecls = new Set();
+const fileDeclRe = /\b(?:const|let|var|function)\s+(\w+)/g;
+let dm; while ((dm = fileDeclRe.exec(html)) !== null) allDecls.add(dm[1]);
+const fileParamsRe = /function\s*\(([^)]*)\)/g;
+while ((dm = fileParamsRe.exec(html)) !== null) {
+  dm[1].split(',').forEach(p => { const t = p.trim().split(/\s+/).pop(); if (t && /^\w+$/.test(t)) allDecls.add(t); });
+}
+
+// 已知全局
+const knownGlobals = new Set([
+  'dataStore','echarts','ECharts','initChart','formatNum','formatMoney','fmtK','fmtChangeHtml',
+  'mapRDCName','mapCovLevel','isSlowCoverage','isExcludedProduct','normalizeBrandName',
+  'setTitle','navigateTo','showToast','DB_VERSION','DB_NAME','STORE_NAME','openDB','applyPreparsed',
+  'renderInventoryTurnover','renderInventoryTurnoverHistory','renderInventoryTurnoverHistoryCharts',
+  'renderDrillModal','drillStatusDetail','drillCoverageDetail','drillRdcCovDetail',
+  'exportInventoryCoverageDetail','parseStatusSheet','parseCoverageSheet','parseInventoryTurnoverSheet',
+  'reRenderForecast','getInvTabBar','getInvRdcSelection','renderAllShortageTable','getRDCName','init',
+  'getComputedStyle','XMLHttpRequest','FormData','Date','Math','Array','Object','JSON','Number','String',
+  'Set','Map','Promise','Error','URL','URLSearchParams','fetch','RegExp','Boolean','Symbol',
+  'window','document','console','localStorage','sessionStorage','indexedDB','location','navigator','history',
+  'getElementById','querySelector','querySelectorAll','addEventListener','appendChild','removeChild',
+  'createElement','setAttribute','getAttribute','setTimeout','setInterval','clearTimeout',
+  'parseInt','parseFloat','isNaN','isFinite','isArray','encodeURIComponent','decodeURIComponent'
+]);
+
+const jsKeywords = new Set([
+  'if','else','for','while','do','switch','case','default','break','continue','return',
+  'function','const','let','var','class','extends','super','this','new','delete',
+  'typeof','instanceof','in','of','void','null','undefined','true','false','NaN','Infinity',
+  'try','catch','finally','throw','async','await','yield','import','export','from','as'
+]);
+
+const renderFns = EXPECTED_RENDERERS.map(name => {
+  const re = new RegExp('function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{');
+  const m = html.match(re);
+  if (!m) return null;
+  let depth = 0, i = m.index;
+  while (i < html.length) { const c = html[i]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) break; } i++; }
+  return { name, body: html.slice(m.index, i + 1) };
+}).filter(Boolean);
+
+function stripStrings(s) {
+  return s
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/'(?:\\\\|\\'|[^'\\\\])*'/g, "''")
+    .replace(/"(?:\\\\|\\"|[^"\\\\])*"/g, '""')
+    .replace(/`(?:\\\\|\\`|\$\{[\s\S]*?\}|[^`\\\\])*`/g, '``');
+}
+
+renderFns.forEach(({ name, body }) => {
+  // 函数内部声明
+  const localDecls = new Set();
+  const localDeclRe = /\b(?:const|let|var|function)\s+(\w+)/g;
+  let m; while ((m = localDeclRe.exec(body)) !== null) localDecls.add(m[1]);
+  const localParamsRe = /function\s*\(([^)]*)\)/g;
+  while ((m = localParamsRe.exec(body)) !== null) {
+    m[1].split(',').forEach(p => { const t = p.trim().split(/\s+/).pop(); if (t && /^\w+$/.test(t)) localDecls.add(t); });
+  }
+  // 函数内使用到的标识符
+  const code = stripStrings(body);
+  const useRe = /\b([A-Za-z_]\w{2,})\b/g;
+  const uses = {};
+  while ((m = useRe.exec(code)) !== null) {
+    const w = m[1];
+    if (!localDecls.has(w) && !allDecls.has(w) && !knownGlobals.has(w) && !jsKeywords.has(w) && !/^[A-Z]/.test(w) && w.length > 2) {
+      uses[w] = (uses[w] || 0) + 1;
+    }
+  }
+  // 关键：仅报"文件中也未定义"的真可疑变量
+  const realSuspects = Object.entries(uses).filter(([w, c]) => c >= 3);
+  if (realSuspects.length > 0) {
+    log('warn', name + ': 疑似未定义 ' + realSuspects.slice(0, 5).map(([w, c]) => w + '(' + c + ')').join(', '));
+  }
+});
+
 // ── 4. DB_VERSION 注释 vs 实际值 ──
 console.log('\n[4/4] DB_VERSION 检查');
 const dvMatch = html.match(/const DB_VERSION\s*=\s*(\d+);?\s*(\/\/[^\n]*)?/);
