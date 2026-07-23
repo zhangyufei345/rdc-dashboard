@@ -3810,6 +3810,12 @@ function renderTransship() {
     return;
   }
 
+  if (typeof window._transTab === 'undefined') window._transTab = 'transship';
+  const _tTab = window._transTab;
+  const tabStyle = (t) => t === _tTab ? 'background:var(--color-blue);color:#fff;' : '';
+  // 在页面顶部加 TAB 切换栏（通过 renderTransship 后面的全局变量动态插入）
+  if (_tTab === 'pullback') { renderPullbackAnalysis(page); return; }
+
   const data = dataStore.transship;
 
   // Month filter
@@ -3925,6 +3931,10 @@ function renderTransship() {
     : selMonth + ' RDC转储数据分析';
 
   page.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn-export" style="font-size:13px;padding:7px 18px;${tabStyle('transship')}" onclick="window._transTab='transship';renderTransship()">📦 转储数据分析</button>
+      <button class="btn-export" style="font-size:13px;padding:7px 18px;${tabStyle('pullback')}" onclick="window._transTab='pullback';renderTransship()">🔙 拉回数据分析</button>
+    </div>
     <div style="margin-bottom:16px">
       <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${pageTitle}</div>
       <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">数据来源：转储数据（${data.length}条记录 · ${allMonths[0]||''} 至 ${allMonths[allMonths.length-1]||''}）</div>
@@ -4174,6 +4184,166 @@ function renderTransTable() {
   `;
 }
 
+// ========== 拉回分析 ==========
+function renderPullbackAnalysis(page) {
+  var lbArr = (dataStore.inventory && dataStore.inventory.pullbackRaw) || [];
+  if (lbArr.length === 0) {
+    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据分析</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回数据分析</button></div><div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg)">暂无原始拉回数据</div></div>';
+    return;
+  }
+  var inv = dataStore.inventory;
+  var productMaster = inv.productMaster || {};
+  // 品牌映射：从 cov6 构建 SKU→品牌
+  var cov6 = inv.cov6 || [];
+  var brandMap = {};
+  cov6.forEach(function(d) { brandMap[d.sku] = d.brand || '未知'; });
+
+  // 标准 RDC 名称
+  function normRdc(n) { return String(n||'').trim().replace('仓','RDC'); }
+  // 获取箱规（向上取整）
+  function getBoxSpec(sku) { var m = productMaster[sku]; return (m && m.spec > 0) ? m.spec : 30; }
+  // 计算箱数
+  function calcBox(qty, unit, sku) {
+    if (unit === '箱') return qty;
+    var spec = getBoxSpec(sku);
+    return Math.ceil(qty / spec);
+  }
+  // 按 (年-月, 发货RDC, 品牌, 收货仓, 收货库位) 聚合
+  var agg = {};
+  for (var i = 1; i < lbArr.length; i++) {
+    var r = lbArr[i]; if (!r || !r[0]) continue;
+    var dt0 = r[0];
+    var dt = (typeof dt0 === 'number' && dt0 > 1000) ? new Date((dt0 - 25569) * 86400 * 1000) : null;
+    if (!dt) continue;
+    var ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth()+1).toString().padStart(2,'0');
+    var rdc = normRdc(r[7] || '');
+    var recLoc = String(r[1] || '').trim();
+    var recWare = String(r[2] || '').trim();
+    var sku = String(r[3] || '').trim();
+    var brand = brandMap[sku] || '未知';
+    var unit = String(r[6] || '').trim();
+    var qty0 = Number(r[5]) || 0;
+    var box = calcBox(qty0, unit, sku);
+    if (box <= 0) continue;
+    // 各维度聚合键
+    var keys = {
+      monthRdc: ym + '|' + rdc,
+      monthBrand: ym + '|' + brand,
+      monthRdcBrand: ym + '|' + rdc + '|' + brand,
+      monthRdcRec: ym + '|' + rdc + '|' + recWare,
+      brand: brand,
+      month: ym
+    };
+    Object.keys(keys).forEach(function(k) {
+      if (!agg[k]) agg[k] = {};
+      var key = keys[k];
+      if (!agg[k][key]) agg[k][key] = 0;
+      agg[k][key] += box;
+    });
+  }
+
+  // === 构建分析展示 ===
+  var allMonths = Object.keys(agg.month || {}).sort();
+  var byMonthRdc = Object.entries(agg.monthRdc || {}).sort(function(a,b) { return a[0].localeCompare(b[0]); });
+  var byBrand = Object.entries(agg.brand || {}).sort(function(a,b) { return b[1]-a[1]; });
+  var byMonthRdcRec = Object.entries(agg.monthRdcRec || {}).sort(function(a,b) { var aa=a[0].split('|'), bb=b[0].split('|'); return aa[0].localeCompare(bb[0]) || aa[1].localeCompare(bb[1]) || aa[2].localeCompare(bb[2]) || b[1]-a[1]; });
+
+  // 按发货RDC汇总拉回总量
+  var rdcTotal = {};
+  byMonthRdc.forEach(function(e) { var rdc = e[0].split('|')[1]; rdcTotal[rdc] = (rdcTotal[rdc]||0) + e[1]; });
+  var sortedRdc = Object.entries(rdcTotal).sort(function(a,b) { return b[1]-a[1]; });
+
+  // 按品牌汇总
+  var brandTotal = {};
+  byBrand.forEach(function(e) { brandTotal[e[0]] = e[1]; });
+
+  // RDC 简表
+  var rdcTable = '<table class="data-table"><thead><tr><th>发货RDC</th><th style="text-align:right">总拉回（箱）</th></tr></thead><tbody>';
+  sortedRdc.forEach(function(e) { rdcTable += '<tr><td style="text-align:left;font-weight:600">'+e[0]+'</td><td style="text-align:right;font-weight:600">'+e[1].toLocaleString()+'</td></tr>'; });
+  rdcTable += '</tbody></table>';
+
+  // 品牌饼图 + 品牌简表
+  var brandTable = '<table class="data-table"><thead><tr><th>品牌</th><th style="text-align:right">拉回箱数</th></tr></thead><tbody>';
+  byBrand.slice(0,15).forEach(function(e) { brandTable += '<tr><td style="text-align:left">'+e[0]+'</td><td style="text-align:right">'+e[1].toLocaleString()+'</td></tr>'; });
+  brandTable += '</tbody></table>';
+
+  // 按月×RDC 交叉表
+  var allRdcNames = sortedRdc.map(function(e) { return e[0]; });
+  var crossMonthRdc = '<table class="data-table"><thead><tr><th style="text-align:left">月份</th>'+allRdcNames.map(function(r) { return '<th style="text-align:right">'+r.replace('RDC','')+'</th>'; }).join('')+'<th style="text-align:right">合计</th></tr></thead><tbody>';
+  allMonths.forEach(function(ym) {
+    var rowSum = 0;
+    crossMonthRdc += '<tr><td style="text-align:left;font-weight:600">'+ym+'</td>';
+    allRdcNames.forEach(function(rdc) {
+      var v = agg.monthRdc[ym + '|' + rdc] || 0;
+      rowSum += v;
+      crossMonthRdc += '<td style="text-align:right">'+(v>0?v.toLocaleString():'—')+'</td>';
+    });
+    crossMonthRdc += '<td style="text-align:right;font-weight:600">'+rowSum.toLocaleString()+'</td></tr>';
+  });
+  crossMonthRdc += '</tbody></table>';
+
+  // 按品牌×RDC 矩阵
+  var sortedBrands = byBrand.slice(0,10).map(function(e) { return e[0]; });
+  var brandRdcMatrix = '<table class="data-table"><thead><tr><th style="text-align:left">品牌</th>'+allRdcNames.map(function(r) { return '<th style="text-align:right">'+r.replace('RDC','')+'</th>'; }).join('')+'<th style="text-align:right">合计</th></tr></thead><tbody>';
+  sortedBrands.forEach(function(b) {
+    var rowSum = 0;
+    brandRdcMatrix += '<tr><td style="text-align:left;font-weight:500">'+b+'</td>';
+    allRdcNames.forEach(function(rdc) {
+      var v = agg.monthRdcBrand ? (agg.monthRdcBrand['2026-01|'+rdc+'|'+b] || 0) : 0;
+      // 跨月份聚合
+      var total = 0;
+      allMonths.forEach(function(ym) {
+        total += (agg.monthRdcBrand[ym + '|' + rdc + '|' + b] || 0);
+      });
+      rowSum += total;
+      brandRdcMatrix += '<td style="text-align:right">'+(total>0?total.toLocaleString():'—')+'</td>';
+    });
+    brandRdcMatrix += '<td style="text-align:right;font-weight:600">'+rowSum.toLocaleString()+'</td></tr>';
+  });
+  brandRdcMatrix += '</tbody></table>';
+
+  // 按收货仓汇总
+  var recMap = {};
+  Object.keys(agg.monthRdcRec || {}).forEach(function(k) {
+    var parts = k.split('|');
+    var ware = parts[2];
+    recMap[ware] = (recMap[ware] || 0) + agg.monthRdcRec[k];
+  });
+  var sortedRec = Object.entries(recMap).sort(function(a,b) { return b[1]-a[1]; });
+  var recTable = '<table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th></tr></thead><tbody>';
+  sortedRec.forEach(function(e) { recTable += '<tr><td style="text-align:left">'+e[0]+'</td><td style="text-align:right">'+e[1].toLocaleString()+'</td></tr>'; });
+  recTable += '</tbody></table>';
+
+  // 总体 KPI
+  var totalBox = Object.values(rdcTotal).reduce(function(s,v) { return s+v; }, 0);
+  var totalSKUs = new Set();
+  for (var i = 1; i < lbArr.length; i++) { var r = lbArr[i]; if (r && r[3]) totalSKUs.add(String(r[3])); }
+
+  // 渲染
+  var totalCount = lbArr.length - 1;
+  page.innerHTML = [
+    '<div style="display:flex;gap:8px;margin-bottom:16px">',
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据分析</button>',
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回数据分析</button>',
+    '</div>',
+    '<div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">拉回数据分析（单位：箱，最小单位向上取整）</div>',
+    '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">数据来源：拉回数据（'+totalCount+' 条记录）｜箱规：基础数据sheet箱规转化因子｜单位：\"箱\"直接计数，\"个\"按箱规向上取整</div>',
+    '<div class="kpi-row" style="margin-bottom:16px">',
+    '<div class="kpi-card blue"><div class="kpi-label">总拉回箱数</div><div class="kpi-value">'+totalBox.toLocaleString()+'<span class="kpi-unit">箱</span></div></div>',
+    '<div class="kpi-card purple"><div class="kpi-label">发货RDC数</div><div class="kpi-value">'+sortedRdc.length+'<span class="kpi-unit">个</span></div></div>',
+    '<div class="kpi-card orange"><div class="kpi-label">SKU 种类</div><div class="kpi-value">'+totalSKUs.size+'<span class="kpi-unit">个</span></div></div>',
+    '</div>',
+    '<div class="row-2" style="margin-bottom:16px">',
+    '<div class="card"><div class="card-header"><span class="card-title">📤 按发货RDC汇总</span></div>'+rdcTable+'</div>',
+    '<div class="card"><div class="card-header"><span class="card-title">🏭 按收货仓汇总</span></div>'+recTable+'</div>',
+    '</div>',
+    '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📅 按月 × 发货RDC 拉回箱数交叉表</span></div>'+crossMonthRdc+'</div>',
+    '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📊 按品牌 × RDC 拉回箱数矩阵（TOP10品牌）</span></div>'+brandRdcMatrix+'</div>',
+    '<div class="card"><div class="card-header"><span class="card-title">🏷️ 按品牌汇总</span></div>'+brandTable+'</div>'
+  ].join('');
+}
+
+// ========== 导出 ==========
 function exportTransshipCSV() {
   const data = dataStore.transship;
   let csv = '\uFEFF日期,RDC,库位,转储类型,物料号,物料名称,发货单数量,单位,入库数量,发货过账数量\n';
@@ -6366,6 +6536,7 @@ function parseInventoryExcel(rawData) {
 
     // 解析「拉回数据」sheet：按 (发货RDC, 年月) 聚合「箱数 + 拉回金额」
     // 金额 = 发货单数量(基本单位) × 成本价；若单位是'箱'则金额 = 箱数 × 成本价 × 箱规
+    // 同时保存原始行化数据供拉回分析 TAB 使用
     const pullbackArr = findByName('拉回数据');
     const pullbackByRdcMonth = {}; // {RDC: {YYYY-MM: {qty: 箱, amt: 元}}}
     if (pullbackArr) {
@@ -6401,6 +6572,7 @@ function parseInventoryExcel(rawData) {
     dataStore.inventory = {
       summary, rdcStatus, status5, status6, cov5, cov6, rdcCoverage, expiry6,
       hainanHistoryStatus, productMaster, pullbackByRdcMonth,
+      pullbackRaw: pullbackArr || [],  // 原始行化数据，供拉回分析 TAB 使用
       loadedAt: new Date().toISOString()
     };
 
