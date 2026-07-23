@@ -5574,29 +5574,29 @@ function renderInventoryForecast(page, tabBar) {
   window._fcRenderContext.page = page;
   window._fcRenderContext.tabBar = tabBar;
   page.innerHTML = tabBar +
-    '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC；推演表口径：6RDC + 总仓｜<b>可调参数</b>（⬇ 面板）：各 RDC 覆盖天数 + 渐进比率（月补 ≤ 月需×倍）</div>' +
-      '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
-        '<div style="flex:1;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'倍），各 RDC 覆盖天数可调。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。参数见下方 ⚙ 面板。</div>' +
-      '</div>' +
-    '</div>' +
+    (function(){
+      const _hSel = window._invHainan || 'all';
+      const hainanDropdown = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">海南花露水：</label>' +
+        '<select onchange="window._invHainan=this.value;reRenderForecast()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+          '<option value="all" ' + (_hSel==='all'?'selected':'') + '>全部</option>' +
+          '<option value="yes" ' + (_hSel==='yes'?'selected':'') + '>仅海南花露水</option>' +
+          '<option value="no" ' + (_hSel==='no'?'selected':'') + '>不含海南花露水</option>' +
+        '</select>';
+      return '<div class="card" style="margin-bottom:16px">' +
+        '<div class="card-header" style="display:flex;align-items:center"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span><div style="margin-left:auto;display:flex;align-items:center">' + hainanDropdown + '</div></div>' +
+        '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC；推演表口径：6RDC + 总仓｜<b>可调参数</b>（⬇ 面板）：各 RDC 覆盖天数 + 渐进比率（月补 ≤ 月需×倍）</div>' +
+        '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
+          '<div style="flex:1;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'倍），各 RDC 覆盖天数可调。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。参数见下方 ⚙ 面板。</div>' +
+        '</div>' +
+      '</div>';
+    })() +
 
     '<div class="card" style="margin-bottom:16px;background:#F0FDF4;border:1px solid #BBF7D0">' +
       '<div class="card-header" style="cursor:pointer" onclick="var p=document.getElementById(\'fc-params-body\'),a=document.getElementById(\'fc-arrow\');p.style.display=p.style.display===\'none\'?\'block\':\'none\';a.textContent=a.textContent===\'▶\'?\'▼\':\'▶\'">' +
-        '<span class="card-title"><span id="fc-arrow">▶</span> ⚙ 推演参数</span>' +
+        '<span class="card-title"><span id="fc-arrow">▶</span> ⚙ 推演参数（覆盖天数 / 渐进比率）</span>' +
       '</div>' +
       '<div id="fc-params-body" style="display:none;padding:6px 0">' +
         '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">修改后自动刷新推演结果</div>' +
-        '<div style="margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-          '<label style="font-size:12px;color:var(--text-secondary)">海南花露水：</label>' +
-          '<select onchange="window._invHainan=this.value;reRenderForecast()" style="min-width:100px;font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
-            '<option value="all" ' + ((window._invHainan||"all")==="all"?"selected":"") + '>全部</option>' +
-            '<option value="yes" ' + ((window._invHainan||"")==="yes"?"selected":"") + '>仅海南花露水</option>' +
-            '<option value="no" ' + ((window._invHainan||"")==="no"?"selected":"") + '>不含海南花露水</option>' +
-          '</select>' +
-          '<span style="font-size:11px;color:var(--text-secondary);margin-left:8px">影响 H1 历史 actual / 起始可出货库存 / H2 需求；周转天数/出货成本不跟随</span>' +
-        '</div>' +
         '<table class="data-table" style="margin-bottom:6px">' +
           '<thead><tr><th>RDC</th><th>覆盖天数</th></tr></thead><tbody>' +
           rdc6.map(function(r){return '<tr><td style="font-weight:600">'+r+'</td><td><input type="number" min="7" max="60" value="'+CP[r]+'" style="width:60px;padding:3px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px" onchange="window._forecastParams.coverageDays[\''+r+'\']=Number(this.value);reRenderForecast()"></td></tr>';}).join('') +
