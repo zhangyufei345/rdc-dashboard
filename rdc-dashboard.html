@@ -6584,9 +6584,9 @@ function renderInventoryStructure() {
       const isH = d.isHainan === true;
       if (hFlag === 'yes' && !isH) return;
       if (hFlag === 'no' && isH) return;
-      // d.amount = 库存金额_考核（已在 parseStatusSheet 解析）
-      // 按状态分类金额（这里 d.amount 是 SKU 行金额；按状态汇总）
-      const s = d.status;
+      // 状态标准化：「可用库存」→「计划可用库存」（海南花露水历史数据中同义）
+      let s = d.status;
+      if (s === '可用库存') s = '计划可用库存';
       if (statusLabels.indexOf(s) >= 0) obj[s] += d.amount || 0;
     });
     return obj;
