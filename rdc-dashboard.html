@@ -5477,6 +5477,8 @@ function renderInventoryForecast(page, tabBar) {
   rdc6.forEach(r => { adjDemandYuan[r] = demandYuan[r].map(v => v / ACCURACY); });
 
   // === 4. 滚动库存模拟 Jul-Dec (元) ===
+  // 渐进入市（B策略）：cap 每月补货量 ≤ 当月需求 × 1.2（≈ 每周补当周 × 1.2，月累积 ≈ 1.2× 月需求）
+  const MAX_REPLENISH_RATIO = 1.2;
   const forecastYuan = {};
   rdc6.forEach(rdc => {
     const cf = COVERAGE_DAYS[rdc] / 30;
@@ -5487,8 +5489,16 @@ function renderInventoryForecast(page, tabBar) {
       const demand = d[t];
       const nextD = t < 5 ? d[t+1] : d[t];
       const targetEnd = nextD * cf;
-      const rep = Math.max(0, demand + targetEnd - cur);
-      cur = cur + rep - demand;
+      if (cur >= demand + targetEnd) {
+        // 库存充裕，无需补货，自然消耗
+        cur = cur - demand;
+      } else {
+        // 渐进补货：需求不足部分 + 差额，但不超过当月需求 × 1.2
+        const deficiency = demand + targetEnd - cur;
+        const maxRep = demand * MAX_REPLENISH_RATIO;
+        const rep = Math.min(deficiency, maxRep);
+        cur = cur + rep - demand;
+      }
       if (cur < 0) cur = 0;
       end.push(cur);
     }
@@ -5543,14 +5553,14 @@ function renderInventoryForecast(page, tabBar) {
       '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC（与「库存金额趋势」年度对比卡片一致，华东停运不计入）；推演表口径：6RDC + 总仓｜算法：滚动库存模拟，覆盖周期 14 天（西北 19 天），需求按 '+ (ACCURACY*100|0) + '% 准确率放大 1/' + ACCURACY + ' 倍</div>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
         '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:var(--color-blue)">场景 A · 季节性外推（全国=6RDC+总仓）：</b>2026 H2 = 2026 H1 × '+ seasonalRatio.toFixed(2) + '（2025 H2/H1 比例）。<b>年末 ≈ '+ nat26SeasonalNationalH2[5].toFixed(2) + ' 亿</b>。</div>' +
-        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 滚动模拟（全国=6RDC+总仓）：</b>按补货策略 + 60% 准确率滚动推演。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。</div>' +
+        '<div style="flex:1;min-width:240px;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">场景 B · 渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×1.2）+ 60% 准确率滚动推演。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。</div>' +
       '</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">6RDC 库存金额月度走势（单位：亿元）</span></div>' +
       '<div class="chart-container" id="chart-forecast" style="height:420px"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；蓝实线=2026 实际 H1（7RDC）+季节性投影 H2（6RDC）；紫虚线=2026 实际 H1+滚动模拟 H2（6RDC）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。阴影区为 H2 投影区间。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；蓝实线=2026 实际 H1（7RDC）+季节性投影 H2（6RDC）；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，月补 ≤ 月需×1.2）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。阴影区为 H2 投影区间。</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
@@ -5580,7 +5590,7 @@ function renderInventoryForecast(page, tabBar) {
   const chart = initChart('chart-forecast');
   chart.setOption({
     tooltip:{trigger:'axis'},
-    legend:{data:['2025 7RDC 实际','2026 实际+季节性','2026 实际+滚动'],top:0},
+    legend:{data:['2025 7RDC 实际','2026 实际+季节性','2026 实际+渐进'],top:0},
     grid:{left:60,right:24,top:50,bottom:40},
     xAxis:{type:'category',data:months},
     yAxis:{type:'value',name:'亿元',min:0,max:1.2},
@@ -5588,7 +5598,7 @@ function renderInventoryForecast(page, tabBar) {
       {name:'2025 7RDC 实际',type:'line',data:nat25,lineStyle:{type:'dashed',color:'#9aa7b4'},itemStyle:{color:'#9aa7b4'},symbol:'circle'},
       {name:'2026 季节性外推',type:'line',data:nat26,lineStyle:{width:3,color:'#2f6fed'},itemStyle:{color:'#2f6fed'},
         markArea:{silent:true,itemStyle:{color:'rgba(47,111,237,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}},
-      {name:'2026 滚动模拟',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'}}
+      {name:'2026 实际+渐进',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'}}
     ]
   });
 
