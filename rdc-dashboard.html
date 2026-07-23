@@ -417,6 +417,25 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
 const DB_VERSION = 8; // v8: 修复cov07..cov12列偏移bug(col23-28才是7-12月，col29是覆盖月数); 年末预测改为动态滚动模拟(60%准确率+14/19天覆盖)
+
+// 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
+window.addEventListener('error', function(e) {
+  console.error('[GlobalError]', e.error || e.message);
+  var banner = document.getElementById('global-error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'global-error-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#FEF2F2;color:#991B1B;padding:10px 16px;border-bottom:2px solid #DC2626;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.15);font-family:monospace;white-space:pre-wrap;max-height:200px;overflow:auto';
+    document.body.appendChild(banner);
+  }
+  banner.textContent = '⚠ ' + ((e.error && e.error.message) || e.message || 'Unknown') + '\n@ ' + ((e.error && e.error.stack) || '').split('\n').slice(0,2).join(' | ');
+  banner.style.display = 'block';
+});
+window.addEventListener('unhandledrejection', function(e) {
+  console.error('[UnhandledRejection]', e.reason);
+  var banner = document.getElementById('global-error-banner');
+  if (banner) banner.textContent = '⚠ Promise 拒绝: ' + (e.reason && e.reason.message || e.reason) + '\n请截图发我';
+});
 const STORE_NAME = 'datasets';
 let db = null;
 
@@ -6199,6 +6218,9 @@ function renderInventoryStructure() {
     return;
   }
 
+  // 全局错误边界：渲染失败时显示错误而非白屏
+  try {
+
   const inv = dataStore.inventory;
   const summary = inv.summary;
   const statusLabels = Object.keys(summary.status);
@@ -6566,6 +6588,13 @@ function renderInventoryStructure() {
     }).join('') +
     '</tbody></table>';
   document.getElementById('table-is-rdc-cov').innerHTML = rdcCovTableHtml;
+
+  } catch (e) {
+    console.error('[renderInventoryStructure] ERROR:', e);
+    if (page) {
+      page.innerHTML = '<div style="padding:24px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;margin:16px"><div style="color:#991B1B;font-weight:600;margin-bottom:8px">⚠ 库存结构分析渲染失败</div><div style="color:#7F1D1D;font-size:13px;font-family:monospace;background:#FFF;padding:12px;border-radius:4px;white-space:pre-wrap;margin-bottom:8px">' + (e.message||e) + '\n@ ' + (e.stack||'').split('\n').slice(0,3).join('\n') + '</div><div style="font-size:12px;color:var(--text-secondary)">DB_VERSION=' + DB_VERSION + '｜请尝试 Ctrl+F5 强刷；问题持续请截图发我</div></div>';
+    }
+  }
 }
 
 function drillStatusDetail(data, label) {
