@@ -4236,6 +4236,9 @@ function renderPullbackAnalysis(page) {
   var hSel=window._pullHainan, suf='';
   if(hSel==='yes') suf='·仅花露水'; else if(hSel==='no') suf='·不含花露水';
   var tc=lbArr.length-1;
+  // 销毁旧实例（避免重复 init 导致 ECharts PagePopupController 句柄泄漏报错）
+  (window._pullChartInstances||[]).forEach(function(c){ try{c.dispose();}catch(e){} });
+  window._pullChartInstances = [];
   page.innerHTML='<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab='+"'transship';renderTransship()"+'">📦 转储数据</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab='+"'pullback';renderTransship()"+'">🔙 拉回分析</button></div>'
     +'<div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
     +'<span style="font-size:var(--font-size-xl);font-weight:600">🔙 拉回数据分析</span>'
@@ -4270,6 +4273,11 @@ function renderPullbackAnalysis(page) {
   if(c3) c3.setOption({tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){var h='<b>'+p[0].axisValue+'</b>';p.forEach(function(s){if(s.value>0)h+='<br/>'+s.marker+s.seriesName+'：'+s.value.toLocaleString()+'箱';});return h;}},legend:{data:tBr.map(function(b){return b.length>12?b.slice(0,12)+'..':b;}),top:0,textStyle:{fontSize:10},type:'scroll'},grid:{left:50,right:16,top:50,bottom:30},xAxis:{type:'category',data:sRdc.map(function(e){return e[0];}),axisLabel:{fontSize:10,rotate:15}},yAxis:{type:'value',name:'箱',nameTextStyle:{fontSize:10},axisLabel:{fontSize:9}},series:tBr.map(function(b,i){var su={};allMths.forEach(function(mm){sRdc.forEach(function(e){su[e[0]]=(su[e[0]]||0)+(agg.monthRdcBrand[mm+'|'+e[0]+'|'+b]||0);});});return{name:b.length>12?b.slice(0,12)+'..':b,type:'bar',stack:'total',barMaxWidth:30,itemStyle:{color:pc[i%pc.length]},data:sRdc.map(function(e){return su[e[0]]||0;})};})});}
   var c4=echarts.init(document.getElementById('chart-pull-brand'));
   if(c4&&byBrand.length>0) c4.setOption({tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){return '<b>'+p[0].name+'</b><br/>拉回：'+p[0].value.toLocaleString()+'箱';}},grid:{left:80,right:24,top:16,bottom:60},xAxis:{type:'category',data:byBrand.slice(0,10).map(function(e){return e[0].length>10?e[0].slice(0,10)+'..':e[0];}),axisLabel:{fontSize:10,rotate:30}},yAxis:{type:'value',name:'箱',nameTextStyle:{fontSize:10},axisLabel:{fontSize:9}},series:[{type:'bar',barMaxWidth:28,itemStyle:{color:function(p){return pc[p.dataIndex%pc.length];}},data:byBrand.slice(0,10).map(function(e){return e[1];})}]});
+  // 收集实例以便下次重渲染时销毁
+  if(c1) window._pullChartInstances.push(c1);
+  if(c2) window._pullChartInstances.push(c2);
+  if(c3) window._pullChartInstances.push(c3);
+  if(c4) window._pullChartInstances.push(c4);
 }
 
 
