@@ -6271,9 +6271,11 @@ function parseInventoryExcel(rawData) {
     function parseCoverageSheet(arr) {
       const result = [];
       if (!arr || arr.length < 3) return result;
-      // 动态定位列：按表头名称查找（5月 sheet 与 6月 sheet 列位置不同）
-      // 5月: col0=null/合并, col1=RDC, ..., col8=ABC分类, col9=海南花露水
-      // 6月: col0=RDC, ..., col8=海南花露水, col9=库存总数量
+      // 动态定位列：按表头名称查找（5月 sheet col0=null，导致后续列位置+1）
+      // 5月: col0=null, col1=RDC, ..., col8=ABC分类, col9=海南花露水, col10=库存总数量, col11=库存总金额
+      //             col12~17=数量分类, col18~23=金额分类, col24~27=2026-06~11需求
+      // 6月: col0=RDC, ..., col8=海南花露水, col9=库存总数量, col10=库存总金额
+      //             col11~16=数量分类, col17~22=金额分类, col23~28=2026-07~12需求
       const header = arr[1] || [];
       function colIdx(name) {
         for (let i = 0; i < header.length; i++) {
@@ -6293,12 +6295,20 @@ function parseInventoryExcel(rawData) {
       const C_HAINAN = colIdx('海南花露水');
       const C_QTY = colIdx('库存总数量');
       const C_TOTAL = colIdx('库存总金额');
-      const C_AVAIL = colIdx('可用库存');
-      const C_INTRANSIT = colIdx('在途库存');
-      // 未来需求: cov07..cov12 = 7-12 月（按列名匹配更稳健，5/6 月份不同）
+      // 金额字段（按表头动态定位，5月 sheet 多偏移 1 列）
+      const C_STALE = colIdx('残次（元）');
+      const C_EXPIRED = colIdx('过期~6个月（元）');
+      const C_RETURN = colIdx('退货库位（元）');
+      const C_NEAR = colIdx('7~1/2效期（元）');
+      const C_AVAIL_RAW = colIdx('可用库存（元）');  // 「可用库存」对应 planAmt
+      const C_INTRANSIT = colIdx('在途库存（元）');
+      // 数量字段
+      const C_QTY_AVAIL = colIdx('可用库存（个）');
+      // 未来需求: cov06..cov12 = 2026-06..12（按列名匹配，5月只有 06-11 共 6 个月，6月只有 07-12 共 6 个月）
       const C_DEMAND = {};
-      ['2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'].forEach((n, i) => {
-        C_DEMAND['cov' + (i + 7).toString().padStart(2, '0')] = colIdx(n);
+      ['2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'].forEach((n) => {
+        const covIdx = parseInt(n.split('-')[1], 10).toString().padStart(2, '0');
+        C_DEMAND['cov' + covIdx] = colIdx(n);
       });
       const C_COVERAGE = colIdx('库存覆盖月数') >= 0 ? colIdx('库存覆盖月数') : colIdx('库存覆盖');
       const C_COV_LEVEL = colIdx('覆盖月数分类');
@@ -6312,6 +6322,10 @@ function parseInventoryExcel(rawData) {
         const covLabel = String(r[(C_COV_LEVEL>=0?C_COV_LEVEL:30)] || '').trim();
         const qtyIdx = C_QTY>=0?C_QTY:9;
         const totalIdx = C_TOTAL>=0?C_TOTAL:10;
+        // 6 个状态金额之和（用于 totalAmt 回退）
+        const amountSum = (C_STALE>=0?getSN(r,C_STALE):0) + (C_EXPIRED>=0?getSN(r,C_EXPIRED):0)
+                       + (C_RETURN>=0?getSN(r,C_RETURN):0) + (C_NEAR>=0?getSN(r,C_NEAR):0)
+                       + (C_AVAIL_RAW>=0?getSN(r,C_AVAIL_RAW):0) + (C_INTRANSIT>=0?getSN(r,C_INTRANSIT):0);
         result.push({
           rdc: mapRDCName(rdcRaw), sku: String(r[C_SKU>=0?C_SKU:1]||'').trim(),
           skuName: String(r[C_NAME>=0?C_NAME:2]||'').trim(), brand: normalizeBrandName(String(r[C_BRAND>=0?C_BRAND:3]||'').trim()),
@@ -6319,18 +6333,25 @@ function parseInventoryExcel(rawData) {
           abc: String(r[C_ABC>=0?C_ABC:7]||'').trim(),
           isHainan: String(r[C_HAINAN>=0?C_HAINAN:9] || '').trim() === '是',
           availableQty: getSN(r, qtyIdx),
-          availQtyPlan: getSN(r, 15),
-          // 源表「库存总金额」全行为空 → 回退为该行 6 个金额拆分列之和（与饼图/趋势口径一致）
-          totalAmt: (getSN(r, totalIdx) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
-          inventoryAmt: (getSN(r, totalIdx) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
-          staleAmt: getSN(r,17), expiredAmt: getSN(r,18),
-          returnAmt: getSN(r,19), nearExpiryAmt: getSN(r,20), planAmt: getSN(r,21), inTransitAmt: getSN(r,22),
-          cov07: getSN(r, C_DEMAND.cov07>=0?C_DEMAND.cov07:23),
-          cov08: getSN(r, C_DEMAND.cov08>=0?C_DEMAND.cov08:24),
-          cov09: getSN(r, C_DEMAND.cov09>=0?C_DEMAND.cov09:25),
-          cov10: getSN(r, C_DEMAND.cov10>=0?C_DEMAND.cov10:26),
-          cov11: getSN(r, C_DEMAND.cov11>=0?C_DEMAND.cov11:27),
-          cov12: getSN(r, C_DEMAND.cov12>=0?C_DEMAND.cov12:28),
+          availQtyPlan: C_QTY_AVAIL>=0 ? getSN(r,C_QTY_AVAIL) : 0,
+          // 源表「库存总金额」全行为空 → 回退为该行 6 个金额拆分列之和
+          totalAmt: (getSN(r, totalIdx) || amountSum),
+          inventoryAmt: (getSN(r, totalIdx) || amountSum),
+          // 状态金额字段（按列名动态定位，5月 sheet 多偏移 1 列）
+          staleAmt: C_STALE>=0 ? getSN(r,C_STALE) : 0,
+          expiredAmt: C_EXPIRED>=0 ? getSN(r,C_EXPIRED) : 0,
+          returnAmt: C_RETURN>=0 ? getSN(r,C_RETURN) : 0,
+          nearExpiryAmt: C_NEAR>=0 ? getSN(r,C_NEAR) : 0,
+          planAmt: C_AVAIL_RAW>=0 ? getSN(r,C_AVAIL_RAW) : 0,
+          inTransitAmt: C_INTRANSIT>=0 ? getSN(r,C_INTRANSIT) : 0,
+          // 未来需求: cov06..cov12 = 2026-06..12（按列名匹配，5月只有 06-11）
+          cov06: getSN(r, C_DEMAND.cov06>=0?C_DEMAND.cov06:-1),
+          cov07: getSN(r, C_DEMAND.cov07>=0?C_DEMAND.cov07:-1),
+          cov08: getSN(r, C_DEMAND.cov08>=0?C_DEMAND.cov08:-1),
+          cov09: getSN(r, C_DEMAND.cov09>=0?C_DEMAND.cov09:-1),
+          cov10: getSN(r, C_DEMAND.cov10>=0?C_DEMAND.cov10:-1),
+          cov11: getSN(r, C_DEMAND.cov11>=0?C_DEMAND.cov11:-1),
+          cov12: getSN(r, C_DEMAND.cov12>=0?C_DEMAND.cov12:-1),
           coverageMonths: getSN(r, C_COVERAGE>=0?C_COVERAGE:29),
           coverageLevel: covLabel
         });
