@@ -4188,160 +4188,90 @@ function renderTransTable() {
 function renderPullbackAnalysis(page) {
   var lbArr = (dataStore.inventory && dataStore.inventory.pullbackRaw) || [];
   if (lbArr.length === 0) {
-    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据分析</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回数据分析</button></div><div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg)">暂无原始拉回数据</div></div>';
+    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab='+"'transship';renderTransship()"+'">📦 转储数据分析</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab='+"'pullback';renderTransship()"+'">🔙 拉回数据分析</button></div><div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg)">暂无原始拉回数据</div></div>';
     return;
   }
-  var inv = dataStore.inventory;
-  var productMaster = inv.productMaster || {};
-  // 品牌映射：从 cov6 构建 SKU→品牌
-  var cov6 = inv.cov6 || [];
-  var brandMap = {};
-  cov6.forEach(function(d) { brandMap[d.sku] = d.brand || '未知'; });
-
-  // 标准 RDC 名称
-  function normRdc(n) { return String(n||'').trim().replace('仓','RDC'); }
-  // 获取箱规（向上取整）
-  function getBoxSpec(sku) { var m = productMaster[sku]; return (m && m.spec > 0) ? m.spec : 30; }
-  // 计算箱数
-  function calcBox(qty, unit, sku) {
-    if (unit === '箱') return qty;
-    var spec = getBoxSpec(sku);
-    return Math.ceil(qty / spec);
+  var inv = dataStore.inventory, pm = inv.productMaster||{}, cov6 = inv.cov6||[];
+  var bm = {}, hnMap = {};
+  cov6.forEach(function(d){ bm[d.sku]=d.brand||'未知'; if(d.isHainan===true) hnMap[d.sku]=true; });
+  function isHN(sku, name){ return !!(hnMap[sku] || (name||'').indexOf('花露水')>=0); }
+  if (typeof window._pullHainan==='undefined') window._pullHainan='all';
+  function normRdc(n){ return (n||'').trim().replace('仓','RDC'); }
+  function spec(s){ var m=pm[s]; return (m&&m.spec>0)?m.spec:30; }
+  function box(q,u,s){ return u==='箱'?q:Math.ceil(q/spec(s)); }
+  var agg={};
+  for(var i=1;i<lbArr.length;i++){
+    var r=lbArr[i]; if(!r||!r[0]) continue;
+    var dt=(typeof r[0]==='number'&&r[0]>1000)?new Date((r[0]-25569)*86400*1000):null;
+    if(!dt) continue;
+    var ym=(dt.getUTCFullYear())+'-'+((dt.getUTCMonth()+1)+'').padStart(2,'0');
+    var rd=normRdc(r[7]||''), sk=String(r[3]||'').trim(), nm=String(r[4]||'').trim();
+    var br=bm[sk]||'未知', un=String(r[6]||'').trim(), q0=Number(r[5])||0;
+    var hf=window._pullHainan;
+    if((hf==='yes'&&!isHN(sk,nm))||(hf==='no'&&isHN(sk,nm))) continue;
+    var bx=box(q0,un,sk); if(bx<=0) continue;
+    var rw=String(r[2]||'').trim(), rl=String(r[1]||'').trim();
+    var ks={ monthRdc:ym+'|'+rd, monthBrand:ym+'|'+br, monthRdcBrand:ym+'|'+rd+'|'+br, monthRdcRec:ym+'|'+rd+'|'+rw, brand:br, month:ym, rdc:rd };
+    Object.keys(ks).forEach(function(k){ if(!agg[k])agg[k]={}; var key=ks[k]; if(!agg[k][key])agg[k][key]=0; agg[k][key]+=bx; });
   }
-  // 按 (年-月, 发货RDC, 品牌, 收货仓, 收货库位) 聚合
-  var agg = {};
-  for (var i = 1; i < lbArr.length; i++) {
-    var r = lbArr[i]; if (!r || !r[0]) continue;
-    var dt0 = r[0];
-    var dt = (typeof dt0 === 'number' && dt0 > 1000) ? new Date((dt0 - 25569) * 86400 * 1000) : null;
-    if (!dt) continue;
-    var ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth()+1).toString().padStart(2,'0');
-    var rdc = normRdc(r[7] || '');
-    var recLoc = String(r[1] || '').trim();
-    var recWare = String(r[2] || '').trim();
-    var sku = String(r[3] || '').trim();
-    var brand = brandMap[sku] || '未知';
-    var unit = String(r[6] || '').trim();
-    var qty0 = Number(r[5]) || 0;
-    var box = calcBox(qty0, unit, sku);
-    if (box <= 0) continue;
-    // 各维度聚合键
-    var keys = {
-      monthRdc: ym + '|' + rdc,
-      monthBrand: ym + '|' + brand,
-      monthRdcBrand: ym + '|' + rdc + '|' + brand,
-      monthRdcRec: ym + '|' + rdc + '|' + recWare,
-      brand: brand,
-      month: ym
-    };
-    Object.keys(keys).forEach(function(k) {
-      if (!agg[k]) agg[k] = {};
-      var key = keys[k];
-      if (!agg[k][key]) agg[k][key] = 0;
-      agg[k][key] += box;
-    });
+  var allMths=Object.keys(agg.month||{}).sort();
+  var byMthRdc=Object.entries(agg.monthRdc||{}).sort(function(a,b){ return a[0].localeCompare(b[0]); });
+  var byBrand=Object.entries(agg.brand||{}).sort(function(a,b){ return b[1]-a[1]; });
+  var rdcTot={};
+  byMthRdc.forEach(function(e){ var rd=e[0].split('|')[1]; rdcTot[rd]=(rdcTot[rd]||0)+e[1]; });
+  var sRdc=Object.entries(rdcTot).sort(function(a,b){ return b[1]-a[1]; });
+  var tBr=byBrand.slice(0,10).map(function(e){return e[0];});
+  var recM={};
+  Object.keys(agg.monthRdcRec||{}).forEach(function(k){
+    var p=k.split('|'); recM[p[2]]=(recM[p[2]]||0)+agg.monthRdcRec[k];
+  });
+  var sRec=Object.entries(recM).sort(function(a,b){return b[1]-a[1];});
+  var totBx=Object.values(rdcTot).reduce(function(s,v){return s+v;},0);
+  var allSKU=new Set();
+  for(var ix=1;ix<lbArr.length;ix++){
+    var ro=lbArr[ix]; if(!ro||!ro[3]) continue;
+    var ski=String(ro[3]), nami=String(ro[4]||''), hf2=window._pullHainan;
+    if(hf2==='all'||(hf2==='yes'&&isHN(ski,nami))||(hf2==='no'&&!isHN(ski,nami))) allSKU.add(ski);
   }
-
-  // === 构建分析展示 ===
-  var allMonths = Object.keys(agg.month || {}).sort();
-  var byMonthRdc = Object.entries(agg.monthRdc || {}).sort(function(a,b) { return a[0].localeCompare(b[0]); });
-  var byBrand = Object.entries(agg.brand || {}).sort(function(a,b) { return b[1]-a[1]; });
-  var byMonthRdcRec = Object.entries(agg.monthRdcRec || {}).sort(function(a,b) { var aa=a[0].split('|'), bb=b[0].split('|'); return aa[0].localeCompare(bb[0]) || aa[1].localeCompare(bb[1]) || aa[2].localeCompare(bb[2]) || b[1]-a[1]; });
-
-  // 按发货RDC汇总拉回总量
-  var rdcTotal = {};
-  byMonthRdc.forEach(function(e) { var rdc = e[0].split('|')[1]; rdcTotal[rdc] = (rdcTotal[rdc]||0) + e[1]; });
-  var sortedRdc = Object.entries(rdcTotal).sort(function(a,b) { return b[1]-a[1]; });
-
-  // 按品牌汇总
-  var brandTotal = {};
-  byBrand.forEach(function(e) { brandTotal[e[0]] = e[1]; });
-
-  // RDC 简表
-  var rdcTable = '<table class="data-table"><thead><tr><th>发货RDC</th><th style="text-align:right">总拉回（箱）</th></tr></thead><tbody>';
-  sortedRdc.forEach(function(e) { rdcTable += '<tr><td style="text-align:left;font-weight:600">'+e[0]+'</td><td style="text-align:right;font-weight:600">'+e[1].toLocaleString()+'</td></tr>'; });
-  rdcTable += '</tbody></table>';
-
-  // 品牌饼图 + 品牌简表
-  var brandTable = '<table class="data-table"><thead><tr><th>品牌</th><th style="text-align:right">拉回箱数</th></tr></thead><tbody>';
-  byBrand.slice(0,15).forEach(function(e) { brandTable += '<tr><td style="text-align:left">'+e[0]+'</td><td style="text-align:right">'+e[1].toLocaleString()+'</td></tr>'; });
-  brandTable += '</tbody></table>';
-
-  // 按月×RDC 交叉表
-  var allRdcNames = sortedRdc.map(function(e) { return e[0]; });
-  var crossMonthRdc = '<table class="data-table"><thead><tr><th style="text-align:left">月份</th>'+allRdcNames.map(function(r) { return '<th style="text-align:right">'+r.replace('RDC','')+'</th>'; }).join('')+'<th style="text-align:right">合计</th></tr></thead><tbody>';
-  allMonths.forEach(function(ym) {
-    var rowSum = 0;
-    crossMonthRdc += '<tr><td style="text-align:left;font-weight:600">'+ym+'</td>';
-    allRdcNames.forEach(function(rdc) {
-      var v = agg.monthRdc[ym + '|' + rdc] || 0;
-      rowSum += v;
-      crossMonthRdc += '<td style="text-align:right">'+(v>0?v.toLocaleString():'—')+'</td>';
-    });
-    crossMonthRdc += '<td style="text-align:right;font-weight:600">'+rowSum.toLocaleString()+'</td></tr>';
-  });
-  crossMonthRdc += '</tbody></table>';
-
-  // 按品牌×RDC 矩阵
-  var sortedBrands = byBrand.slice(0,10).map(function(e) { return e[0]; });
-  var brandRdcMatrix = '<table class="data-table"><thead><tr><th style="text-align:left">品牌</th>'+allRdcNames.map(function(r) { return '<th style="text-align:right">'+r.replace('RDC','')+'</th>'; }).join('')+'<th style="text-align:right">合计</th></tr></thead><tbody>';
-  sortedBrands.forEach(function(b) {
-    var rowSum = 0;
-    brandRdcMatrix += '<tr><td style="text-align:left;font-weight:500">'+b+'</td>';
-    allRdcNames.forEach(function(rdc) {
-      var v = agg.monthRdcBrand ? (agg.monthRdcBrand['2026-01|'+rdc+'|'+b] || 0) : 0;
-      // 跨月份聚合
-      var total = 0;
-      allMonths.forEach(function(ym) {
-        total += (agg.monthRdcBrand[ym + '|' + rdc + '|' + b] || 0);
-      });
-      rowSum += total;
-      brandRdcMatrix += '<td style="text-align:right">'+(total>0?total.toLocaleString():'—')+'</td>';
-    });
-    brandRdcMatrix += '<td style="text-align:right;font-weight:600">'+rowSum.toLocaleString()+'</td></tr>';
-  });
-  brandRdcMatrix += '</tbody></table>';
-
-  // 按收货仓汇总
-  var recMap = {};
-  Object.keys(agg.monthRdcRec || {}).forEach(function(k) {
-    var parts = k.split('|');
-    var ware = parts[2];
-    recMap[ware] = (recMap[ware] || 0) + agg.monthRdcRec[k];
-  });
-  var sortedRec = Object.entries(recMap).sort(function(a,b) { return b[1]-a[1]; });
-  var recTable = '<table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th></tr></thead><tbody>';
-  sortedRec.forEach(function(e) { recTable += '<tr><td style="text-align:left">'+e[0]+'</td><td style="text-align:right">'+e[1].toLocaleString()+'</td></tr>'; });
-  recTable += '</tbody></table>';
-
-  // 总体 KPI
-  var totalBox = Object.values(rdcTotal).reduce(function(s,v) { return s+v; }, 0);
-  var totalSKUs = new Set();
-  for (var i = 1; i < lbArr.length; i++) { var r = lbArr[i]; if (r && r[3]) totalSKUs.add(String(r[3])); }
-
-  // 渲染
-  var totalCount = lbArr.length - 1;
-  page.innerHTML = [
-    '<div style="display:flex;gap:8px;margin-bottom:16px">',
-    '<button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据分析</button>',
-    '<button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回数据分析</button>',
-    '</div>',
-    '<div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">拉回数据分析（单位：箱，最小单位向上取整）</div>',
-    '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">数据来源：拉回数据（'+totalCount+' 条记录）｜箱规：基础数据sheet箱规转化因子｜单位：\"箱\"直接计数，\"个\"按箱规向上取整</div>',
-    '<div class="kpi-row" style="margin-bottom:16px">',
-    '<div class="kpi-card blue"><div class="kpi-label">总拉回箱数</div><div class="kpi-value">'+totalBox.toLocaleString()+'<span class="kpi-unit">箱</span></div></div>',
-    '<div class="kpi-card purple"><div class="kpi-label">发货RDC数</div><div class="kpi-value">'+sortedRdc.length+'<span class="kpi-unit">个</span></div></div>',
-    '<div class="kpi-card orange"><div class="kpi-label">SKU 种类</div><div class="kpi-value">'+totalSKUs.size+'<span class="kpi-unit">个</span></div></div>',
-    '</div>',
-    '<div class="row-2" style="margin-bottom:16px">',
-    '<div class="card"><div class="card-header"><span class="card-title">📤 按发货RDC汇总</span></div>'+rdcTable+'</div>',
-    '<div class="card"><div class="card-header"><span class="card-title">🏭 按收货仓汇总</span></div>'+recTable+'</div>',
-    '</div>',
-    '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📅 按月 × 发货RDC 拉回箱数交叉表</span></div>'+crossMonthRdc+'</div>',
-    '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📊 按品牌 × RDC 拉回箱数矩阵（TOP10品牌）</span></div>'+brandRdcMatrix+'</div>',
-    '<div class="card"><div class="card-header"><span class="card-title">🏷️ 按品牌汇总</span></div>'+brandTable+'</div>'
-  ].join('');
+  var hSel=window._pullHainan, suf='';
+  if(hSel==='yes') suf='·仅花露水'; else if(hSel==='no') suf='·不含花露水';
+  var tc=lbArr.length-1;
+  page.innerHTML='<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab='+"'transship';renderTransship()"+'">📦 转储数据</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab='+"'pullback';renderTransship()"+'">🔙 拉回分析</button></div>'
+    +'<div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+    +'<span style="font-size:var(--font-size-xl);font-weight:600">🔙 拉回数据分析</span>'
+    +'<span style="font-size:12px;color:var(--text-secondary)"> 箱（向上取整）</span>'
+    +'<span style="flex:1"></span><label style="font-size:12px;color:var(--text-secondary)">海南花露水：</label>'
+    +'<select onchange="window._pullHainan=this.value;var p=document.getElementById('+"'page-transship');if(p)renderPullbackAnalysis(p)"+' style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">'
+    +'<option value="all"'+(hSel==='all'?' selected':'')+'>全部</option>'
+    +'<option value="yes"'+(hSel==='yes'?' selected':'')+'>仅花露水</option>'
+    +'<option value="no"'+(hSel==='no'?' selected':'')+'>不含花露水</option></select></div>'
+    +'<div style="font-size:12px;color:var(--text-secondary)">'+tc+' 条｜箱规：基础数据sheet</div></div>'
+    +'<div class="kpi-row" style="margin-bottom:16px">'
+    +'<div class="kpi-card blue"><div class="kpi-label">总拉回箱数'+suf+'</div><div class="kpi-value">'+totBx.toLocaleString()+'<span class="kpi-unit">箱</span></div></div>'
+    +'<div class="kpi-card purple"><div class="kpi-label">发货RDC'+suf+'</div><div class="kpi-value">'+sRdc.length+'<span class="kpi-unit">个</span></div></div>'
+    +'<div class="kpi-card orange"><div class="kpi-label">SKU'+suf+'</div><div class="kpi-value">'+allSKU.size+'<span class="kpi-unit">个</span></div></div></div>'
+    +'<div class="row-2" style="margin-bottom:16px">'
+    +'<div class="card"><div class="card-header"><span class="card-title">📤 各RDC拉回箱数</span></div><div class="chart-container" style="height:280px" id="chart-pull-rdc"></div></div>'
+    +'<div class="card"><div class="card-header"><span class="card-title">📈 月度拉回趋势'+suf+'</span></div><div class="chart-container" style="height:280px" id="chart-pull-trend"></div></div></div>'
+    +'<div class="row-2" style="margin-bottom:16px">'
+    +'<div class="card"><div class="card-header"><span class="card-title">📊 品牌×RDC分布(TOP10)'+suf+'</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand-rdc"></div></div>'
+    +'<div class="card"><div class="card-header"><span class="card-title">🏷️ 品牌TOP10'+suf+'</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand"></div></div></div>'
+    +'<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓'+suf+'</span></div>'
+    +'<div class="table-wrap"><table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th></tr></thead><tbody>'
+    +sRec.map(function(e){return '<tr><td style="text-align:left">'+e[0]+'</td><td style="text-align:right">'+e[1].toLocaleString()+'</td></tr>';}).join('')
+    +'</tbody></table></div></div>';
+  var pc=['#2f6fed','#7b4df6','#06B6D4','#F59E0B','#10B981','#EF4444','#8B5CF6','#EC4899'];
+  var c1=echarts.init(document.getElementById('chart-pull-rdc'));
+  if(c1) c1.setOption({tooltip:{trigger:'item',formatter:'{b}<br/>拉回：{c}箱({d}%)'},series:[{type:'pie',radius:['20%','60%'],center:['50%','55%'],data:sRdc.map(function(e,i){return{name:e[0],value:e[1],itemStyle:{color:pc[i%pc.length]}};}),label:{fontSize:11},labelLine:{length:8,length2:6}}]});
+  var mths=allMths.length>=6?allMths:(function(){var a=[];for(var m=1;m<=6;m++)a.push('2026-'+(m<10?'0':'')+m);return a;})();
+  var c2=echarts.init(document.getElementById('chart-pull-trend'));
+  if(c2) c2.setOption({tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){var h='<b>'+p[0].axisValue+'</b>',to=0;p.forEach(function(s){if(s.value>0){h+='<br/>'+s.marker+s.seriesName+'：'+s.value.toLocaleString()+'箱';to+=s.value;}});h+='<br/><b>合计：'+to.toLocaleString()+'箱</b>';return h;}},legend:{data:sRdc.map(function(e){return e[0];}),top:0,textStyle:{fontSize:10},type:'scroll'},grid:{left:50,right:16,top:50,bottom:30},xAxis:{type:'category',data:mths,axisLabel:{fontSize:10}},yAxis:{type:'value',name:'箱',nameTextStyle:{fontSize:10},axisLabel:{fontSize:9}},series:sRdc.map(function(e,i){return{name:e[0],type:'bar',stack:'total',barMaxWidth:28,itemStyle:{color:pc[i%pc.length]},data:mths.map(function(m){return agg.monthRdc[m+'|'+e[0]]||0;})};})});
+  if(tBr.length>0){var c3=echarts.init(document.getElementById('chart-pull-brand-rdc'));
+  if(c3) c3.setOption({tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){var h='<b>'+p[0].axisValue+'</b>';p.forEach(function(s){if(s.value>0)h+='<br/>'+s.marker+s.seriesName+'：'+s.value.toLocaleString()+'箱';});return h;}},legend:{data:tBr.map(function(b){return b.length>12?b.slice(0,12)+'..':b;}),top:0,textStyle:{fontSize:10},type:'scroll'},grid:{left:50,right:16,top:50,bottom:30},xAxis:{type:'category',data:sRdc.map(function(e){return e[0];}),axisLabel:{fontSize:10,rotate:15}},yAxis:{type:'value',name:'箱',nameTextStyle:{fontSize:10},axisLabel:{fontSize:9}},series:tBr.map(function(b,i){var su={};allMths.forEach(function(mm){sRdc.forEach(function(e){su[e[0]]=(su[e[0]]||0)+(agg.monthRdcBrand[mm+'|'+e[0]+'|'+b]||0);});});return{name:b.length>12?b.slice(0,12)+'..':b,type:'bar',stack:'total',barMaxWidth:30,itemStyle:{color:pc[i%pc.length]},data:sRdc.map(function(e){return su[e[0]]||0;})};})});}
+  var c4=echarts.init(document.getElementById('chart-pull-brand'));
+  if(c4&&byBrand.length>0) c4.setOption({tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){return '<b>'+p[0].name+'</b><br/>拉回：'+p[0].value.toLocaleString()+'箱';}},grid:{left:80,right:24,top:16,bottom:60},xAxis:{type:'category',data:byBrand.slice(0,10).map(function(e){return e[0].length>10?e[0].slice(0,10)+'..':e[0];}),axisLabel:{fontSize:10,rotate:30}},yAxis:{type:'value',name:'箱',nameTextStyle:{fontSize:10},axisLabel:{fontSize:9}},series:[{type:'bar',barMaxWidth:28,itemStyle:{color:function(p){return pc[p.dataIndex%pc.length];}},data:byBrand.slice(0,10).map(function(e){return e[1];})}]});
 }
+
 
 // ========== 导出 ==========
 function exportTransshipCSV() {
