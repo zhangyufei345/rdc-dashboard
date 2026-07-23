@@ -5699,7 +5699,9 @@ function getHainanAdjustedAmount(year, rdc, monthIdx) {
     const arr = hh && hh.byRdc && hh.byRdc[year] && hh.byRdc[year][rdc];
     hainanAmt = (arr && arr.length > monthIdx) ? (arr[monthIdx] || 0) : 0;
   } else if (year === '2026' && (monthIdx === 4 || monthIdx === 5)) {
-    const cov = (dataStore.inventory && dataStore.inventory.cov6) || [];
+    // 5月→cov5, 6月→cov6（按月度对位取库存覆盖数据）
+    const covKey = monthIdx === 4 ? 'cov5' : 'cov6';
+    const cov = (dataStore.inventory && dataStore.inventory[covKey]) || [];
     cov.forEach(d => {
       if (d.rdc !== rdc) return;
       if (d.isHainan === true) hainanAmt += d.totalAmt || 0;
