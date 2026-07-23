@@ -5689,147 +5689,168 @@ function reRenderForecast() {
   if (ctx && ctx.page && ctx.tabBar) renderInventoryForecast(ctx.page, ctx.tabBar);
 }
 
-// === 库存变化根因分析 ===
-// 数据源：history.inventoryAmount (月初/末库存金额)、shipmentCost (出货)、pullbackByRdcMonth (拉回)、transship (转储)
-// 库存变动 = 出货(-) + 拉回(+) + 转储净流入(±)
+// === 库存变化根因分析（数量/箱） ===
+// 数据源：cov5/cov6 availableQty（5-6月库存数量）、shipmentCost/avgCost（出货箱数估算）、pullbackByRdcMonth.qty（拉回箱数）、transship.deliveryQty（转储箱数）
+// 库存变动（箱）= 月末库存 - 月初库存 = 拉回 + 转储入 - 出货(估算)
 function renderInventoryRootCause(page, tabBar) {
-  const hist = dataStore.history && dataStore.history.inventory;
   const pullback = (dataStore.inventory && dataStore.inventory.pullbackByRdcMonth) || {};
   const transship = dataStore.transship || [];
-  const months = ['1月','2月','3月','4月','5月','6月'];
-  // 各 RDC（含华东，因库存周转保留华东口径）
+  const productMaster = (dataStore.inventory && dataStore.inventory.productMaster) || {};
+  const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
+  const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
+
+  // 7 大 RDC（含华东）
   const rdcOrder = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
-
-  // helper：获取某 RDC 某月 (0-indexed) 的库存金额（千元），不在则 0
-  function invAmt(rdc, monthIdx) {
-    if (!hist) return 0;
-    const arr = (hist['2026'] && hist['2026'].inventoryAmount[rdc]) || [];
-    return (arr.length > monthIdx ? arr[monthIdx] : 0) || 0;
-  }
-  function shipAmt(rdc, monthIdx) {
-    if (!hist) return 0;
-    const arr = (hist['2026'] && hist['2026'].shipmentCost[rdc]) || [];
-    return (arr.length > monthIdx ? arr[monthIdx] : 0) || 0;
-  }
-  // 拉回金额（按发货RDC，即"该 RDC 退回给总仓的货"金额，单位元 → 千元）
-  function pullAmt(rdc, ym) {
-    const m = pullback[rdc] || {};
-    const o = m[ym];
-    return o ? Math.round(o.amt / 10) / 100 : 0;  // 元 → 千元
-  }
-  // 转储（按收货方 RDC）：从 transship 聚合某月某 RDC 收到的金额
-  // transship.data[].rdc = 收货方, .materialName/.material, .invoiceQty, .planQty, .deliveryQty（单位箱）
-  // 简单起见用 invoiceQty * 物料成本价。需要 productMaster
-  const master = (dataStore.inventory && dataStore.inventory.productMaster) || {};
-  function transInAmt(rdc, ym) {
-    let amt = 0;
-    for (const t of transship) {
-      if (t.rdc !== rdc) continue;
-      const dt = t.date;
-      if (!dt) continue;
-      const d = (dt instanceof Date) ? dt : new Date(dt);
-      const t_ym = d.getUTCFullYear() + '-' + (d.getUTCMonth() + 1).toString().padStart(2, '0');
-      if (t_ym !== ym) continue;
-      const m = master[t.material];
-      const unitCost = m ? m.cost : 0;
-      // invoiceQty / confirmQty / deliveryQty 均为「箱」单位
-      const qtyBox = (t.deliveryQty || t.confirmQty || t.invoiceQty || 0);
-      amt += qtyBox * unitCost * (m ? m.spec : 1);  // 箱数 × 单位成本 × 箱规
-    }
-    return Math.round(amt / 10) / 100;  // 元 → 千元
-  }
-
-  // 渲染表格：每个 RDC 一行，6 个月份展开，列：月初/出货/拉回/转储/月末/净变动/主因
-  let rowsHtml = '';
-  const insightHtml = [];
   const monthAbbrev = ['1月','2月','3月','4月','5月','6月'];
 
+  // 拉回箱数（按发货RDC + YYYY-MM）
+  function pullQty(rdc, ym) {
+    const m = pullback[rdc] || {};
+    const o = m[ym];
+    return o ? o.qty : 0;
+  }
+  // 转储入箱数（按收货方RDC + YYYY-MM）
+  function transQty(rdc, ym) {
+    let qty = 0;
+    for (const t of transship) {
+      if (t.rdc !== rdc) continue;
+      const d = (t.date instanceof Date) ? t.date : new Date(t.date);
+      const t_ym = d.getUTCFullYear() + '-' + (d.getUTCMonth() + 1).toString().padStart(2, '0');
+      if (t_ym !== ym) continue;
+      qty += t.deliveryQty || t.confirmQty || t.invoiceQty || 0;
+    }
+    return qty;
+  }
+  // 出货箱数估算：从 history.shipmentCost（元）÷ 平均单位成本（元/箱）= 箱数
+  // 平均单位成本（元/箱）= 平均成本价 × 平均箱规
+  function avgCostPerBox() {
+    let totalCost = 0, cnt = 0;
+    for (const sku in productMaster) {
+      const m = productMaster[sku];
+      if (m && m.cost > 0 && m.spec > 0) {
+        totalCost += m.cost * m.spec;  // 元/箱
+        cnt++;
+      }
+    }
+    return cnt > 0 ? totalCost / cnt : 50;  // 默认 50元/箱 兜底
+  }
+  const avgBoxCost = avgCostPerBox();
+  function shipQty(rdc, monthIdx) {
+    const hist = dataStore.history && dataStore.history.inventory;
+    if (!hist) return 0;
+    const arr = (hist['2026'] && hist['2026'].shipmentCost[rdc]) || [];
+    const amt = (arr.length > monthIdx ? arr[monthIdx] : 0) || 0;  // 千元
+    return Math.round(amt * 1000 / avgBoxCost);  // 箱数（元 / 元/箱）
+  }
+  // 库存数量（5/6 月）：从 cov availableQty 聚合（单位"支"，约等于"个"；按箱规换算箱数）
+  function invQty(rdc, covArr) {
+    let qty = 0;
+    for (const d of covArr) {
+      if (d.rdc !== rdc) continue;
+      qty += d.availableQty || 0;
+    }
+    const m = productMaster;  // 总箱规平均值
+    let totalSpec = 0, cnt = 0;
+    for (const sku in m) {
+      const mm = m[sku];
+      if (mm && mm.spec > 0) { totalSpec += mm.spec; cnt++; }
+    }
+    const avgSpec = cnt > 0 ? totalSpec / cnt : 30;
+    return Math.round(qty / avgSpec);
+  }
+
+  // === 1-4 月简表：只有拉回 + 转储入（因为无月初/末库存数量数据）===
+  // === 5-6 月详表：拉回 + 转储入 + 出货(估) + 库存变动 ===
+  let rowsHtml = '';
   rdcOrder.forEach((rdc) => {
     rowsHtml += '<tr style="background:#F1F5F9"><td style="text-align:left;font-weight:600">'+rdc+'</td>';
-    // 6 月起展示，其他月份折叠（按月份详细行可展开）
     for (let m = 0; m < 6; m++) {
       const ym = '2026-' + (m+1).toString().padStart(2,'0');
-      const inv_start = m === 0 ? 0 : invAmt(rdc, m-1);  // 月初（=上月月末）
-      const inv_end = invAmt(rdc, m);
-      const ship = shipAmt(rdc, m);
-      const pull = pullAmt(rdc, ym);
-      const trIn = transInAmt(rdc, ym);
-      const delta = inv_end - inv_start;
-      // 主因
-      const factors = [
-        {n:'出货(-)', v: ship},
-        {n:'拉回(+)', v: pull},
-        {n:'转储入(+)', v: trIn}
-      ];
-      factors.sort((a,b)=>Math.abs(b.v)-Math.abs(a.v));
-      const main = factors[0];
-      const mainPct = (delta === 0 || Math.abs(main.v) < 1) ? '—' : (main.v / delta * 100).toFixed(0) + '%';
-      rowsHtml += '<td style="text-align:right;font-size:11px">' +
-        '<div style="color:#666">'+monthAbbrev[m]+' 变动</div>' +
-        '<div style="font-weight:600;color:'+(delta>0?'#10B981':(delta<0?'#EF4444':'#666'))+'">'+(delta>=0?'+':'')+delta.toFixed(0)+'</div>' +
-        '<div style="color:#94a3b8;font-size:10px">主: '+main.n+' '+mainPct+'</div>' +
-        '</td>';
+      const pull = pullQty(rdc, ym);
+      const trIn = transQty(rdc, ym);
+      const ship = (m >= 4) ? shipQty(rdc, m) : null;  // 5-6月有出货估算
+      // 库存变动（箱）：5-6月可用 = 6月库存 - 5月库存
+      let invDelta = null;
+      if (m === 4) {  // 5月 vs 4月（4月无库存数量）
+        invDelta = null;
+      } else if (m === 5) {  // 6月 vs 5月
+        const q6 = invQty(rdc, cov6);
+        const q5 = invQty(rdc, cov5);
+        invDelta = q6 - q5;
+      }
+      let html = '<td style="text-align:right;font-size:11px">';
+      html += '<div style="color:#666">'+monthAbbrev[m]+'</div>';
+      if (pull > 0 || trIn > 0 || (ship !== null && ship > 0) || (invDelta !== null && invDelta !== 0)) {
+        html += '<div style="margin-top:2px"><span style="color:#F59E0B">拉回</span> '+pull+'</div>';
+        html += '<div style="margin-top:2px"><span style="color:#10B981">转储入</span> '+trIn+'</div>';
+        if (ship !== null) html += '<div style="margin-top:2px"><span style="color:#EF4444">出货</span> '+ship+'</div>';
+        if (invDelta !== null) html += '<div style="margin-top:2px"><span style="color:#3B82F6">库存变动</span> '+((invDelta>=0?'+':'')+invDelta)+'</div>';
+      } else {
+        html += '<div style="color:#94a3b8">—</div>';
+      }
+      html += '</td>';
+      rowsHtml += html;
     }
     rowsHtml += '</tr>';
   });
 
-  // 6 月份详表（按 RDC × 月份展开）
+  // === 5-6月详表：箱数 + 转化金额（参考）===
   let detailRows = '';
   rdcOrder.forEach((rdc) => {
-    for (let m = 0; m < 6; m++) {
+    for (let m = 4; m <= 5; m++) {
       const ym = '2026-' + (m+1).toString().padStart(2,'0');
-      const inv_start = m === 0 ? 0 : invAmt(rdc, m-1);
-      const inv_end = invAmt(rdc, m);
-      const ship = shipAmt(rdc, m);
-      const pull = pullAmt(rdc, ym);
-      const trIn = transInAmt(rdc, ym);
-      const delta = inv_end - inv_start;
-      // 4 月华东仓专项检查
+      const pull = pullQty(rdc, ym);
+      const trIn = transQty(rdc, ym);
+      const ship = shipQty(rdc, m);
+      const invE = (m === 5) ? invQty(rdc, cov6) : invQty(rdc, cov5);
+      const invS = (m === 5) ? invQty(rdc, cov5) : invQty(rdc, cov5);  // 5月无 4月数据，标—
+      const invDelta = (m === 5) ? (invE - invS) : null;
       let note = '';
-      if (rdc === '华东RDC' && m === 3) {
+      if (rdc === '华东RDC' && m === 4) {
         note = ' <span style="background:#FEF3C7;color:#92400E;padding:2px 6px;border-radius:4px;font-size:10px">4月暂停返回</span>';
       }
       detailRows += '<tr>' +
-        '<td style="text-align:left">' + rdc + '</td>' +
-        '<td style="text-align:left">' + monthAbbrev[m] + note + '</td>' +
-        '<td style="text-align:right">' + (m===0?'—':inv_start.toFixed(0)) + '</td>' +
-        '<td style="text-align:right;color:#EF4444">' + ship.toFixed(0) + '</td>' +
-        '<td style="text-align:right;color:#F59E0B">' + pull.toFixed(0) + '</td>' +
-        '<td style="text-align:right;color:#10B981">' + trIn.toFixed(0) + '</td>' +
-        '<td style="text-align:right;font-weight:600">' + inv_end.toFixed(0) + '</td>' +
-        '<td style="text-align:right;color:' + (delta>0?'#10B981':(delta<0?'#EF4444':'#666')) + ';font-weight:600">' + (delta>=0?'+':'') + delta.toFixed(0) + '</td>' +
+        '<td style="text-align:left">' + rdc + note + '</td>' +
+        '<td style="text-align:left">' + monthAbbrev[m] + '</td>' +
+        '<td style="text-align:right;color:#3B82F6;font-weight:600">' + (invDelta !== null ? ((invDelta>=0?'+':'')+invDelta) : '—') + '</td>' +
+        '<td style="text-align:right;color:#F59E0B">' + pull + '</td>' +
+        '<td style="text-align:right;color:#10B981">' + trIn + '</td>' +
+        '<td style="text-align:right;color:#EF4444">' + ship + '</td>' +
+        '<td style="text-align:right">' + invE + '</td>' +
+        '<td style="text-align:right;color:var(--text-secondary);font-size:11px">~' + Math.round(avgBoxCost) + '元/箱</td>' +
         '</tr>';
     }
   });
 
   page.innerHTML = tabBar +
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">🔍 库存变化根因分析（2026年1-6月，单位：千元）</span></div>' +
+      '<div class="card-header"><span class="card-title">🔍 库存变化根因分析（2026年1-6月，单位：箱）</span></div>' +
       '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">' +
-      '<b>公式</b>：库存变动 = 月初库存 + 拉回(+) + 转储入(+) − 出货(−) − 其他(报废等)<br>' +
-      '<b>口径</b>：6 大在营 RDC + 华东RDC（保留口径，2026年华东仓暂停返回总仓）<br>' +
+      '<b>公式</b>：库存变动(箱) = 月末库存 − 月初库存 = 拉回 + 转储入 − 出货<br>' +
+      '<b>口径</b>：7 大 RDC（含华东RDC，2026年华东仓暂停返回总仓）<br>' +
       '<b>数据源</b>：<br>' +
-      '&nbsp;&nbsp;• 月初/末库存：history.json inventoryAmount<br>' +
-      '&nbsp;&nbsp;• 出货：history.json shipmentCost<br>' +
-      '&nbsp;&nbsp;• 拉回：「拉回数据」sheet 按发货RDC + 月份 聚合（金额 = 发货单数量 × 基础数据.成本价）<br>' +
-      '&nbsp;&nbsp;• 转储入：「转储数据」sheet 按收货方RDC + 月份 聚合（金额 = 箱数 × 成本价 × 箱规）' +
+      '&nbsp;&nbsp;• 拉回箱数：「拉回数据」sheet 按发货RDC + 月份 聚合（单位=箱，自动按箱规转换）<br>' +
+      '&nbsp;&nbsp;• 转储入箱数：「转储数据」sheet 按收货方RDC + 月份 聚合（deliveryQty/confQty/invoiceQty）<br>' +
+      '&nbsp;&nbsp;• 出货箱数（5-6月）：从 history.shipmentCost（出货成本，金额）÷ 平均箱成本（元/箱）≈ 估算<br>' +
+      '&nbsp;&nbsp;• 库存数量（5/6 月）：从 cov5/cov6 availableQty 聚合 ÷ 平均箱规 换算<br>' +
+      '&nbsp;&nbsp;• 1-4 月库存数量暂无月度快照数据，只显示拉回/转储' +
       '</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">各RDC库存变动（按月简表 + 主因）</span></div>' +
+      '<div class="card-header"><span class="card-title">各RDC库存变动箱数（按月）</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr><th style="text-align:left">RDC</th>' +
-      monthAbbrev.map((m,i)=>'<th style="text-align:right">'+m+' 变动</th>').join('') +
+      monthAbbrev.map(m=>'<th style="text-align:right">'+m+'</th>').join('') +
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
     '</div>' +
 
     '<div class="card">' +
-      '<div class="card-header"><span class="card-title">库存变动明细（按RDC × 月份）</span></div>' +
+      '<div class="card-header"><span class="card-title">库存变动明细（5-6月，按RDC × 月份）— 单位：箱</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr>' +
       '<th style="text-align:left">RDC</th><th style="text-align:left">月份</th>' +
-      '<th style="text-align:right">月初库存</th><th style="text-align:right">出货</th>' +
-      '<th style="text-align:right">拉回</th><th style="text-align:right">转储入</th>' +
-      '<th style="text-align:right">月末库存</th><th style="text-align:right">净变动</th>' +
+      '<th style="text-align:right">库存变动</th><th style="text-align:right">拉回</th>' +
+      '<th style="text-align:right">转储入</th><th style="text-align:right">出货(估)</th>' +
+      '<th style="text-align:right">月末库存</th><th style="text-align:right">参考单价</th>' +
       '</tr></thead><tbody>' + detailRows + '</tbody></table></div>' +
     '</div>';
 }
