@@ -6265,25 +6265,68 @@ function parseInventoryExcel(rawData) {
 
     function parseCoverageSheet(arr) {
       const result = [];
+      if (!arr || arr.length < 3) return result;
+      // 动态定位列：按表头名称查找（5月 sheet 与 6月 sheet 列位置不同）
+      // 5月: col0=null/合并, col1=RDC, ..., col8=ABC分类, col9=海南花露水
+      // 6月: col0=RDC, ..., col8=海南花露水, col9=库存总数量
+      const header = arr[1] || [];
+      function colIdx(name) {
+        for (let i = 0; i < header.length; i++) {
+          const v = String(header[i] || '').trim();
+          if (v === name || v.indexOf(name) >= 0) return i;
+        }
+        return -1;
+      }
+      const C_RDC = colIdx('RDC');
+      const C_SKU = colIdx('产品编码');
+      const C_NAME = colIdx('产品名称');
+      const C_BRAND = colIdx('品牌');
+      const C_SUPPLY = colIdx('供应链属性');
+      const C_LIFE = colIdx('生命周期标签');
+      const C_FROZEN = colIdx('是否冻结（集团）');
+      const C_ABC = colIdx('ABC分类');
+      const C_HAINAN = colIdx('海南花露水');
+      const C_QTY = colIdx('库存总数量');
+      const C_TOTAL = colIdx('库存总金额');
+      const C_AVAIL = colIdx('可用库存');
+      const C_INTRANSIT = colIdx('在途库存');
+      // 未来需求: cov07..cov12 = 7-12 月（按列名匹配更稳健，5/6 月份不同）
+      const C_DEMAND = {};
+      ['2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'].forEach((n, i) => {
+        C_DEMAND['cov' + (i + 7).toString().padStart(2, '0')] = colIdx(n);
+      });
+      const C_COVERAGE = colIdx('库存覆盖月数') >= 0 ? colIdx('库存覆盖月数') : colIdx('库存覆盖');
+      const C_COV_LEVEL = colIdx('覆盖月数分类');
       for (let i = 2; i < arr.length; i++) {
         const r = arr[i];
-        if (!r || r.length < 31 || !r[0]) continue;
-        const covLabel = String(r[30] || '').trim(); // 覆盖月数分类 (col 31)
+        if (!r || r.length < 25) continue;
+        // 跳过表头行（数字列多于字符列的行）
+        if (typeof r[0] === 'string' && r[0].indexOf('RDC') >= 0) continue;
+        const rdcRaw = String(r[C_RDC>=0?C_RDC:0]||'').trim();
+        if (!rdcRaw) continue;
+        const covLabel = String(r[(C_COV_LEVEL>=0?C_COV_LEVEL:30)] || '').trim();
+        const qtyIdx = C_QTY>=0?C_QTY:9;
+        const totalIdx = C_TOTAL>=0?C_TOTAL:10;
         result.push({
-          rdc: mapRDCName(String(r[0]||'').trim()), sku: String(r[1]||'').trim(),
-          skuName: String(r[2]||'').trim(), brand: normalizeBrandName(String(r[3]||'').trim()),
-          supplyChainAttr: String(r[4]||'').trim(), lifecycle: String(r[5]||'').trim(),
-          abc: String(r[7]||'').trim(), isHainan: String(r[8]||'').trim() === '是',
-          availableQty: getSN(r,9), availQtyPlan: getSN(r,15),
-          // 源表「库存总金额」(col10) 全行为空 → 回退为该行 6 个金额拆分列之和（与饼图/趋势口径一致）
-          totalAmt: (getSN(r,10) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
-          inventoryAmt: (getSN(r,10) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
+          rdc: mapRDCName(rdcRaw), sku: String(r[C_SKU>=0?C_SKU:1]||'').trim(),
+          skuName: String(r[C_NAME>=0?C_NAME:2]||'').trim(), brand: normalizeBrandName(String(r[C_BRAND>=0?C_BRAND:3]||'').trim()),
+          supplyChainAttr: String(r[C_SUPPLY>=0?C_SUPPLY:4]||'').trim(), lifecycle: String(r[C_LIFE>=0?C_LIFE:5]||'').trim(),
+          abc: String(r[C_ABC>=0?C_ABC:7]||'').trim(),
+          isHainan: String(r[C_HAINAN>=0?C_HAINAN:9] || '').trim() === '是',
+          availableQty: getSN(r, qtyIdx),
+          availQtyPlan: getSN(r, 15),
+          // 源表「库存总金额」全行为空 → 回退为该行 6 个金额拆分列之和（与饼图/趋势口径一致）
+          totalAmt: (getSN(r, totalIdx) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
+          inventoryAmt: (getSN(r, totalIdx) || (getSN(r,17)+getSN(r,18)+getSN(r,19)+getSN(r,20)+getSN(r,21)+getSN(r,22))),
           staleAmt: getSN(r,17), expiredAmt: getSN(r,18),
           returnAmt: getSN(r,19), nearExpiryAmt: getSN(r,20), planAmt: getSN(r,21), inTransitAmt: getSN(r,22),
-          // 未来需求: col23-28 = 2026-07..2026-12; col29 = 库存覆盖月数(数字); col30 = 覆盖月数分类(字符串)
-          cov07: getSN(r,23), cov08: getSN(r,24), cov09: getSN(r,25),
-          cov10: getSN(r,26), cov11: getSN(r,27), cov12: getSN(r,28),
-          coverageMonths: getSN(r,29),
+          cov07: getSN(r, C_DEMAND.cov07>=0?C_DEMAND.cov07:23),
+          cov08: getSN(r, C_DEMAND.cov08>=0?C_DEMAND.cov08:24),
+          cov09: getSN(r, C_DEMAND.cov09>=0?C_DEMAND.cov09:25),
+          cov10: getSN(r, C_DEMAND.cov10>=0?C_DEMAND.cov10:26),
+          cov11: getSN(r, C_DEMAND.cov11>=0?C_DEMAND.cov11:27),
+          cov12: getSN(r, C_DEMAND.cov12>=0?C_DEMAND.cov12:28),
+          coverageMonths: getSN(r, C_COVERAGE>=0?C_COVERAGE:29),
           coverageLevel: covLabel
         });
       }
