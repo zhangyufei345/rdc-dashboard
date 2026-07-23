@@ -6590,107 +6590,42 @@ function renderInventoryStructure() {
   const summary6 = {}; statusLabels.forEach(s => summary6[s] = selectedStatus[s]?.['6月'] || 0);
   const summary5 = {}; statusLabels.forEach(s => summary5[s] = selectedStatus[s]?.['5月'] || 0);
 
-  // === 海南花露水筛选 × trend 数据源 ===
-  // 'all'：2-4 月从「总体情况」(全量)，5-6 月从 cov5/cov6 (排除海南花露水)
-  // 'yes'/'no'：2-4 月从「海南花露水历史数据」sheet 状态聚合，5-6 月从「库存状态分析」按 isHainan 过滤
-  const _hTrend = window._invHainan || 'all';
+  // Datasets: trend chart 始终排除海南花露水（不受海南花露水筛选影响）
+  const cov6NoHainan = (inv.cov6 || []).filter(d => (rdcFilter === 'all' || d.rdc === rdcFilter) && d.isHainan !== true);
+  const cov5NoHainan = (inv.cov5 || []).filter(d => (rdcFilter === 'all' || d.rdc === rdcFilter) && d.isHainan !== true);
 
-  // helper: 按 (rdcFilter, hainanFlag) 从 status5/status6 聚合状态金额（元→千元）
-  function aggregateStatusByHainan(srcArr, rdcF, hFlag) {
+  // 5-6月从库存覆盖数据直接聚合（与KPI/饼图同源，始终不含海南花露水）
+  function aggregateCovByStatus(arr) {
     const obj = {};
-    statusLabels.forEach(s => { obj[s] = 0; });
-    if (!srcArr) return obj;
-    srcArr.forEach(d => {
-      if (rdcF !== 'all' && d.rdc !== rdcF) return;
-      const isH = d.isHainan === true;
-      if (hFlag === 'yes' && !isH) return;
-      if (hFlag === 'no' && isH) return;
-      // 状态标准化：「可用库存」→「计划可用库存」（海南花露水历史数据中同义）
-      let s = d.status;
-      if (s === '可用库存') s = '计划可用库存';
-      if (statusLabels.indexOf(s) >= 0) obj[s] += d.amount || 0;
+    const amtFields = ['staleAmt', 'expiredAmt', 'nearExpiryAmt', 'returnAmt', 'planAmt', 'inTransitAmt'];
+    statusLabels.forEach((s, i) => { obj[s] = 0; });
+    arr.forEach(d => {
+      statusLabels.forEach((s, i) => { obj[s] += (d[amtFields[i]] || 0); });
     });
     return obj;
   }
-  // 5-6月来自 status5/status6 + isHainan 过滤
-  const st5ByHainan = aggregateStatusByHainan(inv.status5 || [], rdcFilter, _hTrend);
-  const st6ByHainan = aggregateStatusByHainan(inv.status6 || [], rdcFilter, _hTrend);
-  const trendStatus5 = {}; statusLabels.forEach(s => trendStatus5[s] = (st5ByHainan[s] || 0) / 1000);
-  const trendStatus6 = {}; statusLabels.forEach(s => trendStatus6[s] = (st6ByHainan[s] || 0) / 1000);
+  const cov6ByStatus = aggregateCovByStatus(cov6NoHainan);
+  const cov5ByStatus = aggregateCovByStatus(cov5NoHainan);
+  const trendStatus6 = {}; statusLabels.forEach(s => trendStatus6[s] = (cov6ByStatus[s] || 0) / 1000);
+  const trendStatus5 = {}; statusLabels.forEach(s => trendStatus5[s] = (cov5ByStatus[s] || 0) / 1000);
 
   // Build trend data: 2-4月 from per-RDC summary (元→千元), 5-6月 from filtered coverage data (已千元)
   const trendStatus = {};
-  if (_hTrend === 'all') {
-    // 原口径：2-4 月来自总体情况（全量），5-6 月来自 cov5/cov6 排除海南花露水
-    const cov6NoHainan = (inv.cov6 || []).filter(d => (rdcFilter === 'all' || d.rdc === rdcFilter) && d.isHainan !== true);
-    const cov5NoHainan = (inv.cov5 || []).filter(d => (rdcFilter === 'all' || d.rdc === rdcFilter) && d.isHainan !== true);
-    function aggregateCovByStatus(arr) {
-      const obj = {};
-      const amtFields = ['staleAmt', 'expiredAmt', 'nearExpiryAmt', 'returnAmt', 'planAmt', 'inTransitAmt'];
-      statusLabels.forEach((s, i) => { obj[s] = 0; });
-      arr.forEach(d => {
-        statusLabels.forEach((s, i) => { obj[s] += (d[amtFields[i]] || 0); });
-      });
-      return obj;
-    }
-    const cov6ByStatus = aggregateCovByStatus(cov6NoHainan);
-    const cov5ByStatus = aggregateCovByStatus(cov5NoHainan);
-    statusLabels.forEach(s => {
-      trendStatus5[s] = (cov5ByStatus[s] || 0) / 1000;
-      trendStatus6[s] = (cov6ByStatus[s] || 0) / 1000;
-    });
-    statusLabels.forEach(k => {
-      trendStatus[k] = {
-        '2月': (selectedStatus[k]?.['2月'] || 0) / 1000,
-        '3月': (selectedStatus[k]?.['3月'] || 0) / 1000,
-        '4月': (selectedStatus[k]?.['4月'] || 0) / 1000,
-        '5月': trendStatus5[k] || 0,
-        '6月': trendStatus6[k] || 0
-      };
-    });
-  } else {
-    // yes/no：2-4 月从「海南花露水历史数据」按 (年, 月, RDC, 状态) 聚合
-    //        5-6 月从 status5/status6 按 isHainan 过滤
-    const hhSt = inv.hainanHistoryStatus || {};
-    // 收集 rdcFilter 下所有 RDC 的海南花露水历史状态金额
-    const rdcList = rdcFilter === 'all' ? ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC','华东RDC'] : [rdcFilter];
-    const sumRdcYearMonth = (yearStr, month1based) => {
-      const obj = {};
-      statusLabels.forEach(s => { obj[s] = 0; });
-      rdcList.forEach(rdc => {
-        const r = hhSt[yearStr] && hhSt[yearStr][rdc];
-        if (!r) return;
-        const mi = month1based - 1;
-        const monthly = r[mi] || {};
-        statusLabels.forEach(s => {
-          obj[s] += monthly[s] || 0;
-        });
-      });
-      return obj;
+  statusLabels.forEach(k => {
+    trendStatus[k] = {
+      '2月': (selectedStatus[k]?.['2月'] || 0) / 1000,
+      '3月': (selectedStatus[k]?.['3月'] || 0) / 1000,
+      '4月': (selectedStatus[k]?.['4月'] || 0) / 1000,
+      '5月': trendStatus5[k] || 0,
+      '6月': trendStatus6[k] || 0
     };
-    // 历史「海南花露水历史数据」sheet 只到 2026-04，所以 2-4 月 = 2026-02..04
-    const map2 = sumRdcYearMonth('2026', 2);
-    const map3 = sumRdcYearMonth('2026', 3);
-    const map4 = sumRdcYearMonth('2026', 4);
-    statusLabels.forEach(k => {
-      trendStatus[k] = {
-        '2月': map2[k] / 1000,
-        '3月': map3[k] / 1000,
-        '4月': map4[k] / 1000,
-        '5月': trendStatus5[k] || 0,
-        '6月': trendStatus6[k] || 0
-      };
-    });
-  }
+  });
 
   const rdcLabel = rdcFilter === 'all' ? '全部RDC' : rdcFilter;
   const hainanLabel = hainanFilter === 'all' ? '全部' : hainanFilter === 'yes' ? '仅海南花露水' : '不含海南花露水';
   const filterCondition = rdcLabel + '，' + hainanLabel;
-  // trend 图副标题：跟随海南花露水筛选显示
-  let trendFilterCondition;
-  if (_hTrend === 'all') trendFilterCondition = rdcLabel + '，不含海南花露水';
-  else if (_hTrend === 'yes') trendFilterCondition = rdcLabel + '，仅海南花露水';
-  else trendFilterCondition = rdcLabel + '，不含海南花露水';
+  // trend 图副标题：固定「不含海南花露水」（不跟筛选）
+  const trendFilterCondition = rdcLabel + '，不含海南花露水';
   const kpiRdcLabel = rdcFilter === 'all' ? '全部RDC' : rdcFilter.replace('RDC','');
 
   page.innerHTML = `
