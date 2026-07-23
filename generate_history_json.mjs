@@ -141,6 +141,74 @@ function parseInventory2026(wb) {
   return { months: ['1月','2月','3月','4月','5月','6月'], turnoverDays, inventoryAmount, shipmentCost };
 }
 
+// ============ 4. 海南花露水历史数据 (2025-01~2026-04) ============
+// 数据源：inventory.xlsx 的「海南花露水历史数据」sheet
+// 列：日期 / RDC / 库存地点名称 / 产品名称 / 产品编码 / 库存金额_考核 / 库存数量 / 状态
+// 输出：按 (年, RDC) 聚合库存金额（千元），每月一个值；共 16 个月 (2025-01~2026-04)
+// Excel 日期序列号（1900 系统）→ Date
+function excelSerialToDate(serial) {
+  // Excel 1900-based: serial 1 = 1900-01-01, 但 Excel 假装 1900 是闰年，实际到 60 之后才一致
+  // 这里用标准转换：UTC 1899-12-30 + serial 天数
+  const ms = (Number(serial) - 25569) * 86400 * 1000;
+  return new Date(ms);
+}
+function parseHainanHistory(invWb) {
+  const sh = invWb.Sheets['海南花露水历史数据'];
+  if (!sh) return null;
+  const arr = XLSX.utils.sheet_to_json(sh, { header: 1, defval: null, raw: true });
+  // 月份 key → (年, RDC) → 金额合计(元)
+  const out = { '2025': {}, '2026': {} };
+  const monthKeys = [];
+  for (let i = 1; i < arr.length; i++) {
+    const r = arr[i];
+    if (!r) continue;
+    const date = r[0];
+    let dt = null;
+    if (date instanceof Date) dt = date;
+    else if (typeof date === 'number' && date > 1000) dt = excelSerialToDate(date);
+    if (!dt) continue;
+    const y = dt.getUTCFullYear();
+    const m = dt.getUTCMonth() + 1;
+    const monthKey = y + '-' + (m < 10 ? '0' : '') + m;
+    if (monthKeys.indexOf(monthKey) < 0) monthKeys.push(monthKey);
+    // RDC 推断：优先用 r[1] 标签列；为空则从 r[2] 库存地点名按关键字推断
+    let rdcLabel = r[1] != null ? String(r[1]).trim() : '';
+    if (!rdcLabel) {
+      const loc = r[2] != null ? String(r[2]) : '';
+      for (const kw of ['东北', '华北', '华南', '华东', '华中', '西北', '西南']) {
+        if (loc.indexOf(kw) >= 0) { rdcLabel = kw + '仓'; break; }
+      }
+      // 跳过"总仓/东莞RDC"等非目标库位（这些不是 RDC 月末库存口径）
+      if (!rdcLabel || rdcLabel === '总仓') continue;
+    }
+    if (rdcLabel.indexOf('总仓') >= 0) continue;
+    const rdcName = rdcLabel.replace('仓', 'RDC');
+    const amt = parseNum(r[5]) || 0;
+    if (!out[y]) out[y] = {};
+    if (!out[y][rdcName]) out[y][rdcName] = {};
+    out[y][rdcName][monthKey] = (out[y][rdcName][monthKey] || 0) + amt;
+  }
+  // 转换为按 12/4 个月的有序数组（元）
+  function toArr(monthDict, year) {
+    const endMonth = year === '2025' ? 12 : 4;
+    const rdcArr = {};
+    Object.keys(monthDict).forEach(function (rdcName) {
+      const arr = new Array(endMonth).fill(0);
+      Object.keys(monthDict[rdcName]).forEach(function (mk) {
+        const m = parseInt(mk.split('-')[1], 10) - 1;
+        if (m >= 0 && m < endMonth) arr[m] = monthDict[rdcName][mk];
+      });
+      rdcArr[rdcName] = arr.map(v => Math.round(v / 10) / 100); // 元→千元，保留两位小数
+    });
+    return rdcArr;
+  }
+  return {
+    months2025: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+    months2026: ['1月','2月','3月','4月'],
+    byRdc: { '2025': toArr(out['2025'], '2025'), '2026': toArr(out['2026'], '2026') }
+  };
+}
+
 // ============ 主流程 ============
 function main() {
   if (!fs.existsSync(SRC)) {
@@ -153,11 +221,23 @@ function main() {
   const inv2025 = parseInventory2025(wb);
   const inv2026 = parseInventory2026(wb);
 
+  // 额外读取 inventory.xlsx 中的「海南花露水历史数据」
+  let hainanHistory = null;
+  const invPath = path.join(ROOT, 'inventory.xlsx');
+  if (fs.existsSync(invPath)) {
+    const invWb = XLSX.read(fs.readFileSync(invPath), { type: 'array' });
+    hainanHistory = parseHainanHistory(invWb);
+    console.log('   海南花露水历史数据 已加载 (2025/2026按RDC聚合)');
+  } else {
+    console.log('   (未找到 inventory.xlsx，跳过海南花露水历史数据)');
+  }
+
   const history = {
     generatedAt: new Date().toISOString(),
     fulfillment,
     inventory: { '2025': inv2025, '2026': inv2026 }
   };
+  if (hainanHistory) history.hainanHistory = hainanHistory;
 
   fs.writeFileSync(path.join(ROOT, 'history.json'), JSON.stringify(history));
   console.log('   history.json 已生成');
@@ -165,6 +245,9 @@ function main() {
     const f = fulfillment[y];
     const inv = history.inventory[y];
     console.log(`   ${y}: 满足率RDC=${Object.keys(f.daily)} 库存金额RDC=${Object.keys(inv.inventoryAmount)} 出货成本RDC=${Object.keys(inv.shipmentCost)}`);
+  }
+  if (hainanHistory) {
+    console.log(`   海南花露水: 2025 RDC=${Object.keys(hainanHistory.byRdc['2025'])} 2026 RDC=${Object.keys(hainanHistory.byRdc['2026'])}`);
   }
 
   const manifestPath = path.join(ROOT, 'manifest.json');

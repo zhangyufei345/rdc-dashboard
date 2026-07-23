@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 8; // v8: 修复cov07..cov12列偏移bug(col23-28才是7-12月，col29是覆盖月数); 年末预测改为动态滚动模拟(60%准确率+14/19天覆盖)
+const DB_VERSION = 9; // v9: 库存周转/库存金额趋势/年末预测 新增「海南花露水」筛选；history.json 增 hainanHistory 字段
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -5142,22 +5142,28 @@ function renderInventoryTurnover() {
   const isAllSelected = rdcSel.isAll;
 
   // KPI cards - RDC totals (exclude 总部/总仓)
+  // 库存金额跟随 window._invHainan 筛选；出货/周转不跟随（无海南花露水维度）
   var rdcTotalInventory = 0, rdcTotalInventoryPrev = 0;
   var rdcTotalShipment = 0, rdcTotalShipmentPrev = 0;
-  selectedRdcs.forEach(function(rdc) {
-    var rdcName = rdc;
-    // Find inventory for this RDC
-    var invKeys = Object.keys(inv.inventoryByRdc);
-    for (var k = 0; k < invKeys.length; k++) {
-      if (invKeys[k].indexOf(rdc) >= 0 && invKeys[k].indexOf('总部') < 0 && invKeys[k].indexOf('共享') < 0) {
-        var vals = inv.inventoryByRdc[invKeys[k]];
-        if (vals) {
-          rdcTotalInventory += (vals[latestIdx] || 0);
-          rdcTotalInventoryPrev += (vals[prevIdx] || 0);
-        }
-        break;
+  var _invRdcKeys = Object.keys(inv.inventoryByRdc);
+  function _findInvBaseArr(rdc) {
+    for (var k = 0; k < _invRdcKeys.length; k++) {
+      if (_invRdcKeys[k].indexOf(rdc) >= 0 && _invRdcKeys[k].indexOf('总部') < 0 && _invRdcKeys[k].indexOf('共享') < 0) {
+        return inv.inventoryByRdc[_invRdcKeys[k]];
       }
     }
+    return null;
+  }
+  function _invAt(rdc, idx) {
+    // 按海南花露水筛选调整
+    var baseArr = _findInvBaseArr(rdc);
+    if (!baseArr) return 0;
+    if ((window._invHainan || 'all') === 'all') return baseArr[idx] || 0;
+    return getHainanAdjustedAmount('2026', rdc, idx);
+  }
+  selectedRdcs.forEach(function(rdc) {
+    rdcTotalInventory += _invAt(rdc, latestIdx);
+    rdcTotalInventoryPrev += _invAt(rdc, prevIdx);
     // Find shipment cost for this RDC
     var shipKeys = Object.keys(inv.shipmentCost);
     for (var k = 0; k < shipKeys.length; k++) {
@@ -5210,7 +5216,16 @@ function renderInventoryTurnover() {
       html += '<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">' +
         '<input type="checkbox" value="' + r + '" onchange="toggleInvRdc(\'' + r + '\', this.checked)" ' + checked + '> ' + r + '</label>';
     });
-    html += '</div></div>';
+    html += '</div>';
+    // 海南花露水筛选器（影响库存金额维度）
+    var hainanSel = window._invHainan || 'all';
+    html += '<label style="margin-left:12px;font-size:12px;color:var(--text-secondary)">海南花露水：</label>' +
+      '<select onchange="window._invHainan=this.value;renderInventoryTurnover()" style="min-width:100px;font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+        '<option value="all" ' + (hainanSel==='all'?'selected':'') + '>全部</option>' +
+        '<option value="yes" ' + (hainanSel==='yes'?'selected':'') + '>仅海南花露水</option>' +
+        '<option value="no" ' + (hainanSel==='no'?'selected':'') + '>不含海南花露水</option>' +
+      '</select>';
+    html += '</div>';
     return html;
   }
 
@@ -5264,7 +5279,14 @@ function renderInventoryTurnover() {
   function findInvArr(rdc) {
     for (var k = 0; k < invRdcKeys.length; k++) {
       if (invRdcKeys[k].indexOf(rdc) >= 0 && invRdcKeys[k].indexOf('总部') < 0 && invRdcKeys[k].indexOf('共享') < 0) {
-        return inv.inventoryByRdc[invRdcKeys[k]];
+        var baseArr = inv.inventoryByRdc[invRdcKeys[k]];
+        // 按海南花露水筛选：调整每个月的金额
+        var hainanFilter = window._invHainan || 'all';
+        if (hainanFilter === 'all') return baseArr;
+        // 2026 1-6 月（monthIdx 0-5）→ 调用 getHainanAdjustedAmount
+        var out = [];
+        for (var i = 0; i < baseArr.length; i++) out.push(getHainanAdjustedAmount('2026', rdc, i));
+        return out;
       }
     }
     return null;
@@ -5378,33 +5400,21 @@ function renderInventoryTurnover() {
   // ---- Table 2: Inventory & Shipment detail ----
   var table2Html = '<table class="data-table"><thead><tr><th>项目</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right">6月库占比</th></tr></thead><tbody>';
 
-  // Find 6月 inventory proportion (selected RDCs + 总仓)
+  // Find 6月 inventory proportion (selected RDCs + 总仓) - 库存金额跟随海南花露水筛选
   var total6mInv = 0;
   selectedRdcs.forEach(function(rdc) {
-    for (var k = 0; k < invRdcKeys.length; k++) {
-      if (invRdcKeys[k].indexOf(rdc) >= 0 && invRdcKeys[k].indexOf('总部') < 0 && invRdcKeys[k].indexOf('共享') < 0) {
-        total6mInv += getVal(inv.inventoryByRdc[invRdcKeys[k]], latestIdx);
-        break;
-      }
-    }
+    total6mInv += _invAt(rdc, latestIdx);
   });
   total6mInv += getVal(inv.inventoryByRdc['总仓'], latestIdx);
 
   // Inventory rows
   selectedRdcs.forEach(function(rdc) {
-    var found = false;
-    for (var k = 0; k < invRdcKeys.length; k++) {
-      if (invRdcKeys[k].indexOf(rdc) >= 0 && invRdcKeys[k].indexOf('总部') < 0 && invRdcKeys[k].indexOf('共享') < 0) {
-        var vals = inv.inventoryByRdc[invRdcKeys[k]];
-        if (vals) {
-          table2Html += '<tr><td>' + rdc + '</td>';
-          for (var i = 0; i < 6; i++) table2Html += '<td class="num">' + fmtNum(vals[i]) + '</td>';
-          var pct = total6mInv > 0 ? (getVal(vals, latestIdx) / total6mInv * 100).toFixed(1) : '0.0';
-          table2Html += '<td class="num">' + pct + '%</td></tr>';
-        }
-        found = true;
-        break;
-      }
+    var baseArr = _findInvBaseArr(rdc);
+    if (baseArr) {
+      table2Html += '<tr><td>' + rdc + '</td>';
+      for (var i = 0; i < 6; i++) table2Html += '<td class="num">' + fmtNum(_invAt(rdc, i)) + '</td>';
+      var pct = total6mInv > 0 ? (_invAt(rdc, latestIdx) / total6mInv * 100).toFixed(1) : '0.0';
+      table2Html += '<td class="num">' + pct + '%</td></tr>';
     }
   });
 
@@ -5476,20 +5486,31 @@ function renderInventoryForecast(page, tabBar) {
     return s;
   }
   const rdc7 = rdc6.concat(['华东RDC']); // 含华东（仅用于历史 actual 对齐）
-  const nat25 = months.map((_, i) => sumRdcs('2025', i, rdc7) / 100000);
-  const nat26A = months.slice(0,6).map((_, i) => sumRdcs('2026', i, rdc7) / 100000);
+  // 历史 actual 按 window._invHainan 筛选（2025 全年 + 2026 1-4月来自 hainanHistory；5-6月来自 cov6）
+  const _hFilter = window._invHainan || 'all';
+  function sumRdcsHainan(year, i, keys) {
+    if (_hFilter === 'all') return sumRdcs(year, i, keys);
+    let s = 0; keys.forEach(r => { s += getHainanAdjustedAmount(year, r, i); });
+    return s;
+  }
+  const nat25 = months.map((_, i) => sumRdcsHainan('2025', i, rdc7) / 100000);
+  const nat26A = months.slice(0,6).map((_, i) => sumRdcsHainan('2026', i, rdc7) / 100000);
   const twYuan = (sumRdcs('2026', 5, rdc6.concat(['总仓'])) - sumRdcs('2026', 5, rdc6)) * 1000; // 元
   const twYi = twYuan / 1e8;
 
   // === 2. 从 cov6 算单品成本 + 7-12月 需求(元) ===
   // 起始库存：只算"可出货" = 计划可用库存(planAmt) + 在途库存(inTransitAmt)
   //   不含 残次/过期/退货/近效期（这些不能用于正常出货）
+  // 按 window._invHainan 筛选：'yes' 只算 isHainan=true 的 SKU；'no' 跳过；'all' 不筛
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
   const demandYuan = {}; rdc6.forEach(r => demandYuan[r] = [0,0,0,0,0,0]);
   const startInvRdcYuan = {}; rdc6.forEach(r => startInvRdcYuan[r] = 0);
   let skuCount = 0;
   cov6.forEach(d => {
     if (rdc6.indexOf(d.rdc) < 0) return;
+    // 海南花露水筛选
+    if (_hFilter === 'yes' && d.isHainan !== true) return;
+    if (_hFilter === 'no' && d.isHainan === true) return;
     const qty = d.availableQty || 0, amt = d.totalAmt || 0;
     if (qty <= 0 || amt <= 0) return;
     const unitCost = amt / qty; skuCount++;
@@ -5576,6 +5597,15 @@ function renderInventoryForecast(page, tabBar) {
       '</div>' +
       '<div id="fc-params-body" style="display:none;padding:6px 0">' +
         '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">修改后自动刷新推演结果</div>' +
+        '<div style="margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+          '<label style="font-size:12px;color:var(--text-secondary)">海南花露水：</label>' +
+          '<select onchange="window._invHainan=this.value;reRenderForecast()" style="min-width:100px;font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+            '<option value="all" ' + ((window._invHainan||"all")==="all"?"selected":"") + '>全部</option>' +
+            '<option value="yes" ' + ((window._invHainan||"")==="yes"?"selected":"") + '>仅海南花露水</option>' +
+            '<option value="no" ' + ((window._invHainan||"")==="no"?"selected":"") + '>不含海南花露水</option>' +
+          '</select>' +
+          '<span style="font-size:11px;color:var(--text-secondary);margin-left:8px">影响 H1 历史 actual / 起始可出货库存 / H2 需求；周转天数/出货成本不跟随</span>' +
+        '</div>' +
         '<table class="data-table" style="margin-bottom:6px">' +
           '<thead><tr><th>RDC</th><th>覆盖天数</th></tr></thead><tbody>' +
           rdc6.map(function(r){return '<tr><td style="font-weight:600">'+r+'</td><td><input type="number" min="7" max="60" value="'+CP[r]+'" style="width:60px;padding:3px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px" onchange="window._forecastParams.coverageDays[\''+r+'\']=Number(this.value);reRenderForecast()"></td></tr>';}).join('') +
@@ -5659,6 +5689,35 @@ function reRenderForecast() {
   if (ctx && ctx.page && ctx.tabBar) renderInventoryForecast(ctx.page, ctx.tabBar);
 }
 
+// === 海南花露水筛选器：库存金额维度 ===
+// 根据 window._invHainan('all'/'yes'/'no') + 年份 + 月份索引，返回调整后的库存金额(千元)。
+// 数据源策略：
+//   2025 全年 + 2026 1-4 月  ← history.hainanHistory.byRdc（来自「海南花露水历史数据」sheet）
+//   2026 5-6 月              ← inventory.cov6 中 isHainan===true 的 totalAmt 之和
+// 注意：周转天数/共享库/出货成本不跟随此筛选（无海南花露水维度数据）。
+function getHainanAdjustedAmount(year, rdc, monthIdx) {
+  const hainanFilter = window._invHainan || 'all';
+  const baseArr = dataStore.history && dataStore.history.inventory
+    && dataStore.history.inventory[year]
+    && dataStore.history.inventory[year].inventoryAmount[rdc];
+  const baseAll = (baseArr && baseArr.length > monthIdx) ? (baseArr[monthIdx] || 0) : 0;
+  if (hainanFilter === 'all') return baseAll;
+  let hainanAmt = 0;
+  const hh = dataStore.history && dataStore.history.hainanHistory;
+  if (year === '2025' || (year === '2026' && monthIdx <= 3)) {
+    const arr = hh && hh.byRdc && hh.byRdc[year] && hh.byRdc[year][rdc];
+    hainanAmt = (arr && arr.length > monthIdx) ? (arr[monthIdx] || 0) : 0;
+  } else if (year === '2026' && (monthIdx === 4 || monthIdx === 5)) {
+    const cov = (dataStore.inventory && dataStore.inventory.cov6) || [];
+    cov.forEach(d => {
+      if (d.rdc !== rdc) return;
+      if (d.isHainan === true) hainanAmt += d.totalAmt || 0;
+    });
+    hainanAmt = Math.round(hainanAmt / 10) / 100; // 元→千元，保留两位
+  }
+  return hainanFilter === 'yes' ? hainanAmt : Math.max(0, baseAll - hainanAmt);
+}
+
 // 库存规模年度对比卡片（HTML 部分）
 function renderInventoryTurnoverHistory() {
   if (!dataStore.history || !dataStore.history.inventory) return '';
@@ -5683,15 +5742,23 @@ function renderInventoryTurnoverHistoryCharts() {
   const selectedRdcs = rdcSel.selected;
   const isAll = rdcSel.isAll;
   const rdcLabel = isAll ? '7大RDC合计' : (selectedRdcs.length > 3 ? selectedRdcs.length + '个RDC' : selectedRdcs.join('、'));
+  const hainanFilter = window._invHainan || 'all';
+  const hainanSuffix = hainanFilter === 'yes' ? '·仅海南花露水' : hainanFilter === 'no' ? '·不含海南花露水' : '';
 
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
 
   function valOrNull(map, k, i) { const arr = map && map[k]; return (arr && arr.length > i) ? arr[i] : null; }
   const EXCLUDE_KEYS = ['总仓'];
   function sumSelected(map, i) { let s = 0; selectedRdcs.forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
+  function sumSelectedHainan(year, i) {
+    if (hainanFilter === 'all') return sumSelected(INV[year].inventoryAmount, i);
+    let s = 0;
+    selectedRdcs.forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; s += getHainanAdjustedAmount(year, k, i); });
+    return s;
+  }
 
-  const amt25 = months12.map((_, i) => sumSelected(INV['2025'].inventoryAmount, i));
-  const amt26 = months12.map((_, i) => (i < 6 ? sumSelected(INV['2026'].inventoryAmount, i) : null));
+  const amt25 = months12.map((_, i) => sumSelectedHainan('2025', i));
+  const amt26 = months12.map((_, i) => (i < 6 ? sumSelectedHainan('2026', i) : null));
   const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
   const ship26 = months12.map((_, i) => (i < 6 ? sumSelected(INV['2026'].shipmentCost, i) : null));
 
@@ -5732,7 +5799,7 @@ function renderInventoryTurnoverHistoryCharts() {
       ]
     });
   }
-  lineChart('chart-inv-history-amount', '2025' + rdcLabel + '库存', '2026' + rdcLabel + '库存', amt25, amt26);
+  lineChart('chart-inv-history-amount', '2025' + rdcLabel + '库存' + hainanSuffix, '2026' + rdcLabel + '库存' + hainanSuffix, amt25, amt26);
   lineChart('chart-inv-history-ship', '2025' + rdcLabel + '出货成本', '2026' + rdcLabel + '出货成本', ship25, ship26);
 }
 
