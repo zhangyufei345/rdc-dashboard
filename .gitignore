@@ -22,3 +22,8 @@ Thumbs.db
 
 # 残留的 Windows 保留设备名文件（不可通过 Win32 删除，忽略之，不影响看板）
 nul
+
+# 临时备份/一次性生成物（不入库，避免误提交）
+_backup/
+inventory_backup_*.xlsx
+inventory_2026_forecast.html
