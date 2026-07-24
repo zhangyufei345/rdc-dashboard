@@ -4290,9 +4290,6 @@ function renderPullbackAnalysis(page) {
   // 销毁旧实例（避免重复 init 导致 ECharts PagePopupController 句柄泄漏报错）
   (window._pullChartInstances||[]).forEach(function(c){ try{c.dispose();}catch(e){} });
   window._pullChartInstances = [];
-  var hSel=window._pullHainan, suf='';
-  if(hSel==='yes') suf='·仅花露水'; else if(hSel==='no') suf='·不含花露水';
-  var tc=lbArr.length-1;
   // 销毁旧实例（避免重复 init 导致 ECharts PagePopupController 句柄泄漏报错）
   (window._pullChartInstances||[]).forEach(function(c){ try{c.dispose();}catch(e){} });
   window._pullChartInstances = [];
