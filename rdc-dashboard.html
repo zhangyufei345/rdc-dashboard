@@ -4191,45 +4191,85 @@ function renderTransTable() {
 
 // ========== 拉回分析 ==========
 function renderPullbackAnalysis(page) {
-  var lbArr = (dataStore.inventory && dataStore.inventory.pullbackRaw) || [];
-  if (lbArr.length === 0) {
+  // 拉回数据 raw sheet（从 dataStore.inventory.pullbackRaw 取）
+  var invRaw = (dataStore.inventory && dataStore.inventory.pullbackRaw) || [];
+  if (invRaw.length < 2) {
     page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab='+"'transship';renderTransship()"+'">📦 转储数据分析</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab='+"'pullback';renderTransship()"+'">🔙 拉回数据分析</button></div><div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg)">暂无原始拉回数据</div></div>';
     return;
   }
-  var inv = dataStore.inventory, pm = inv.productMaster||{};
-  // 直接从原始 sheet 构建 花露水 SKU 集合（绕开 parseCoverageSheet 的 isHainan 字段缓存问题）
-  var rawSheets = window.__rawInventorySheets || (window.__rawInventorySheets = inv._rawSheets || {});
+  // 列定义（基于实际数据）：
+  // col0=创建日期, col1=收货库位, col2=收货仓, col3=物料(SKU), col4=短文本(名称),
+  // col5=发货单数量, col6=单位, col7=发货RDC, col8=品牌
+  // arr[0]=表头, arr[1..]=数据
+  // 构建花露水 SKU 集合（来自 6月库存覆盖数据 sheet，col8='海南花露水'='是'）
+  var hnMap = {};
+  var inv = dataStore.inventory || {};
+  var rawSheets = window.__rawInventorySheets || inv._rawSheets || {};
   var cov6Raw = rawSheets['6月库存覆盖数据'];
-  var hnMap = {}, bm = {};
   if (cov6Raw && cov6Raw.length > 2) {
     for (var ri = 2; ri < cov6Raw.length; ri++) {
       var rr = cov6Raw[ri]; if (!rr || !rr[1]) continue;
-      // 6月库存覆盖: col8='海南花露水', col1=SKU, col3='品牌'
-      var _sku = String(rr[1]).trim();
-      if (String(rr[8]||'').trim() === '是') hnMap[_sku] = true;
-      if (!bm[_sku] && rr[3]) bm[_sku] = String(rr[3]).trim();
+      if (String(rr[8]||'').trim() === '是') hnMap[String(rr[1]).trim()] = true;
     }
   }
-  // 兜底：产品名称含'花露水'也视为花露水
+  // 判断花露水：SKU 在 hnMap 中 或 名称含"花露水"
   function isHN(sku, name){ return !!(hnMap[sku] || (name||'').indexOf('花露水')>=0); }
-  if (typeof window._pullHainan==='undefined') window._pullHainan='all';
-  function normRdc(n){ return (n||'').trim().replace('仓','RDC'); }
-  function spec(s){ var m=pm[s]; return (m&&m.spec>0)?m.spec:30; }
-  function box(q,u,s){ return u==='箱'?q:Math.ceil(q/spec(s)); }
-  var agg={};
-  for(var i=1;i<lbArr.length;i++){
-    var r=lbArr[i]; if(!r||!r[0]) continue;
-    var dt=(typeof r[0]==='number'&&r[0]>1000)?new Date((r[0]-25569)*86400*1000):null;
-    if(!dt) continue;
-    var ym=(dt.getUTCFullYear())+'-'+((dt.getUTCMonth()+1)+'').padStart(2,'0');
-    var rd=normRdc(r[7]||''), sk=String(r[3]||'').trim(), nm=String(r[4]||'').trim();
-    var br=bm[sk]||'未知', un=String(r[6]||'').trim(), q0=Number(r[5])||0;
-    var hf=window._pullHainan;
-    if((hf==='yes'&&!isHN(sk,nm))||(hf==='no'&&isHN(sk,nm))) continue;
-    var bx=box(q0,un,sk); if(bx<=0) continue;
-    var rw=String(r[2]||'').trim(), rl=String(r[1]||'').trim();
-    var ks={ monthRdc:ym+'|'+rd, monthBrand:ym+'|'+br, monthRdcBrand:ym+'|'+rd+'|'+br, monthRdcRec:ym+'|'+rd+'|'+rw, brand:br, month:ym, rdc:rd };
-    Object.keys(ks).forEach(function(k){ if(!agg[k])agg[k]={}; var key=ks[k]; if(!agg[k][key])agg[k][key]=0; agg[k][key]+=bx; });
+  if (typeof window._pullHainan === 'undefined') window._pullHainan = 'all';
+  // 单位→箱数转换（向上取整；col6=单位「箱/个」）
+  var pm = inv.productMaster || {};
+  function getSpec(sku) {
+    var m = pm[sku];
+    return (m && m.spec > 0) ? m.spec : 30; // 默认 30 个/箱
+  }
+  function toBox(qty, unit, sku) {
+    if (unit === '箱') return qty;
+    return Math.ceil(qty / getSpec(sku));
+  }
+  // 聚合（带过滤）
+  var hf = window._pullHainan;
+  var agg = {};
+  var allSKU = new Set();
+  var totalCount = invRaw.length - 1; // 减去表头
+  for (var i = 1; i < invRaw.length; i++) {
+    var r = invRaw[i]; if (!r || !r[0]) continue;
+    var dt0 = r[0];
+    var dt = (typeof dt0 === 'number' && dt0 > 1000) ? new Date((dt0 - 25569) * 86400 * 1000) : null;
+    if (!dt) continue;
+    var ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth()+1).toString().padStart(2,'0');
+    var rd = String(r[7]||'').trim().replace('仓','RDC');
+    var sk = String(r[3]||'').trim();
+    var nm = String(r[4]||'').trim();
+    var br = String(r[8]||'').trim() || '未知'; // 品牌直接从拉回数据 col8 取
+    var un = String(r[6]||'').trim();
+    var q0 = Number(r[5]) || 0;
+    // 过滤
+    if (hf === 'yes' && !isHN(sk, nm)) continue;
+    if (hf === 'no'  &&  isHN(sk, nm)) continue;
+    var bx = toBox(q0, un, sk); if (bx <= 0) continue;
+    if (hf !== 'no') allSKU.add(sk);
+    var rw = String(r[2]||'').trim();
+    var ks = {
+      monthRdc: ym + '|' + rd,
+      monthBrand: ym + '|' + br,
+      monthRdcBrand: ym + '|' + rd + '|' + br,
+      monthRdcRec: ym + '|' + rd + '|' + rw,
+      brand: br,
+      month: ym,
+      rdc: rd
+    };
+    Object.keys(ks).forEach(function(k){
+      if (!agg[k]) agg[k] = {};
+      var key = ks[k];
+      if (!agg[k][key]) agg[k][key] = 0;
+      agg[k][key] += bx;
+    });
+  }
+  // SKU 集合（'no' 过滤模式需要重新遍历不过滤的 SKU）
+  if (hf === 'no') {
+    for (var j = 1; j < invRaw.length; j++) {
+      var ro = invRaw[j]; if (!ro || !ro[3]) continue;
+      allSKU.add(String(ro[3]).trim());
+    }
   }
   var allMths=Object.keys(agg.month||{}).sort();
   var byMthRdc=Object.entries(agg.monthRdc||{}).sort(function(a,b){ return a[0].localeCompare(b[0]); });
@@ -4244,12 +4284,12 @@ function renderPullbackAnalysis(page) {
   });
   var sRec=Object.entries(recM).sort(function(a,b){return b[1]-a[1];});
   var totBx=Object.values(rdcTot).reduce(function(s,v){return s+v;},0);
-  var allSKU=new Set();
-  for(var ix=1;ix<lbArr.length;ix++){
-    var ro=lbArr[ix]; if(!ro||!ro[3]) continue;
-    var ski=String(ro[3]), nami=String(ro[4]||''), hf2=window._pullHainan;
-    if(hf2==='all'||(hf2==='yes'&&isHN(ski,nami))||(hf2==='no'&&!isHN(ski,nami))) allSKU.add(ski);
-  }
+  var hSel=hf, suf='';
+  if(hSel==='yes') suf='·仅花露水'; else if(hSel==='no') suf='·不含花露水';
+  var tc=totalCount;
+  // 销毁旧实例（避免重复 init 导致 ECharts PagePopupController 句柄泄漏报错）
+  (window._pullChartInstances||[]).forEach(function(c){ try{c.dispose();}catch(e){} });
+  window._pullChartInstances = [];
   var hSel=window._pullHainan, suf='';
   if(hSel==='yes') suf='·仅花露水'; else if(hSel==='no') suf='·不含花露水';
   var tc=lbArr.length-1;
