@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 11; // v11: 修复 _rawSheets 未保存导致拉回分析 hnMap 为空；重写 renderPullbackAnalysis 筛选联动
+const DB_VERSION = 12; // v12: 拉回分析新增金额统计（基础数据成本价，箱单位×箱规+4月华东仓筛选）；转储数据解析改为表头寻列兼容新模板
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -4195,6 +4195,16 @@ function setPullHainanFilter(val) {
   var p = document.getElementById('page-transship');
   if (p) renderPullbackAnalysis(p);
 }
+function setPullMarFilter(val) {
+  window._pullMar = String(val || 'include').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
+function setPullViewMode(val) {
+  window._pullView = String(val || 'box').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
 
 function renderPullbackAnalysis(page) {
   // 1. 取原始拉回数据
@@ -4219,14 +4229,27 @@ function renderPullbackAnalysis(page) {
 
   // 3. 筛选状态
   if (typeof window._pullHainan === 'undefined') window._pullHainan = 'all';
+  if (typeof window._pullMar === 'undefined') window._pullMar = 'include';
+  if (typeof window._pullView === 'undefined') window._pullView = 'box';
   var hf = String(window._pullHainan).trim();
+  var mf = String(window._pullMar).trim();   // include / exclude
+  var vm = String(window._pullView).trim();   // box / amt
 
-  // 4. 单位→箱转换
+  // 4. 单位→箱转换 & 金额计算
   var pm = inv.productMaster || {};
   function getSpec(sku) { var m = pm[sku]; return (m && m.spec > 0) ? m.spec : 30; }
   function toBox(qty, unit, sku) { if (unit === '箱') return qty; return Math.ceil(qty / getSpec(sku)); }
+  function toAmt(qty, unit, sku) {
+    var m = pm[sku];
+    var cost = m && m.cost > 0 ? m.cost : 0;
+    var spec = m && m.spec > 0 ? m.spec : 1;
+    // 金额 = 件数 × 成本价(元/基本单位)
+    // 若单位是'箱'：箱数 × 箱规 × 成本价；若单位是'个'：个数 × 成本价
+    return unit === '箱' ? qty * spec * cost : qty * cost;
+  }
 
-  // 5. 按各维度聚合（过滤后）
+  // 5. 按各维度聚合（过滤后），同时累计 箱数 和 金额
+  // 聚合项 key -> {box, amt}
   var agg = { month: {}, monthRdc: {}, monthBrand: {}, monthRdcBrand: {}, monthRdcRec: {}, brand: {}, rdc: {}, rec: {} };
   var filteredSKU = new Set();
   var filteredRows = 0;
@@ -4247,34 +4270,47 @@ function renderPullbackAnalysis(page) {
     var q0 = Number(r[5]) || 0;
     var rw = String(r[2] || '').trim() || '未知';
 
+    // 筛选：海南花露水
     if (hf === 'yes' && !isHN(sk, nm)) continue;
     if (hf === 'no' && isHN(sk, nm)) continue;
+    // 筛选：4月华东仓返回数据
+    if (mf === 'exclude' && rd === '华东RDC' && dt.getUTCMonth() === 3 && dt.getUTCFullYear() === 2026) continue;
 
     var bx = toBox(q0, un, sk); if (bx <= 0) continue;
+    var am = toAmt(q0, un, sk);
     filteredRows++;
     filteredSKU.add(sk);
 
-    var add = function(k, key, val) { agg[k][key] = (agg[k][key] || 0) + val; };
-    add('month', ym, bx);
-    add('monthRdc', ym + '|' + rd, bx);
-    add('monthBrand', ym + '|' + br, bx);
-    add('monthRdcBrand', ym + '|' + rd + '|' + br, bx);
-    add('monthRdcRec', ym + '|' + rd + '|' + rw, bx);
-    add('brand', br, bx);
-    add('rdc', rd, bx);
-    add('rec', rw, bx);
+    var add = function(k, key, b, a) {
+      if (!agg[k][key]) agg[k][key] = { box: 0, amt: 0 };
+      agg[k][key].box += b;
+      agg[k][key].amt += a;
+    };
+    add('month', ym, bx, am);
+    add('monthRdc', ym + '|' + rd, bx, am);
+    add('monthBrand', ym + '|' + br, bx, am);
+    add('monthRdcBrand', ym + '|' + rd + '|' + br, bx, am);
+    add('monthRdcRec', ym + '|' + rd + '|' + rw, bx, am);
+    add('brand', br, bx, am);
+    add('rdc', rd, bx, am);
+    add('rec', rw, bx, am);
   }
 
-  // 6. 排序/汇总
+  // 6. 排序/汇总（按当前 view 取对应维度）
+  function valOf(o) { return vm === 'amt' ? o.amt : o.box; }
   var allMths = Object.keys(agg.month).sort();
-  var rdcTot = agg.rdc;
-  var sRdc = Object.entries(rdcTot).sort(function(a, b) { return b[1] - a[1]; });
-  var byBrand = Object.entries(agg.brand).sort(function(a, b) { return b[1] - a[1]; });
+  var sRdc = Object.entries(agg.rdc).map(function(e) { return [e[0], valOf(e[1])]; }).sort(function(a, b) { return b[1] - a[1]; });
+  var byBrand = Object.entries(agg.brand).map(function(e) { return [e[0], valOf(e[1])]; }).sort(function(a, b) { return b[1] - a[1]; });
   var tBr = byBrand.slice(0, 10).map(function(e) { return e[0]; });
-  var sRec = Object.entries(agg.rec).sort(function(a, b) { return b[1] - a[1]; });
+  var sRec = Object.entries(agg.rec).map(function(e) { return [e[0], valOf(e[1])]; }).sort(function(a, b) { return b[1] - a[1]; });
   var totBx = sRdc.reduce(function(s, e) { return s + e[1]; }, 0);
+  var totAmt = Object.values(agg.rdc).reduce(function(s, e) { return s + (e.amt || 0); }, 0);
   var suf = '';
-  if (hf === 'yes') suf = '·仅花露水'; else if (hf === 'no') suf = '·不含花露水';
+  if (hf === 'yes') suf += '·仅花露水';
+  else if (hf === 'no') suf += '·不含花露水';
+  if (mf === 'exclude') suf += '·剔除4月华东';
+  var unitLabel = vm === 'amt' ? '元' : '箱';
+  var fmtVal = function(v) { return vm === 'amt' ? (v / 10000).toFixed(1) + '万' : v.toLocaleString(); };
 
   // 7. 销毁旧 ECharts 实例
   if (window._pullChartInstances && window._pullChartInstances.length) {
@@ -4287,29 +4323,41 @@ function renderPullbackAnalysis(page) {
     var active = (window._transTab || 'transship') === t;
     return '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + (active ? 'background:var(--color-blue);color:#fff;' : '') + '" onclick="window._transTab=\'' + t + '\';renderTransship()">' + icon + ' ' + label + '</button>';
   };
+  var opt = function(cur, val) { return cur === val ? ' selected' : ''; };
   page.innerHTML =
     '<div style="display:flex;gap:8px;margin-bottom:16px">' + tabBtn('transship', '转储数据', '📦') + tabBtn('pullback', '拉回分析', '🔙') + '</div>' +
     '<div class="card" style="margin-bottom:16px">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">' +
         '<span style="font-size:var(--font-size-xl);font-weight:600">🔙 拉回数据分析</span>' +
-        '<span style="font-size:12px;color:var(--text-secondary)">箱（向上取整）</span>' +
+        '<span style="font-size:12px;color:var(--text-secondary)">' + (vm === 'amt' ? '金额（万元）' : '箱（向上取整）') + '</span>' +
         '<span style="flex:1"></span>' +
-        '<label style="font-size:12px;color:var(--text-secondary)">海南花露水：</label>' +
-        '<select id="pull-hainan-select" onchange="setPullHainanFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
-          '<option value="all"' + (hf === 'all' ? ' selected' : '') + '>全部</option>' +
-          '<option value="yes"' + (hf === 'yes' ? ' selected' : '') + '>仅花露水</option>' +
-          '<option value="no"' + (hf === 'no' ? ' selected' : '') + '>不含花露水</option>' +
+        '<label style="font-size:12px;color:var(--text-secondary)">统计口径：</label>' +
+        '<select onchange="setPullViewMode(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="box"' + opt(vm, 'box') + '>箱数</option>' +
+          '<option value="amt"' + opt(vm, 'amt') + '>金额（按基础数据成本价）</option>' +
+        '</select>' +
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">海南花露水：</label>' +
+        '<select onchange="setPullHainanFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="all"' + opt(hf, 'all') + '>全部</option>' +
+          '<option value="yes"' + opt(hf, 'yes') + '>仅花露水</option>' +
+          '<option value="no"' + opt(hf, 'no') + '>不含花露水</option>' +
+        '</select>' +
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">4月华东仓：</label>' +
+        '<select onchange="setPullMarFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="include"' + opt(mf, 'include') + '>包含</option>' +
+          '<option value="exclude"' + opt(mf, 'exclude') + '>剔除</option>' +
         '</select>' +
       '</div>' +
-      '<div style="font-size:12px;color:var(--text-secondary)">' + totalRows + ' 条原始记录｜本次聚合 ' + filteredRows + ' 条｜箱规：基础数据sheet</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary)">' + totalRows + ' 条原始记录｜本次聚合 ' + filteredRows + ' 条｜箱规/成本价：基础数据sheet</div>' +
     '</div>' +
     '<div class="kpi-row" style="margin-bottom:16px">' +
-      '<div class="kpi-card blue"><div class="kpi-label">总拉回箱数' + suf + '</div><div class="kpi-value">' + totBx.toLocaleString() + '<span class="kpi-unit">箱</span></div></div>' +
+      '<div class="kpi-card blue"><div class="kpi-label">总拉回' + (vm === 'amt' ? '金额' : '箱数') + suf + '</div><div class="kpi-value">' + (vm === 'amt' ? (totAmt / 10000).toFixed(1) : totBx.toLocaleString()) + '<span class="kpi-unit">' + (vm === 'amt' ? '万元' : '箱') + '</span></div></div>' +
+      '<div class="kpi-card green"><div class="kpi-label">总拉回金额（参考）' + suf + '</div><div class="kpi-value">' + (totAmt / 10000).toFixed(1) + '<span class="kpi-unit">万元</span></div></div>' +
       '<div class="kpi-card purple"><div class="kpi-label">发货RDC' + suf + '</div><div class="kpi-value">' + sRdc.length + '<span class="kpi-unit">个</span></div></div>' +
       '<div class="kpi-card orange"><div class="kpi-label">SKU' + suf + '</div><div class="kpi-value">' + filteredSKU.size + '<span class="kpi-unit">个</span></div></div>' +
     '</div>' +
     '<div class="row-2" style="margin-bottom:16px">' +
-      '<div class="card"><div class="card-header"><span class="card-title">📤 各RDC拉回箱数' + suf + '</span></div><div class="chart-container" style="height:280px" id="chart-pull-rdc"></div></div>' +
+      '<div class="card"><div class="card-header"><span class="card-title">📤 各RDC拉回' + unitLabel + suf + '</span></div><div class="chart-container" style="height:280px" id="chart-pull-rdc"></div></div>' +
       '<div class="card"><div class="card-header"><span class="card-title">📈 月度拉回趋势' + suf + '</span></div><div class="chart-container" style="height:280px" id="chart-pull-trend"></div></div>' +
     '</div>' +
     '<div class="row-2" style="margin-bottom:16px">' +
@@ -4317,20 +4365,23 @@ function renderPullbackAnalysis(page) {
       '<div class="card"><div class="card-header"><span class="card-title">🏷️ 品牌TOP10' + suf + '</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand"></div></div>' +
     '</div>' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓' + suf + '</span></div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th></tr></thead><tbody>' +
-      sRec.map(function(e) { return '<tr><td style="text-align:left">' + e[0] + '</td><td style="text-align:right">' + e[1].toLocaleString() + '</td></tr>'; }).join('') +
-      (sRec.length === 0 ? '<tr><td colspan="2" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
+      '<div class="table-wrap"><table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
+      Object.entries(agg.rec).map(function(e) { return { name: e[0], box: e[1].box, amt: e[1].amt }; }).sort(function(a, b) { return valOf(b) - valOf(a); }).map(function(r) {
+        return '<tr><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
+      }).join('') +
+      (Object.keys(agg.rec).length === 0 ? '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
       '</tbody></table></div></div>';
 
   // 9. 绘制图表
   var pc = ['#2f6fed', '#7b4df6', '#06B6D4', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899'];
   function pushChart(c) { if (c) window._pullChartInstances.push(c); }
+  function numFmt(v) { return vm === 'amt' ? Math.round(v / 10000).toLocaleString() + '万' : v.toLocaleString(); }
 
   var mths = allMths.length ? allMths : ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'];
 
   var c1 = echarts.init(document.getElementById('chart-pull-rdc'));
   c1 && c1.setOption({
-    tooltip: { trigger: 'item', formatter: '{b}<br/>拉回：{c}箱 ({d}%)' },
+    tooltip: { trigger: 'item', formatter: function(p) { return p.name + '<br/>拉回：' + numFmt(p.value) + unitLabel + ' (' + p.percent + '%)'; }},
     series: [{
       type: 'pie', radius: ['20%', '60%'], center: ['50%', '55%'],
       data: sRdc.map(function(e, i) { return { name: e[0], value: e[1], itemStyle: { color: pc[i % pc.length] } }; }),
@@ -4343,17 +4394,17 @@ function renderPullbackAnalysis(page) {
   c2 && c2.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(p) {
       var h = '<b>' + p[0].axisValue + '</b>', to = 0;
-      p.forEach(function(s) { if (s.value > 0) { h += '<br/>' + s.marker + s.seriesName + '：' + s.value.toLocaleString() + '箱'; to += s.value; } });
-      h += '<br/><b>合计：' + to.toLocaleString() + '箱</b>'; return h;
+      p.forEach(function(s) { if (s.value > 0) { h += '<br/>' + s.marker + s.seriesName + '：' + numFmt(s.value) + unitLabel; to += s.value; } });
+      h += '<br/><b>合计：' + numFmt(to) + unitLabel + '</b>'; return h;
     }},
     legend: { data: sRdc.map(function(e) { return e[0]; }), top: 0, textStyle: { fontSize: 10 }, type: 'scroll' },
     grid: { left: 50, right: 16, top: 50, bottom: 30 },
     xAxis: { type: 'category', data: mths, axisLabel: { fontSize: 10 } },
-    yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+    yAxis: { type: 'value', name: unitLabel, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9, formatter: function(v) { return numFmt(v); } } },
     series: sRdc.map(function(e, i) { return {
       name: e[0], type: 'bar', stack: 'total', barMaxWidth: 28,
       itemStyle: { color: pc[i % pc.length] },
-      data: mths.map(function(m) { return agg.monthRdc[m + '|' + e[0]] || 0; })
+      data: mths.map(function(m) { return valOf(agg.monthRdc[m + '|' + e[0]] || { box: 0, amt: 0 }); })
     }; })
   }, true);
   pushChart(c2);
@@ -4364,17 +4415,20 @@ function renderPullbackAnalysis(page) {
     c3 && c3.setOption({
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(p) {
         var h = '<b>' + p[0].axisValue + '</b>';
-        p.forEach(function(s) { if (s.value > 0) h += '<br/>' + s.marker + s.seriesName + '：' + s.value.toLocaleString() + '箱'; });
+        p.forEach(function(s) { if (s.value > 0) h += '<br/>' + s.marker + s.seriesName + '：' + numFmt(s.value) + unitLabel; });
         return h;
       }},
       legend: { data: tBr.map(function(b) { return b.length > 12 ? b.slice(0, 12) + '..' : b; }), top: 0, textStyle: { fontSize: 10 }, type: 'scroll' },
       grid: { left: 50, right: 16, top: 50, bottom: 30 },
       xAxis: { type: 'category', data: sRdc.map(function(e) { return e[0]; }), axisLabel: { fontSize: 10, rotate: 15 } },
-      yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+      yAxis: { type: 'value', name: unitLabel, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9, formatter: function(v) { return numFmt(v); } } },
       series: tBr.map(function(b, i) {
         var su = {};
         allMths.forEach(function(mm) {
-          sRdc.forEach(function(e) { su[e[0]] = (su[e[0]] || 0) + (agg.monthRdcBrand[mm + '|' + e[0] + '|' + b] || 0); });
+          sRdc.forEach(function(e) {
+            var v = valOf(agg.monthRdcBrand[mm + '|' + e[0] + '|' + b] || { box: 0, amt: 0 });
+            su[e[0]] = (su[e[0]] || 0) + v;
+          });
         });
         var shortName = b.length > 12 ? b.slice(0, 12) + '..' : b;
         return { name: shortName, type: 'bar', stack: 'total', barMaxWidth: 30, itemStyle: { color: pc[i % pc.length] }, data: sRdc.map(function(e) { return su[e[0]] || 0; }) };
@@ -4385,10 +4439,10 @@ function renderPullbackAnalysis(page) {
 
   var c4 = echarts.init(document.getElementById('chart-pull-brand'));
   c4 && c4.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(p) { return '<b>' + p[0].name + '</b><br/>拉回：' + p[0].value.toLocaleString() + '箱'; }},
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(p) { return '<b>' + p[0].name + '</b><br/>拉回：' + numFmt(p[0].value) + unitLabel; }},
     grid: { left: 80, right: 24, top: 16, bottom: 60 },
     xAxis: { type: 'category', data: byBrand.slice(0, 10).map(function(e) { return e[0].length > 10 ? e[0].slice(0, 10) + '..' : e[0]; }), axisLabel: { fontSize: 10, rotate: 30 } },
-    yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+    yAxis: { type: 'value', name: unitLabel, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9, formatter: function(v) { return numFmt(v); } } },
     series: [{ type: 'bar', barMaxWidth: 28, itemStyle: { color: function(p) { return pc[p.dataIndex % pc.length]; } }, data: byBrand.slice(0, 10).map(function(e) { return e[1]; }) }]
   }, true);
   pushChart(c4);
@@ -6636,14 +6690,45 @@ function parseInventoryExcel(rawData) {
     // 转储数据（现位于库存文件，按名称查找；与 parseExcel 中逻辑一致）
     const transArr = findByName('转储');
     if (transArr) {
+      // 按表头名称动态定位列（兼容新旧桌面模板的 OUn 列数差异）
+      const tHeader = transArr[0] || [];
+      function tColIdx(name) {
+        for (let i = 0; i < tHeader.length; i++) {
+          const v = String(tHeader[i] || '').trim();
+          if (v === name) return i;
+        }
+        return -1;
+      }
+      // 「发货单数量」/「入库数量」/「发货过账数量」是数量字段，每行它们后面紧跟 OUn 单位列
+      const C_DATE = tColIdx('创建日期');
+      const C_LOC = tColIdx('收货库位');
+      const C_FACTORY = tColIdx('收货工厂');
+      const C_MAT = tColIdx('物料');
+      const C_NAME = tColIdx('短文本');
+      const C_PO = tColIdx('PO 数量');
+      const C_PLAN = tColIdx('计划数量');
+      const C_CONFIRM = tColIdx('确认数量');
+      const C_INVOICE = tColIdx('发货单数量');
+      const C_SHIPFAC = tColIdx('发货工厂');
+      const C_INBOUND = tColIdx('入库数量');
+      const C_DELIVERY = tColIdx('发货过账数量');
+      // 单位列：找数量字段后面最近的 'OUn' 列
+      function unitAfter(numCol) {
+        for (let i = numCol + 1; i < tHeader.length; i++) {
+          if (String(tHeader[i] || '').trim() === 'OUn') return i;
+        }
+        return -1;
+      }
+      const C_UNIT = C_INVOICE >= 0 ? unitAfter(C_INVOICE) : -1;
+
       const existTk = new Set(dataStore.transship.map(d => d.dateStr + '|' + d.material + '|' + d.location));
       for (let i = 1; i < transArr.length; i++) {
         const r = transArr[i];
-        if (!r || r.length < 16) continue;
-        const d = normalizeDate(r[1]);
+        if (!r || r.length < 10) continue;
+        const d = normalizeDate(r[C_DATE]);
         if (!d) continue;
-        const loc = getSafeStr(r, 3);
-        if (loc.startsWith('30')) continue;
+        const loc = getSafeStr(r, C_LOC);
+        if (!loc || loc.startsWith('30')) continue;
         let rdc = '未知';
         if (loc.startsWith('20')) rdc = '东北RDC';
         else if (loc.startsWith('40')) rdc = '华南RDC';
@@ -6654,21 +6739,22 @@ function parseInventoryExcel(rawData) {
         let transType = '常规转储';
         if (loc.endsWith('23') || loc.endsWith('06')) transType = '免费单转储';
         else if (loc.endsWith('03')) transType = 'KA常规转储';
-        const unit = getSafeStr(r, 15);
-        const tKey = fmtDate(d) + '|' + getSafeStr(r, 5) + '|' + loc;
+        const unit = C_UNIT >= 0 ? getSafeStr(r, C_UNIT) : '';
+        const material = getSafeStr(r, C_MAT);
+        const tKey = fmtDate(d) + '|' + material + '|' + loc;
         if (existTk.has(tKey)) continue;
         existTk.add(tKey);
         dataStore.transship.push({
           date: d, dateStr: fmtDate(d),
-          location: loc, rdc: rdc, factory: getSafeStr(r, 4),
-          material: getSafeStr(r, 5), materialName: getSafeStr(r, 6),
-          poQty: getSafeNum(r, 7), planQty: getSafeNum(r, 10),
-          confirmQty: getSafeNum(r, 12), invoiceQty: getSafeNum(r, 14),
+          location: loc, rdc: rdc, factory: getSafeStr(r, C_FACTORY),
+          material: material, materialName: getSafeStr(r, C_NAME),
+          poQty: getSafeNum(r, C_PO), planQty: getSafeNum(r, C_PLAN),
+          confirmQty: getSafeNum(r, C_CONFIRM), invoiceQty: getSafeNum(r, C_INVOICE),
           unit: unit, isBox: unit === '箱',
           transType: transType,
-          shipFactory: getSafeStr(r, 16),
-          inboundQty: getSafeNum(r, 19),
-          deliveryQty: getSafeNum(r, 21)
+          shipFactory: getSafeStr(r, C_SHIPFAC),
+          inboundQty: getSafeNum(r, C_INBOUND),
+          deliveryQty: getSafeNum(r, C_DELIVERY)
         });
       }
     }
