@@ -7534,7 +7534,7 @@ window._slowFilters = { rdc: 'all', hainan: 'all', obsolete: 'all' };
 window._slowPage = 1;
 window._slowMovingNew = [];
 window._slowMovingAll = [];
-function isSlowCoverage(level) { return level && (level === '3~4个月' || level === '4~5个月' || level === '5~6个月' || level === '大于6个月'); }
+function isSlowCoverage(level) { return level && (level === '无需求' || level === '3~4个月' || level === '4~5个月' || level === '5~6个月' || level === '大于6个月'); }
 // 新品/促销装/非卖品 完全排除在慢动品计算之外（按产品属性显式排除，不依赖未来需求判定周转）
 function isExcludedProduct(d) {
   if (!d) return false;
