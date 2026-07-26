@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 12; // v12: 拉回分析新增金额统计（基础数据成本价，箱单位×箱规+4月华东仓筛选）；转储数据解析改为表头寻列兼容新模板
+const DB_VERSION = 13; // v13: 拉回分析金额计算（箱单位×箱规）+ 4月华东仓筛选 + 转储按表头寻列 + 满足率折线图tooltip增加TOP5缺货
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1797,6 +1797,18 @@ function renderFulfillment() {
     return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
   }
 
+  // 获取某日（跨所有RDC、渠道）的缺货TOP N（折线图tooltip用）
+  function getDateShortageSKUs(dateStr, limit) {
+    limit = limit || 5;
+    if (!dateStr) return [];
+    const dedup = {};
+    dataStore.orderDetail.filter(d => d.dateStr === dateStr && d.totalGap > 0).forEach(d => {
+      if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+      dedup[d.skuCode].gap += d.totalGap;
+    });
+    return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
+  }
+
   page.innerHTML = `
     <div class="filter-bar">
       <label>显示渠道：</label>
@@ -1844,6 +1856,17 @@ function renderFulfillment() {
             const rate = (p.value * 100).toFixed(1) + '%';
             html += '<br/>' + ch + '：' + rate;
           });
+          // 当日主要缺货产品 TOP5（按缺口总量，含 RDC在途 + 大仓供应）
+          const topShort = getDateShortageSKUs(dateStr, 5);
+          if (topShort.length > 0) {
+            html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日主要缺货 TOP5：</div>';
+            html += buildTopShortTipTable(topShort, '缺口(支)', function(s, info){
+              // orderDetail.totalGap 是基本单位（件/支），可直接显示
+              return formatNum(s.gap);
+            }, null);
+          } else {
+            html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日无缺货记录</div>';
+          }
           return html;
         }
       },
