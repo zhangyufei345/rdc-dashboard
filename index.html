@@ -1974,8 +1974,8 @@ function renderFulfillmentHistory() {
   const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
     RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
   return '' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 月度满足率同比对比（2025 vs 2026）</span>' +
-      '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，上年（灰）vs 今年（蓝）</span>' +
+    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 日订单满足率同比对比（2025 vs 2026）</span>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，1 位小数百分比，上年（灰）vs 今年（蓝）</span>' +
     '</div><div id="chart-fulfill-history-grid"></div></div>' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
       '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
@@ -1988,7 +1988,7 @@ function renderFulfillmentHistoryCharts() {
   const H = dataStore.history.fulfillment;
   const rdc = window._fulHtyRdc || 'all';
 
-  // ========== 小倍数折线图：每个 RDC 一张图，2025 vs 2026 双线 ==========
+  // ========== 小倍数折线图：每个 RDC 一张图，2025 vs 2026 双线（日订单满足率口径）==========
   const gridContainer = document.getElementById('chart-fulfill-history-grid');
   if (gridContainer) {
     // 清理旧实例
@@ -2004,16 +2004,16 @@ function renderFulfillmentHistoryCharts() {
       gridHtml += '<div style="background:#fafbfc;border:1px solid var(--border-card);border-radius:6px;padding:8px"><div style="font-size:12px;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">' +
         '<span>' + r + '</span>' +
         '<span id="' + id + '-badge" style="font-size:10px;color:var(--text-secondary)"></span>' +
-        '</div><div id="' + id + '" style="height:160px"></div></div>';
+        '</div><div id="' + id + '" style="height:180px"></div></div>';
     });
     gridHtml += '</div>';
     gridContainer.innerHTML = gridHtml;
 
-    // 每个 RDC 渲染一张折线图
+    // 每个 RDC 渲染一张折线图（日订单满足率口径）
     var yMin = 0.7, yMax = 1.0;
     RDC_LIST.forEach(function(r) {
-      var v26Arr = months.map(function(_, i) { return (H['2026'].monthly[r] && H['2026'].monthly[r][i] != null) ? H['2026'].monthly[r][i] : null; });
-      var v25Arr = months.map(function(_, i) { return (H['2025'].monthly[r] && H['2025'].monthly[r][i] != null) ? H['2025'].monthly[r][i] : null; });
+      var v26Arr = months.map(function(_, i) { return (H['2026'].daily[r] && H['2026'].daily[r][i] != null) ? H['2026'].daily[r][i] : null; });
+      var v25Arr = months.map(function(_, i) { return (H['2025'].daily[r] && H['2025'].daily[r][i] != null) ? H['2025'].daily[r][i] : null; });
       // 计算同比均值
       var s26 = 0, c26 = 0, s25 = 0, c25 = 0;
       for (var i = 0; i < 6; i++) { if (v26Arr[i] != null) { s26 += v26Arr[i]; c26++; } if (v25Arr[i] != null) { s25 += v25Arr[i]; c25++; } }
@@ -2025,7 +2025,7 @@ function renderFulfillmentHistoryCharts() {
         badgeEl.innerHTML = '均值 YoY <span style="font-weight:600;color:' + color + '">' + (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp</span>';
       }
 
-      // 点位颜色：改善绿 / 下滑红 / 持平灰
+      // 点位颜色：改善绿 / 下滑红
       var ptColors = [];
       for (var i = 0; i < 6; i++) {
         if (v26Arr[i] != null && v25Arr[i] != null) {
@@ -2038,8 +2038,14 @@ function renderFulfillmentHistoryCharts() {
       var dom = document.getElementById('chart-fulHty-' + r);
       if (!dom) return;
       var chart = echarts.init(dom);
+      // 数值标签：1 位小数，避免 99%/100% 整数四舍五入后重叠；拉远距离避免挤压点位
+      var labelFormatter = function(p) {
+        if (p.value == null) return '';
+        var v = (p.value * 100).toFixed(1);
+        return v + '%';
+      };
       chart.setOption({
-        grid: { left: 38, right: 8, top: 12, bottom: 18 },
+        grid: { left: 42, right: 12, top: 28, bottom: 22 },
         tooltip: { trigger: 'axis', textStyle: { fontSize: 10 }, formatter: function(p) {
           var i = p[0].dataIndex;
           var v26 = v26Arr[i], v25 = v25Arr[i];
@@ -2054,12 +2060,12 @@ function renderFulfillmentHistoryCharts() {
         yAxis: { type: 'value', min: yMin, max: yMax, axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 9 }, splitLine: { lineStyle: { type: 'dashed', color: '#e5e7eb' } } },
         series: [
           { name: '2025', type: 'line', data: v25Arr, smooth: false, symbol: 'circle', symbolSize: 5, itemStyle: { color: '#94a3b8' }, lineStyle: { color: '#94a3b8', width: 1.5, type: 'dashed' }, connectNulls: true },
-          { name: '2026', type: 'line', data: v26Arr, smooth: false, symbol: 'circle', symbolSize: 7,
+          { name: '2026', type: 'line', data: v26Arr, smooth: false, symbol: 'circle', symbolSize: 6,
             itemStyle: { color: function(p) { return ptColors[p.dataIndex] || '#2563EB'; } },
             lineStyle: { color: '#2563EB', width: 2 },
-            label: { show: true, position: 'top', fontSize: 9, color: '#1E40AF', formatter: function(p) { return p.value != null ? (p.value * 100).toFixed(0) + '%' : ''; } },
+            label: { show: true, position: 'top', distance: 10, fontSize: 9, color: '#1E40AF', formatter: labelFormatter },
             connectNulls: true,
-            markPoint: { symbol: 'pin', symbolSize: 0, data: [], silent: true } // 占位避免 bug
+            markPoint: { symbol: 'pin', symbolSize: 0, data: [], silent: true }
           }
         ]
       }, true);
