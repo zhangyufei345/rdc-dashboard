@@ -5915,7 +5915,8 @@ function renderInventoryForecast(page, tabBar) {
   const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][5], 0) / 1e8;
   proj.push(['6RDC合计', rdcSumYi, '各 RDC 年末可出货库存之和']);
 
-  // === 8. 覆盖表 (从 cov6 算: 库存量 ÷ 7月需求；遵循 window._invHainan 筛选，与库存结构页面一致；同时排除无需求等非标准覆盖周期 SKU) ===
+  // === 8. 覆盖表 (从 cov6 算: 库存量 ÷ 7月需求；遵循 window._invHainan 筛选) ===
+  // 库存量 = 全部在库 SKU（含无需求等）；覆盖月数 = 全部库存 / 有需求的 SKU 的 7月需求（无需求 SKU 的 cov07=0 不参与分母）
   const _hcFilter = window._invHainan || 'all';
   const cov6Filtered = _hcFilter === 'all' ? cov6 : cov6.filter(function(d) { return _hcFilter === 'yes' ? d.isHainan === true : d.isHainan !== true; });
   const cover = [];
@@ -5923,10 +5924,8 @@ function renderInventoryForecast(page, tabBar) {
     let invQty = 0, demandQty = 0;
     cov6Filtered.forEach(d => {
       if (d.rdc !== r) return;
-      // 排除无需求/非卖品/促销装/新品期等（与库存结构页 recalcCoverage 口径一致）
-      if (!mapCovLevel(d.coverageLevel)) return;
       invQty += d.availableQty || 0;
-      demandQty += d.cov07 || 0;
+      demandQty += d.cov07 || 0;  // 无需求/non-standard SKU 的 cov07=0，不影响覆盖分母
     });
     const covMonths = demandQty > 0 ? invQty / demandQty : 0;
     let tag, note;
