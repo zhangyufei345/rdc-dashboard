@@ -2326,9 +2326,6 @@ function renderShortageOrderDetail() {
   });
   const brandSorted = Object.entries(brandMap).sort((a,b) => b[1].all - a[1].all);
   const brandNames = brandSorted.map(([b]) => b);
-  const brandAllData = brandSorted.map(([,v]) => v.all);
-  const brandKaData = brandSorted.map(([,v]) => v.ka);
-  const brandDealerData = brandSorted.map(([,v]) => v.dealer);
 
   // ---- SKU维度明细 ----
   const skuMap = {};
@@ -2455,25 +2452,33 @@ function renderShortageOrderDetail() {
       </div>
     </div>
 
-    <!-- 表2: 品牌维度 + 表格（图已删除，数据差距过大不便对比） -->
+    <!-- 表2: 品牌维度 + 首日满足率图 + 表格 -->
     <div class="card" style="margin-bottom:12px">
-      <div class="card-header"><span class="card-title">品牌维度 · 首日未满足订单量</span></div>
-      <div class="table-wrap">
-        <table class="data-table" style="font-size:12px">
-          <thead><tr>
-            <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日未满足</th><th style="text-align:right;color:var(--color-green)">首日已发</th>
-            <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#DBEAFE">经销首日未满足</th>
-          </tr></thead>
-          <tbody>
-            ${brandSorted.map(([brand, v]) => '<tr>' +
-              '<td><strong>' + brand + '</strong></td>' +
-              '<td style="text-align:right;color:var(--color-red);font-weight:600">' + v.all.toLocaleString() + '</td>' +
-              '<td style="text-align:right">' + v.fulfilled.toLocaleString() + '</td>' +
-              '<td style="text-align:right;background:#FEF3C7">' + v.ka.toLocaleString() + '</td>' +
-              '<td style="text-align:right;background:#DBEAFE">' + v.dealer.toLocaleString() + '</td></tr>'
-            ).join('')}
-          </tbody>
-        </table>
+      <div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="card-title">品牌维度</span>
+        <span style="font-size:12px;color:var(--text-secondary)">首日未满足订单量 + 首日满足率对比</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        <div class="chart-container" style="flex:1;min-width:300px;height:240px" id="chart-od-fulfill-rate"></div>
+        <div style="flex:1;min-width:280px">
+          <div class="table-wrap" style="max-height:240px;overflow-y:auto">
+            <table class="data-table" style="font-size:12px">
+              <thead><tr>
+                <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日未满足</th><th style="text-align:right;color:var(--color-green)">首日已发</th>
+                <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#DBEAFE">经销首日未满足</th>
+              </tr></thead>
+              <tbody>
+                ${brandSorted.map(([brand, v]) => '<tr>' +
+                  '<td><strong>' + brand + '</strong></td>' +
+                  '<td style="text-align:right;color:var(--color-red);font-weight:600">' + v.all.toLocaleString() + '</td>' +
+                  '<td style="text-align:right">' + v.fulfilled.toLocaleString() + '</td>' +
+                  '<td style="text-align:right;background:#FEF3C7">' + v.ka.toLocaleString() + '</td>' +
+                  '<td style="text-align:right;background:#DBEAFE">' + v.dealer.toLocaleString() + '</td></tr>'
+                ).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2552,7 +2557,26 @@ function renderShortageOrderDetail() {
   const chart1b = initChart('chart-od-summary-dealer');
   chart1b.setOption(buildPieOption('经销商订单结构', sumDealer));
 
-  // 品牌维度图表已删除（数据差距过大不便对比），仅保留右表
+  // Brand fulfillment rate chart (率值在 0-100% 范围, 数据差距小, 适合柱状图)
+  var fulfillRateData = brandSorted.map(function(e) {
+    var v = e[1];
+    var total = v.all + v.fulfilled;
+    return total > 0 ? (v.fulfilled / total * 100) : 0;
+  });
+  var rateChart = initChart('chart-od-fulfill-rate');
+  rateChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true, textStyle: { fontSize: 11 }, formatter: function(p) {
+      return '<strong>' + p[0].axisValue + '</strong><br/>首日满足率：' + p[0].value.toFixed(1) + '%';
+    }},
+    grid: { left: 55, right: 20, top: 8, bottom: 40 },
+    xAxis: { type: 'category', data: brandNames, axisLabel: { fontSize: 11, rotate: brandNames.length > 5 ? 25 : 0 } },
+    yAxis: { type: 'value', min: 0, max: 100, axisLabel: { formatter: function(v) { return v.toFixed(0) + '%'; }, fontSize: 10 } },
+    series: [{
+      type: 'bar', data: fulfillRateData, color: '#2563EB', barWidth: '40%',
+      label: { show: true, position: 'top', fontSize: 11, color: '#1E40AF', formatter: function(p) { return p.value.toFixed(1) + '%'; } }
+    }]
+  });
+
   // 渲染品牌×RDC 满足率矩阵
   renderBrandRdcMatrix();
 }
