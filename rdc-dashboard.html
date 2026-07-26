@@ -2557,7 +2557,7 @@ function renderShortageOrderDetail() {
   const chart1b = initChart('chart-od-summary-dealer');
   chart1b.setOption(buildPieOption('经销商订单结构', sumDealer));
 
-  // Brand grouped bar: brands x (KA/经销商), log axis to handle dominant brand
+  // Brand grouped bar: brands x (KA/经销商), linear axis + 数值标签（避免 log 轴失真）
   const chart2 = initChart('chart-od-brand');
   chart2.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true, textStyle: { fontSize: 11 }, formatter: p => {
@@ -2565,13 +2565,15 @@ function renderShortageOrderDetail() {
       p.forEach(i => { if (i.value > 0) html += '<br/>' + i.marker + i.seriesName + '：' + i.value.toLocaleString(); });
       return html;
     }},
-    legend: { data: ['KA', '经销商'], top: 5, left: 10, textStyle: { fontSize: 11 } },
-    grid: { left: 55, right: 10, top: 40, bottom: 25 },
-    xAxis: { type: 'category', data: brandNames, axisLabel: { fontSize: 11, rotate: brandNames.length > 5 ? 30 : 0 } },
-    yAxis: { type: 'log', min: 1, axisLabel: { formatter: v => v >= 10000 ? (v/10000).toFixed(0)+'万' : v.toLocaleString(), fontSize: 10 } },
+    legend: { data: ['KA首日未满足', '经销首日未满足'], top: 5, left: 10, textStyle: { fontSize: 11 } },
+    grid: { left: 70, right: 10, top: 40, bottom: 55 },
+    xAxis: { type: 'category', data: brandNames, axisLabel: { fontSize: 11, rotate: brandNames.length > 5 ? 30 : 0, interval: 0 } },
+    yAxis: { type: 'value', axisLabel: { formatter: v => v >= 10000 ? (v/10000).toFixed(0)+'万' : v.toLocaleString(), fontSize: 10 } },
     series: [
-      { name: 'KA', type: 'bar', data: brandKaData, color: '#F59E0B', barWidth: '22%' },
-      { name: '经销商', type: 'bar', data: brandDealerData, color: '#93C5FD', barWidth: '22%' }
+      { name: 'KA首日未满足', type: 'bar', data: brandKaData, color: '#F59E0B', barWidth: '30%',
+        label: { show: true, position: 'top', fontSize: 10, color: '#92400E', formatter: p => p.value > 0 ? p.value.toLocaleString() : '' } },
+      { name: '经销首日未满足', type: 'bar', data: brandDealerData, color: '#93C5FD', barWidth: '30%',
+        label: { show: true, position: 'top', fontSize: 10, color: '#1E40AF', formatter: p => p.value > 0 ? p.value.toLocaleString() : '' } }
     ]
   });
 
@@ -5671,8 +5673,10 @@ function renderInventoryTurnover() {
     xAxis: { type: 'category', data: compareLabels.map(function(r) { return r + 'RDC'; }), axisLabel: { fontSize: 10, rotate: 15 } },
     yAxis: { type: 'value', name: '天', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: [
-      { name: '全库位', type: 'bar', data: allVals, color: '#3B82F6', barWidth: '30%' },
-      { name: '各分库', type: 'bar', data: sharedVals, color: '#10B981', barWidth: '30%' }
+      { name: '全库位', type: 'bar', data: allVals, color: '#3B82F6', barWidth: '30%',
+        label: { show: true, position: 'top', fontSize: 10, color: '#1E40AF', formatter: p => p.value > 0 ? p.value + '天' : '' } },
+      { name: '各分库', type: 'bar', data: sharedVals, color: '#10B981', barWidth: '30%',
+        label: { show: true, position: 'top', fontSize: 10, color: '#065F46', formatter: p => p.value > 0 ? p.value + '天' : '' } }
     ]
   });
 
