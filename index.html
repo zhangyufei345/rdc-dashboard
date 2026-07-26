@@ -5930,8 +5930,9 @@ function renderInventoryForecast(page, tabBar) {
     const covMonths = demandQty > 0 ? invQty / demandQty : 0;
     let tag, note;
     if (covMonths > 2) { tag = '冗余'; note = '覆盖 > 2 个月，可向偏瘦 RDC 调拨'; }
-    else if (covMonths >= 1) { tag = '正常'; note = '覆盖 1-2 个月，处于健康区间'; }
-    else { tag = '偏瘦'; note = '覆盖 < 1 个月，下半月缺货风险高'; }
+    else if (covMonths >= 1) { tag = '偏高'; note = '覆盖 1-2 个月，库存略高，可正常出货'; }
+    else if (covMonths >= 0.5) { tag = '正常'; note = '覆盖 0.5-1 个月，处于健康区间'; }
+    else { tag = '偏瘦'; note = '覆盖 < 0.5 个月，下半月缺货风险高'; }
     cover.push([r, invQty, demandQty, covMonths, tag, note]);
   });
 
@@ -5983,7 +5984,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">当前库存 vs 未来需求覆盖分析（6 月末）</span></div>' +
       '<div class="table-wrap" id="table-forecast-cover"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 6 月末库存量 ÷ 7 月未来需求（支）。&gt;2 个月冗余，1–2 个月正常，&lt;1 个月偏瘦（缺货风险）。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 6 月末库存量 ÷ 7 月未来需求（支）。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
     '</div>' +
 
     '<div class="card">' +
@@ -5992,7 +5993,7 @@ function renderInventoryForecast(page, tabBar) {
         '<div>1. <b>6RDC 年末库存：</b>可出货库存（计划+在途）合计 <b>'+ rdcSumYi.toFixed(2) + ' 亿</b>（渐进入市，参数可调 ⬆）。</div>' +
         '<div>2. <b>冗余判断：</b>'+ cover.map(c => c[0].replace('RDC','') + ' ' + c[4] + '（' + c[3].toFixed(2) + '月）').join('；') + '。</div>' +
         '<div>3. <b>总仓</b>固定 '+ twYi.toFixed(2) + ' 亿不参与预测（补给池）。全国合计（参考）= '+ (rdcSumYi + twYi).toFixed(2) + ' 亿 = 6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '。6RDC 起始可出货库存 '+ (rdc6.reduce((s,r)=>s+startInvRdcYuan[r],0)/1e8).toFixed(2) + ' 亿。</div>' +
-        '<div>4. <b>行动建议：</b>覆盖率 < 1 的 RDC 优先补货（向冗余 RDC 调拨或前置总仓出货）；覆盖率 > 2 的 RDC 可压缩补货释放库存。</div>' +
+        '<div>4. <b>行动建议：</b>覆盖率 < 0.5 的 RDC 优先补货（向冗余 RDC 调拨或前置总仓出货）；覆盖率 > 2 的 RDC 可压缩补货释放库存。</div>' +
         '<div>5. <b>提升精度：</b>接入 7-8 月实际出货后滚动校准；按 SKU/品牌细分需求；优化覆盖天数与准确率参数。</div>' +
       '</div>' +
     '</div>';
@@ -6017,8 +6018,9 @@ function renderInventoryForecast(page, tabBar) {
   cover.forEach(function(r){
     let tag = '';
     if (r[4]==='冗余') tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#FDECEA;color:#D83A2F">冗余</span>';
-    else if (r[4]==='偏瘦') tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#FFF3E0;color:#C77700">偏瘦</span>';
-    else tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#E6F7EE;color:#1C9C5E">正常</span>';
+    else if (r[4]==='偏高') tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#EFF6FF;color:#2563EB">偏高</span>';
+    else if (r[4]==='正常') tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#E6F7EE;color:#1C9C5E">正常</span>';
+    else tag = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#FFF3E0;color:#C77700">偏瘦</span>';
     cb += '<tr><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+Math.round(r[1]).toLocaleString()+'</td><td>'+Math.round(r[2]).toLocaleString()+'</td><td><b>'+r[3].toFixed(2)+'</b></td><td>'+tag+'</td><td style="text-align:left">'+r[5]+'</td></tr>';
   });
   document.getElementById('table-forecast-cover').innerHTML =
