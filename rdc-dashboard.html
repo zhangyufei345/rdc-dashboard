@@ -7681,20 +7681,27 @@ function renderSlowMoving() {
   });
   var sortedBrands = Object.keys(brandAmt).sort(function(a,b) { return (brandAmt[b]||0) - (brandAmt[a]||0); });
 
-  // ========== 跨RDC高占比品牌根因分析（使用全部RDC，仅受海南花露水筛选影响）==========
+  // ========== 跨RDC高占比品牌根因分析（使用全部RDC，受海南花露水/是否淘汰筛选影响）==========
+  function obsoletePass(d) {
+    if (obsoleteFilter === 'yes') return productMaster[d.sku] && productMaster[d.sku].obsolete === true;
+    if (obsoleteFilter === 'no') return !(productMaster[d.sku] && productMaster[d.sku].obsolete === true);
+    return true;
+  }
   var cov6AllRdc = (inv.cov6 || []).filter(function(d) {
-    if (hainanFilter === 'yes') return d.isHainan === true;
-    if (hainanFilter === 'no') return d.isHainan !== true;
+    if (hainanFilter === 'yes' && d.isHainan !== true) return false;
+    if (hainanFilter === 'no' && d.isHainan === true) return false;
+    if (!obsoletePass(d)) return false;
     return true;
   });
   var slow6AllRdc = cov6AllRdc.filter(function(d) {
     if (isExcludedProduct(d)) return false;
     return isSlowCoverage(d.coverageLevel);
   });
-  // 全量5月参照（与慢动明细共用统一诊断引擎；仅受海南花露水筛选影响，不受RDC下拉影响）
+  // 全量5月参照（与慢动明细共用统一诊断引擎；仅受海南花露水/是否淘汰筛选影响，不受RDC下拉影响）
   var cov5AllRdc = (inv.cov5 || []).filter(function(d) {
-    if (hainanFilter === 'yes') return d.isHainan === true;
-    if (hainanFilter === 'no') return d.isHainan !== true;
+    if (hainanFilter === 'yes' && d.isHainan !== true) return false;
+    if (hainanFilter === 'no' && d.isHainan === true) return false;
+    if (!obsoletePass(d)) return false;
     return true;
   });
   var maySlowKeysAll = new Set(cov5AllRdc.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d); }).map(function(d) { return d.rdc + '|' + d.sku; }));
