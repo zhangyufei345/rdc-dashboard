@@ -3881,13 +3881,12 @@ function renderTransship() {
 
   const data = dataStore.transship;
 
-  // Month filter
+  // Month filter（已按用户要求下线：始终展示全量）
   const allMonths = [...new Set(data.map(d => d.dateStr.slice(0,7)))].sort();
-  window._transMonth = window._transMonth || 'all';
-  const selMonth = window._transMonth;
+  window._transMonth = 'all';
+  const selMonth = 'all';
 
   let filtered = data;
-  if (selMonth !== 'all') filtered = filtered.filter(d => d.dateStr.startsWith(selMonth));
 
   // Per-RDC aggregation for filtered data
   const rdcAgg = {};
@@ -3979,12 +3978,7 @@ function renderTransship() {
     <div style="margin-bottom:16px">
       <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${pageTitle}</div>
       <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">数据来源：转储数据（${data.length}条记录 · ${allMonths[0]||''} 至 ${allMonths[allMonths.length-1]||''}）</div>
-      <!-- 月份选择 -->
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        <span style="font-size:12px;color:var(--text-secondary)">月份：</span>
-        <button class="btn-export" style="font-size:11px;padding:3px 10px;${selMonth==='all'?'background:var(--color-blue);color:#fff;':''}" onclick="window._transMonth='all';renderTransship()">全部</button>
-        ${allMonths.map(m => `<button class="btn-export" style="font-size:11px;padding:3px 10px;${selMonth===m?'background:var(--color-blue);color:#fff;':''}" onclick="window._transMonth='${m}';renderTransship()">${m}</button>`).join('')}
-      </div>
+      <!-- 月份选择（已下线）-->
     </div>
 
     <!-- KPI Cards by RDC（已按用户要求下线）-->
