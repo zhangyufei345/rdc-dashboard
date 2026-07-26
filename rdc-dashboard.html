@@ -416,7 +416,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 13; // v13: 拉回分析金额计算（箱单位×箱规）+ 4月华东仓筛选 + 转储按表头寻列 + 满足率折线图tooltip增加TOP5缺货
+const DB_VERSION = 14; // v14: 基础数据 新增「是否为淘汰品」F列→productMaster.obsolete；慢动品分析新增是否淘汰筛选
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6648,17 +6648,29 @@ function parseInventoryExcel(rawData) {
     const hainanArr = findByName('海南花露水历史数据');
     const hainanHistoryStatus = parseHainanHistoryByStatus(hainanArr || []);
 
-    // 解析「基础数据」sheet：产品编码 → {成本价, 箱规转化因子}
+    // 解析「基础数据」sheet：产品编码 → {成本价, 箱规转化因子, 是否淘汰品}
     const baseArr = findByName('基础数据');
     const productMaster = {};
     if (baseArr) {
+      // 按表头名寻列，兼容新旧模板
+      const baseHeader = baseArr[0] || [];
+      function bColIdx(name) {
+        for (let i = 0; i < baseHeader.length; i++) {
+          if (String(baseHeader[i] || '').trim() === name) return i;
+        }
+        return -1;
+      }
+      const C_BASE_COST = bColIdx('成本价');
+      const C_BASE_SPEC = bColIdx('箱规转化因子');
+      const C_BASE_OBSOLETE = bColIdx('是否为淘汰品');
       for (let i = 1; i < baseArr.length; i++) {
         const r = baseArr[i]; if (!r || !r[0]) continue;
         const sku = String(r[0]).trim();
         if (!sku) continue;
-        const cost = Number(r[2]) || 0;            // 成本价（元/基本单位）
-        const spec = Number(r[3]) || 0;            // 箱规转化因子（个/箱）
-        if (!productMaster[sku]) productMaster[sku] = { cost, spec };
+        const cost = Number(r[C_BASE_COST >= 0 ? C_BASE_COST : 2]) || 0;
+        const spec = Number(r[C_BASE_SPEC >= 0 ? C_BASE_SPEC : 3]) || 0;
+        const obsolete = (C_BASE_OBSOLETE >= 0 ? String(r[C_BASE_OBSOLETE] || '').trim() : '') === '淘汰品';
+        if (!productMaster[sku]) productMaster[sku] = { cost, spec, obsolete };
       }
     }
 
@@ -7518,7 +7530,7 @@ function exportInventoryCoverageDetail() {
 }
 
 // ==================== 慢动品分析 ====================
-window._slowFilters = { rdc: 'all', hainan: 'all' };
+window._slowFilters = { rdc: 'all', hainan: 'all', obsolete: 'all' };
 window._slowPage = 1;
 window._slowMovingNew = [];
 window._slowMovingAll = [];
@@ -7554,6 +7566,8 @@ function renderSlowMoving() {
   const f = window._slowFilters;
   const rdcFilter = f.rdc || 'all';
   const hainanFilter = f.hainan || 'all';
+  const obsoleteFilter = f.obsolete || 'all';
+  const productMaster = inv.productMaster || {};
   const allRdcs = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
   function filterArr(arr) {
     if (!arr || !Array.isArray(arr)) return [];
@@ -7561,6 +7575,9 @@ function renderSlowMoving() {
     if (rdcFilter !== 'all') res = res.filter(function(d) { return d.rdc === rdcFilter; });
     if (hainanFilter === 'yes') res = res.filter(function(d) { return d.isHainan === true; });
     else if (hainanFilter === 'no') res = res.filter(function(d) { return d.isHainan !== true; });
+    // 是否淘汰品筛选：基础数据 sheet 的「是否为淘汰品」列
+    if (obsoleteFilter === 'yes') res = res.filter(function(d) { return productMaster[d.sku] && productMaster[d.sku].obsolete === true; });
+    else if (obsoleteFilter === 'no') res = res.filter(function(d) { return !(productMaster[d.sku] && productMaster[d.sku].obsolete === true); });
     return res;
   }
   var cov6 = filterArr(inv.cov6 || []);
@@ -7857,7 +7874,7 @@ function renderSlowMoving() {
   window._slowPage = p;
   var pageData = detailRows.slice((p-1)*pageLen, p*pageLen);
 
-  var html = '<div class="filter-bar"><label>RDC：</label><select onchange="window._slowFilters.rdc=this.value;renderSlowMoving()" style="min-width:120px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select><label style="margin-left:12px">海南花露水：</label><select onchange="window._slowFilters.hainan=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(hainanFilter==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainanFilter==='yes'?' selected':'')+'>是</option><option value="no"'+(hainanFilter==='no'?' selected':'')+'>否</option></select><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当前：'+rdcLabel+'，'+hainanLabel+'｜已排除非卖品/促销装/新品期 '+excludedCount+' 个SKU（不计入慢动品）</span></div>';
+  var html = '<div class="filter-bar"><label>RDC：</label><select onchange="window._slowFilters.rdc=this.value;renderSlowMoving()" style="min-width:120px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select><label style="margin-left:12px">海南花露水：</label><select onchange="window._slowFilters.hainan=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(hainanFilter==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainanFilter==='yes'?' selected':'')+'>是</option><option value="no"'+(hainanFilter==='no'?' selected':'')+'>否</option></select><label style="margin-left:12px">是否淘汰：</label><select onchange="window._slowFilters.obsolete=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(obsoleteFilter==='all'?' selected':'')+'>全部</option><option value="no"'+(obsoleteFilter==='no'?' selected':'')+'>仅非淘汰品</option><option value="yes"'+(obsoleteFilter==='yes'?' selected':'')+'>仅淘汰品</option></select><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当前：'+rdcLabel+'，'+hainanLabel+'，'+(obsoleteFilter==='all'?'含淘汰品':obsoleteFilter==='yes'?'仅淘汰品':'仅非淘汰品')+'｜已排除非卖品/促销装/新品期 '+excludedCount+' 个SKU（不计入慢动品）</span></div>';
 
   html += '<div class="kpi-row"><div class="kpi-card red"><div class="kpi-label">慢动SKU数</div><div class="kpi-value">'+kpi.skuCount+'</div></div><div class="kpi-card orange"><div class="kpi-label">较上月新增</div><div class="kpi-value">'+kpi.newCount+'</div></div><div class="kpi-card purple"><div class="kpi-label">计划可用库存金额</div><div class="kpi-value">'+fmtK(kpi.totalAmt)+'<span class="kpi-unit">千元</span></div></div><div class="kpi-card blue"><div class="kpi-label">计划可用库存数量</div><div class="kpi-value">'+fmtK(kpi.totalQty)+'<span class="kpi-unit">支</span></div></div><button onclick="navigateTo(\'slow-moving-logic\')" style="margin-left:auto;align-self:center;padding:8px 16px;border:2px solid var(--color-blue);color:var(--color-blue);background:transparent;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;font-weight:600;">📖 慢动品根因分析逻辑</button></div>';
 
