@@ -5915,25 +5915,41 @@ function renderInventoryForecast(page, tabBar) {
   const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][5], 0) / 1e8;
   proj.push(['6RDC合计', rdcSumYi, '各 RDC 年末可出货库存之和']);
 
-  // === 8. 覆盖表 (从 cov6 算: 库存量 ÷ 7月需求；遵循 window._invHainan 筛选) ===
-  // 库存量 = 全部在库 SKU（含无需求等）；覆盖月数 = 全部库存 / 有需求的 SKU 的 7月需求（无需求 SKU 的 cov07=0 不参与分母）
+  // === 8. 覆盖表 (基于未来 6 个月逐月累积需求，模拟库存能消化几个月) ===
+  // 库存量 = 全部在库 SKU；逐月扣减需求，得到「库存能撑到几月」
   const _hcFilter = window._invHainan || 'all';
   const cov6Filtered = _hcFilter === 'all' ? cov6 : cov6.filter(function(d) { return _hcFilter === 'yes' ? d.isHainan === true : d.isHainan !== true; });
   const cover = [];
   rdc6.forEach(r => {
-    let invQty = 0, demandQty = 0;
+    let invQty = 0;
+    const monthDemands = [0, 0, 0, 0, 0, 0]; // 7月..12月
     cov6Filtered.forEach(d => {
       if (d.rdc !== r) return;
       invQty += d.availableQty || 0;
-      demandQty += d.cov07 || 0;  // 无需求/non-standard SKU 的 cov07=0，不影响覆盖分母
+      monthDemands[0] += d.cov07 || 0;
+      monthDemands[1] += d.cov08 || 0;
+      monthDemands[2] += d.cov09 || 0;
+      monthDemands[3] += d.cov10 || 0;
+      monthDemands[4] += d.cov11 || 0;
+      monthDemands[5] += d.cov12 || 0;
     });
-    const covMonths = demandQty > 0 ? invQty / demandQty : 0;
+    // 逐月扣减，模拟库存消化进度
+    let remaining = invQty, coveredMonths = 0;
+    for (let i = 0; i < 6; i++) {
+      if (remaining <= 0) break;
+      if (monthDemands[i] <= 0) { coveredMonths += 1; continue; } // 该月无需求，按整月计
+      if (remaining >= monthDemands[i]) { remaining -= monthDemands[i]; coveredMonths += 1; }
+      else { coveredMonths += remaining / monthDemands[i]; remaining = 0; }
+    }
+    // 6 个月都覆盖后还有库存 → 显示为 6.5（>2 即视为冗余，无须精确）
+    const totalDemand = monthDemands.reduce((s, v) => s + v, 0);
+    const covMonths = totalDemand > 0 ? coveredMonths : (invQty > 0 ? 6.5 : 0);
     let tag, note;
     if (covMonths > 2) { tag = '冗余'; note = '覆盖 > 2 个月，可向偏瘦 RDC 调拨'; }
     else if (covMonths >= 1) { tag = '偏高'; note = '覆盖 1-2 个月，库存略高，可正常出货'; }
     else if (covMonths >= 0.5) { tag = '正常'; note = '覆盖 0.5-1 个月，处于健康区间'; }
     else { tag = '偏瘦'; note = '覆盖 < 0.5 个月，下半月缺货风险高'; }
-    cover.push([r, invQty, demandQty, covMonths, tag, note]);
+    cover.push([r, invQty, monthDemands[0], covMonths, tag, note]);
   });
 
   // === 9. 渲染 HTML ===
@@ -5984,7 +6000,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">当前库存 vs 未来需求覆盖分析（6 月末）</span></div>' +
       '<div class="table-wrap" id="table-forecast-cover"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 6 月末库存量 ÷ 7 月未来需求（支）。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 用 6 月末库存量逐月扣减未来 6 个月（7-12 月）需求，得出库存能消化到几月。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
     '</div>' +
 
     '<div class="card">' +
