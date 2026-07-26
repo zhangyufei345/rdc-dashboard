@@ -1974,14 +1974,12 @@ function renderFulfillmentHistory() {
   const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
     RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
   return '' +
-    '<div class="row-2" style="margin-bottom:16px">' +
-      '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 月度满足率同比对比（2025 vs 2026）</span>' +
-        '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，上年（灰）vs 今年（蓝）</span>' +
-      '</div><div id="chart-fulfill-history-grid"></div></div>' +
-      '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
-        '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
-      '</div><div id="kpi-fulfill-history"></div></div>' +
-    '</div>';
+    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 月度满足率同比对比（2025 vs 2026）</span>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，上年（灰）vs 今年（蓝）</span>' +
+    '</div><div id="chart-fulfill-history-grid"></div></div>' +
+    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
+      '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
+    '</div><div id="kpi-fulfill-history"></div></div>';
 }
 
 // 订单满足率历史同比（矩阵 + 年度概览，不含月度折线）
@@ -2089,17 +2087,28 @@ function renderFulfillmentHistoryCharts() {
   let improvedD = 0, declinedD = 0;
   rdcList.forEach(r => h1.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
   const totalCells = rdcList.length * h1.length;
-  const kpiHtml = '<div style="padding:12px">' +
-    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026上半年月均满足率</span><span style="font-size:18px;font-weight:700">' + (h1_26 * 100).toFixed(1) + '%</span></div>' +
-    '<div style="text-align:right;font-size:11px;color:' + a1.color + '">同比 ' + a1.txt + '（2025 H1：' + (h1_25 * 100).toFixed(1) + '%）</div>' +
-    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026年6月月均满足率</span><span style="font-size:18px;font-weight:700">' + (jun_26 * 100).toFixed(1) + '%</span></div>' +
-    '<div style="text-align:right;font-size:11px;color:' + a2.color + '">同比 ' + a2.txt + '（2025年6月：' + (jun_25 * 100).toFixed(1) + '%）</div>' +
-    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card);margin-top:12px"><span style="font-size:12px;color:var(--text-secondary)">2026上半年日满足率</span><span style="font-size:18px;font-weight:700">' + (h1_26d * 100).toFixed(1) + '%</span></div>' +
-    '<div style="text-align:right;font-size:11px;color:' + a1d.color + '">同比 ' + a1d.txt + '（2025 H1：' + (h1_25d * 100).toFixed(1) + '%）</div>' +
-    '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border-card)"><span style="font-size:12px;color:var(--text-secondary)">2026年6月日满足率</span><span style="font-size:18px;font-weight:700">' + (jun_26d * 100).toFixed(1) + '%</span></div>' +
-    '<div style="text-align:right;font-size:11px;color:' + a2d.color + '">同比 ' + a2d.txt + '（2025年6月：' + (jun_25d * 100).toFixed(1) + '%）</div>' +
-    '<div style="margin-top:10px;font-size:12px;color:var(--text-secondary)">上半年 ' + totalCells + ' 个「RDC×月」月均满足率中：<span style="color:var(--color-green)">↑ ' + improved + ' 个改善</span> · <span style="color:var(--color-red)">↓ ' + declined + ' 个下滑</span></div>' +
-    '<div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">上半年 ' + totalCells + ' 个「RDC×月」日满足率中：<span style="color:var(--color-green)">↑ ' + improvedD + ' 个改善</span> · <span style="color:var(--color-red)">↓ ' + declinedD + ' 个下滑</span></div>' +
+  // 4 列指标 + 改善/下滑计数（横向平铺，避免右侧换行拥挤）
+  const kpiCell = function(label, value, yoy, yoyColor, prevLabel, prevValue) {
+    return '<div style="flex:1;padding:10px 16px;border-right:1px solid var(--border-card);min-width:0">' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + label + '">' + label + '</div>' +
+      '<div style="display:flex;align-items:baseline;gap:8px">' +
+      '<span style="font-size:22px;font-weight:700;line-height:1">' + value + '%</span>' +
+      '<span style="font-size:12px;font-weight:600;color:' + yoyColor + '">同比 ' + yoy + '</span>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">vs ' + prevLabel + ' ' + prevValue + '%</div>' +
+    '</div>';
+  };
+  const kpiHtml = '<div style="padding:0">' +
+    '<div style="display:flex;border-bottom:1px solid var(--border-card)">' +
+      kpiCell('上半年月均满足率', (h1_26 * 100).toFixed(1), a1.txt, a1.color, '2025 H1', (h1_25 * 100).toFixed(1)) +
+      kpiCell('6月月均满足率', (jun_26 * 100).toFixed(1), a2.txt, a2.color, '2025年6月', (jun_25 * 100).toFixed(1)) +
+      kpiCell('上半年日满足率', (h1_26d * 100).toFixed(1), a1d.txt, a1d.color, '2025 H1', (h1_25d * 100).toFixed(1)) +
+      kpiCell('6月日满足率', (jun_26d * 100).toFixed(1), a2d.txt, a2d.color, '2025年6月', (jun_25d * 100).toFixed(1)).replace('border-right:1px solid', 'border-right:none') +
+    '</div>' +
+    '<div style="display:flex;padding:10px 16px;gap:24px;font-size:12px;color:var(--text-secondary)">' +
+      '<span><b style="color:var(--text-primary)">月均满足率</b> 36 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improved + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declined + ' 下滑</span></span>' +
+      '<span><b style="color:var(--text-primary)">日满足率</b> 36 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improvedD + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declinedD + ' 下滑</span></span>' +
+    '</div>' +
     '</div>';
   document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
 }
