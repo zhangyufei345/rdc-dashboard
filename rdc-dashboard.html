@@ -3950,28 +3950,6 @@ function renderTransship() {
     return Object.values(skuMap).sort((a, b) => b.invoiceQty - a.invoiceQty).slice(0, limit);
   }
 
-  // RDC KPI rows (filtered)
-  const rdcKpiHtml = validRdcs.map(r => {
-    const a = rdcAgg[r];
-    return `<div class="card" style="margin-bottom:6px;padding:10px 16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
-        <strong style="font-size:var(--font-size-lg);min-width:80px">${r}</strong>
-        <span style="color:var(--color-blue);font-weight:600">转储${formatNum(a.boxQty)}箱</span>
-        ${a.nonBoxQty > 0 ? `<span style="color:var(--color-orange);font-weight:600">非箱${formatNum(a.nonBoxQty)}支</span>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-
-  // Total row (box and non-box separately)
-  const totalBox = validRdcs.reduce((s, r) => s + rdcAgg[r].boxQty, 0);
-  const totalNonBox = validRdcs.reduce((s, r) => s + rdcAgg[r].nonBoxQty, 0);
-
-  // Free transshipment unit breakdown
-  const freeData = filtered.filter(d => d.transType === '免费单转储');
-  const freeBox = freeData.filter(d => d.isBox).reduce((s, d) => s + d.invoiceQty, 0);
-  const freeNonBox = freeData.filter(d => !d.isBox).reduce((s, d) => s + d.invoiceQty, 0);
-  const freeTotal = freeBox + freeNonBox;
-
   // RDC checkboxes for trend line chart
   if (!window._transLineChecked) {
     window._transLineChecked = {};
@@ -4009,27 +3987,9 @@ function renderTransship() {
       </div>
     </div>
 
-    <!-- KPI Cards by RDC -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><span class="card-title">各RDC转储汇总</span></div>
-      ${rdcKpiHtml}
-      <div style="border-top:2px solid var(--color-blue);padding:10px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:4px">
-        <strong style="font-size:var(--font-size-lg)">合计</strong>
-        <span style="color:var(--color-blue);font-weight:700;font-size:var(--font-size-lg)">转储${formatNum(totalBox)}箱</span>
-        ${totalNonBox > 0 ? `<span style="color:var(--color-orange);font-weight:700;font-size:var(--font-size-lg)">非箱${formatNum(totalNonBox)}支</span>` : ''}
-      </div>
-    </div>
+    <!-- KPI Cards by RDC（已按用户要求下线）-->
 
-    <!-- Free transshipment unit breakdown -->
-    ${freeTotal > 0 ? `
-    <div class="card" style="margin-bottom:16px;border-color:#D1FAE5">
-      <div class="card-header"><span class="card-title">🆓 免费单转储单位统计</span></div>
-      <div style="display:flex;gap:24px;padding:8px 16px;flex-wrap:wrap;align-items:center">
-        <span style="font-size:var(--font-size-lg);font-weight:600">免费单转储总量：${formatNum(freeTotal)}</span>
-        <span style="color:var(--color-blue);font-weight:600">箱：${formatNum(freeBox)}（${freeTotal>0?(freeBox/freeTotal*100).toFixed(1):0}%）</span>
-        <span style="color:var(--color-orange);font-weight:600">支：${formatNum(freeNonBox)}（${freeTotal>0?(freeNonBox/freeTotal*100).toFixed(1):0}%）</span>
-      </div>
-    </div>` : ''}
+    <!-- Free transshipment unit breakdown（已按用户要求下线）-->
 
     <!-- H1 YoY comparison -->
     <div class="card" style="margin-bottom:16px">
