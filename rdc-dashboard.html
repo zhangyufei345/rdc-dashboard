@@ -1563,7 +1563,7 @@ function renderOverview() {
             const monthStr = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (filters.overviewDate ? filters.overviewDate.slice(0, 7) : '');
             const monthGap = dataStore.orderDetail.filter(d => d.brand === brand && d.warehouse === rdc && d.dateStr && d.dateStr.startsWith(monthStr) && d.firstDayShort > 0).reduce((s, d) => s + d.firstDayShort, 0);
             if (monthGap > 0) {
-              html += '<br/>当月缺货量：' + formatNum(monthGap) + '支（订单明细）';
+              html += '<br/>当月缺货量：' + formatNum(monthGap) + '（订单明细，按件汇总）';
               html += '<br/>当日缺货报告无该品牌记录';
             } else {
               html += '<br/>当月该品牌在该RDC下无订单缺货';
@@ -1860,9 +1860,9 @@ function renderFulfillment() {
           const topShort = getDateShortageSKUs(dateStr, 5);
           if (topShort.length > 0) {
             html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日主要缺货 TOP5：</div>';
-            html += buildTopShortTipTable(topShort, '缺口(支)', function(s, info){
-              // orderDetail.totalGap 是基本单位（件/支），可直接显示
-              return formatNum(s.gap);
+            html += buildTopShortTipTable(topShort, '缺口(箱)', function(s, info){
+              // orderDetail.totalGap 是基本单位(支)，按箱规换算成箱
+              return info.boxSpec ? formatNum(Math.round(s.gap / info.boxSpec)) : formatNum(s.gap);
             }, null);
           } else {
             html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日无缺货记录</div>';
@@ -2586,7 +2586,10 @@ function renderShortageOrderDetail() {
       var topShort = brandTopShortage[brand] || [];
       if (topShort.length > 0) {
         html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要未满足 TOP5：</div>';
-        html += buildTopShortTipTable(topShort, '首日缺口(支)', function(s) { return formatNum(s.gap); }, null);
+        html += buildTopShortTipTable(topShort, '首日缺口(箱)', function(s, info) {
+          // firstDayShort 是基本单位(支)，按箱规换算成箱
+          return info.boxSpec ? formatNum(Math.round(s.gap / info.boxSpec)) : formatNum(s.gap);
+        }, null);
       } else {
         html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">该品牌当日无缺货记录</div>';
       }
@@ -3306,6 +3309,12 @@ function renderCustomerDrillDetail(customer) {
     return skuWithGaps.some(sku => sku.brand === s.brand);
   }).slice(0, 5);
 
+  // 计算客户整体换算箱数（按 SKU 箱规加权，避免聚合后再除）
+  const totalGapBoxes = Object.values(skuGapMap).reduce((s, sku) => {
+    const bs = window._boxSpec && window._boxSpec[sku.code];
+    return s + (bs ? Math.round(sku.gapQty / bs) : sku.gapQty);
+  }, 0);
+
   return `
     <div class="card" style="margin-bottom:16px;background:#EFF6FF;border-color:#BFDBFE">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
@@ -3321,7 +3330,7 @@ function renderCustomerDrillDetail(customer) {
         <div class="card-header"><span class="card-title">⚠️ 主要缺货SKU排名（${monthLabel}）</span></div>
         <div class="table-wrap" style="max-height:400px">
           <table class="data-table">
-            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(支)</th><th>大仓供应</th></tr></thead>
+            <thead><tr><th>排名</th><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>订单量</th><th>履约量</th><th>缺口量(箱)</th><th>拒绝量</th><th>缺货率</th><th>RDC在途(箱)</th><th>大仓供应</th></tr></thead>
             <tbody>
               ${skuWithGaps.length > 0 ? skuWithGaps.map((sku, i) => `<tr>
                 <td><span class="badge ${i<3?'badge-red':'badge-orange'}">#${i+1}</span></td>
@@ -3330,10 +3339,10 @@ function renderCustomerDrillDetail(customer) {
                 <td>${sku.brand || '-'}</td>
                 <td class="num">${formatNum(sku.orderQty)}</td>
                 <td class="num" style="color:#059669">${formatNum(Math.round(sku.fulfillQty))}</td>
-                <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(sku.realGap))}</td>
+                <td class="num" style="color:#EF4444;font-weight:600">${(()=>{const bs=window._boxSpec&&window._boxSpec[sku.code];return bs?formatNum(Math.round(sku.realGap/bs)):formatNum(sku.realGap);})()}</td>
                 <td class="num" style="color:${sku.rejectQty>0?'#F59E0B':'var(--text-secondary)'};font-weight:${sku.rejectQty>0?600:400}">${sku.rejectQty > 0 ? formatNum(sku.rejectQty) : '-'}</td>
                 <td class="num"><span class="${sku.realGap / sku.orderQty > 0.5 ? 'rate-bad' : 'rate-warn'}">${sku.orderQty > 0 ? (sku.realGap/sku.orderQty*100).toFixed(1):0}%</span></td>
-                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(sku.code);return i.transitBoxes!=null?formatNum(i.transitBoxes):'—';})()}</td>
                 <td>${(()=>{const i=getSkuSupplyInfo(sku.code);return i.dcSupply||'—';})()}</td>
               </tr>`).join('') : '<tr><td colspan="11" style="text-align:center;padding:16px;color:var(--text-secondary)">✅ 该客户暂无缺货记录</td></tr>'}
             </tbody>
@@ -3356,11 +3365,11 @@ function renderCustomerDrillDetail(customer) {
             <span style="color:var(--text-secondary)">拒绝量</span><strong style="color:${customer.rejectQty>0?'#F59E0B':'var(--text-secondary)'}">${customer.rejectQty > 0 ? formatNum(customer.rejectQty) : '0'}</strong>
           </div>
           <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-card)">
-            <span style="color:var(--text-secondary)">首日缺货量</span><strong style="color:#EF4444">${formatNum(customer.orderQty - customer.firstQty)}</strong>
+            <span style="color:var(--text-secondary)">首日缺货量（箱）</span><strong style="color:#EF4444">${formatNum(totalGapBoxes)}</strong>
           </div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0">
-            <span style="color:var(--text-secondary)">总履约缺口</span><strong style="color:#EF4444">${formatNum(customer.orderQty - customer.fulfillQty)}</strong>
-            ${customer.rejectQty > 0 ? '<span style="font-size:10px;color:#F59E0B;margin-left:6px">（扣除拒绝后缺口：' + formatNum(customer.orderQty - customer.fulfillQty - customer.rejectQty) + '）</span>' : ''}
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-card)">
+            <span style="color:var(--text-secondary)">总履约缺口（箱）</span><strong style="color:#EF4444">${formatNum(totalGapBoxes)}</strong>
+            ${customer.rejectQty > 0 ? '<span style="font-size:10px;color:#F59E0B;margin-left:6px">（已扣除拒绝量，箱数按各SKU箱规换算）</span>' : '<span style="font-size:10px;color:var(--text-tertiary);margin-left:6px">箱数按各SKU箱规换算</span>'}
           </div>
         </div>
         <div class="card-header" style="margin-top:8px"><span class="card-title">涉及品牌分布</span></div>
@@ -3371,7 +3380,7 @@ function renderCustomerDrillDetail(customer) {
       <div class="card-header"><span class="card-title">📦 ${monthLabel}缺货SKU明细（按SKU+仓库聚合）</span></div>
       <div class="table-wrap" style="max-height:300px">
         <table class="data-table">
-          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口</th><th>RDC在途(支)</th><th>大仓供应情况</th></tr></thead>
+          <thead><tr><th>SKU代码</th><th>SKU品名</th><th>品牌</th><th>仓库</th><th>订单量</th><th>履约量</th><th>拒绝量</th><th>缺口(箱)</th><th>RDC在途(箱)</th><th>大仓供应情况</th></tr></thead>
           <tbody>
             ${(() => { const m = {}; custOrders.filter(d => (d.totalGap||0) > 0 || (d.rejectReason&&d.rejectReason.trim())).forEach(d => { const k = (d.skuCode||'')+'|'+(d.warehouse||''); if (!m[k]) m[k] = { skuCode: d.skuCode, skuName: d.skuName, brand: d.brand, warehouse: d.warehouse, orderQty: 0, totalFulfillQty: 0, totalGap: 0, rejectQty: 0 }; m[k].orderQty += (d.orderQty||0); m[k].totalFulfillQty += (d.totalFulfillQty||0); m[k].totalGap += (d.totalGap||0); if (d.rejectReason && d.rejectReason.trim()) m[k].rejectQty += (d.orderQty||0); }); Object.values(m).forEach(row => { row.realGap = Math.max(0, row.totalGap - row.rejectQty); }); const arr = Object.values(m).sort((a,b) => b.realGap - a.realGap).slice(0,20); return arr.length > 0 ? arr.map(d => `<tr>
               <td>${d.skuCode || '-'}</td>
@@ -3381,8 +3390,8 @@ function renderCustomerDrillDetail(customer) {
               <td class="num">${formatNum(d.orderQty)}</td>
               <td class="num" style="color:#059669">${formatNum(d.totalFulfillQty)}</td>
               <td class="num" style="color:${d.rejectQty>0?'#F59E0B':'var(--text-secondary)'}">${d.rejectQty > 0 ? formatNum(d.rejectQty) : '-'}</td>
-              <td class="num" style="color:#EF4444;font-weight:600">${formatNum(Math.round(d.realGap))}</td>
-                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitUnits!=null?formatNum(i.transitUnits):'—';})()}</td>
+              <td class="num" style="color:#EF4444;font-weight:600">${(()=>{const bs=window._boxSpec&&window._boxSpec[d.skuCode];return bs?formatNum(Math.round(d.realGap/bs)):formatNum(d.realGap);})()}</td>
+                <td class="num">${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.transitBoxes!=null?formatNum(i.transitBoxes):'—';})()}</td>
                 <td>${(()=>{const i=getSkuSupplyInfo(d.skuCode,d.warehouse);return i.dcSupply||'—';})()}</td>
               </tr>`).join('') : '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--text-secondary)">无缺货数据</td></tr>'; })()}
           </tbody>
@@ -4673,7 +4682,7 @@ function renderShortageCompare() {
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>日期</th><th>RDC</th><th>物料号</th><th>物料名称</th><th>品牌</th><th style="text-align:right">首日缺货(支)</th><th>差异原因</th><th>缺货原因</th><th style="text-align:center">操作</th></tr>
+            <tr><th>日期</th><th>RDC</th><th>物料号</th><th>物料名称</th><th>品牌</th><th style="text-align:right">首日缺货(箱)</th><th>差异原因</th><th>缺货原因</th><th style="text-align:center">操作</th></tr>
           </thead>
           <tbody>
             ${pageData.map((d, i) => {
@@ -4681,13 +4690,15 @@ function renderShortageCompare() {
               const savedReason = window._shortageReasons[idKey];
               const isConfirmed = !!savedReason;
               const gapLabel = d.gapReason === '无当日缺货报告' ? '<span style="color:var(--color-purple);font-size:11px">无缺货报告</span>' : '<span style="color:var(--color-orange);font-size:11px">缺货报告未收录</span>';
+              const bs = window._boxSpec && window._boxSpec[d.skuCode];
+              const boxGap = bs ? Math.round(d.firstShort / bs) : d.firstShort;
               return '<tr>' +
                 '<td>' + d.dateStr + '</td>' +
                 '<td><span class="badge" style="background:' + getRDCColor(d.rdc) + '20;color:' + getRDCColor(d.rdc) + '">' + d.rdc + '</span></td>' +
                 '<td>' + d.skuCode + '</td>' +
                 '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + d.skuName + '">' + d.skuName + '</td>' +
                 '<td>' + d.brand + '</td>' +
-                '<td style="text-align:right;color:var(--color-red);font-weight:600">' + d.firstShort.toLocaleString() + '</td>' +
+                '<td style="text-align:right;color:var(--color-red);font-weight:600">' + boxGap.toLocaleString() + '</td>' +
                 '<td style="text-align:center">' + gapLabel + '</td>' +
                 '<td>' +
                   '<select id="reason-' + i + '" style="padding:3px 6px;border:1px solid ' + (isConfirmed ? 'var(--color-green)' : 'var(--border-card)') + ';border-radius:4px;font-size:12px;width:140px;' + (isConfirmed ? 'background:var(--bg-card);color:var(--color-green);font-weight:500' : '') + '">' +
@@ -4775,11 +4786,13 @@ function exportShortageReasons() {
 
 function exportShortageCompareCSV() {
   const allData = buildShortageCompareData();
-  let csv = '\uFEFF日期,RDC,物料号,物料名称,品牌,首日缺货(支),差异原因,缺货原因\n';
+  let csv = '\uFEFF日期,RDC,物料号,物料名称,品牌,首日缺货(箱),差异原因,缺货原因\n';
   allData.forEach(d => {
     const key = d.dateStr + '|' + d.skuCode + '|' + d.rdc;
     const reason = (window._shortageReasons || {})[key] || '';
-    csv += `${d.dateStr},${d.rdc},${d.skuCode},"${d.skuName}",${d.brand},${d.firstShort},"${d.gapReason || ''}","${reason}"\n`;
+    const bs = window._boxSpec && window._boxSpec[d.skuCode];
+    const boxGap = bs ? Math.round(d.firstShort / bs) : d.firstShort;
+    csv += `${d.dateStr},${d.rdc},${d.skuCode},"${d.skuName}",${d.brand},${boxGap},"${d.gapReason || ''}","${reason}"\n`;
   });
   downloadFile('缺货差异维护_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
