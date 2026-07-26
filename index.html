@@ -7405,15 +7405,26 @@ function renderInventoryStructure() {
   });
 
   // Table: RDC覆盖表
-  const rdcCovTableHtml = '<table class="data-table"><thead><tr><th>RDC</th>' + covLevels.map(l => '<th style="text-align:right">' + l + '</th>').join('') + '<th style="text-align:right">合计</th></tr></thead><tbody>' +
+  // 计算全部在库（含无需求等），不经过 mapCovLevel 过滤
+  const allRdcTotalInv = {};
+  cov6Filtered.forEach(function(d) {
+    if (!allRdcTotalInv[d.rdc]) allRdcTotalInv[d.rdc] = 0;
+    allRdcTotalInv[d.rdc] += (d.availableQty || 0);
+  });
+  const rdcCovTableHtml = '<table class="data-table"><thead><tr><th>RDC</th>' + covLevels.map(l => '<th style="text-align:right">' + l + '</th>').join('') + '<th style="text-align:right">合计</th><th style="text-align:right;color:#2563EB">全部在库（含无需求等）</th></tr></thead><tbody>' +
     displayRdcs.map(rdc => {
       const d = allRdcCov[rdc] || { qty: {} };
       const vals = covLevels.map(l => d.qty[l] || 0);
       const total = vals.reduce((a,b) => a + b, 0);
+      const allTotal = allRdcTotalInv[rdc] || 0;
+      const diff = allTotal - total;
       return '<tr style="cursor:pointer" onclick="drillRdcCovDetail(\'' + rdc + '\')">' +
         '<td><strong>' + rdc + '</strong></td>' +
         vals.map(v => '<td class="num">' + (v ? formatNum(v) : '-') + '</td>').join('') +
-        '<td class="num" style="font-weight:600">' + formatNum(total) + '<span style="font-size:10px;color:var(--text-secondary)"> 支</span></td></tr>';
+        '<td class="num" style="font-weight:600">' + formatNum(total) + '<span style="font-size:10px;color:var(--text-secondary)"> 支</span></td>' +
+        '<td class="num" style="font-weight:700;color:#2563EB">' + formatNum(allTotal) + '<span style="font-size:10px;color:#60A5FA"> 支</span>' +
+          (diff > 0 ? '<br><span style="font-size:9px;color:var(--text-tertiary)">+ ' + formatNum(diff) + ' 无需求等</span>' : '') +
+        '</td></tr>';
     }).join('') +
     '</tbody></table>';
   document.getElementById('table-is-rdc-cov').innerHTML = rdcCovTableHtml;
