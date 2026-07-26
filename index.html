@@ -1975,7 +1975,9 @@ function renderFulfillmentHistory() {
     RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
   return '' +
     '<div class="row-2" style="margin-bottom:16px">' +
-      '<div class="card"><div class="card-header"><span class="card-title">RDC × 月份 月度满足率矩阵（含同比）</span></div><div class="table-wrap" id="table-fulfill-history-matrix"></div></div>' +
+      '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 月度满足率同比对比（2025 vs 2026）</span>' +
+        '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，上年（灰）vs 今年（蓝）</span>' +
+      '</div><div id="chart-fulfill-history-grid"></div></div>' +
       '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
         '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
       '</div><div id="kpi-fulfill-history"></div></div>' +
@@ -1988,44 +1990,88 @@ function renderFulfillmentHistoryCharts() {
   const H = dataStore.history.fulfillment;
   const rdc = window._fulHtyRdc || 'all';
 
-  // Matrix table: RDC x month (1-6), cell = 2026 value, sub = 2025 value + YoY delta
-  const h1 = [0, 1, 2, 3, 4, 5];
-  let mHtml = '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th>';
-  ['1月', '2月', '3月', '4月', '5月', '6月'].forEach(mo => mHtml += '<th style="text-align:right">' + mo + '</th>');
-  mHtml += '<th style="text-align:right">上半年均值</th></tr></thead><tbody>';
-  RDC_LIST.forEach(r => {
-    mHtml += '<td><strong>' + r + '</strong></td>';
-    let s26 = 0, c26 = 0, s25 = 0, c25 = 0;
-    h1.forEach(i => {
-      const v26 = H['2026'].monthly[r][i];
-      const v25 = H['2025'].monthly[r][i];
-      let cell = '';
-      if (v26 != null) {
-        cell += '<div class="rate-' + (v26 >= 0.95 ? 'good' : v26 >= 0.9 ? 'warn' : 'bad') + '">' + (v26 * 100).toFixed(1) + '%</div>';
-        s26 += v26; c26++;
-      } else cell += '<div style="color:#cbd5e1">—</div>';
-      if (v25 != null) {
-        const d = (v26 != null) ? (v26 - v25) : null;
-        const dStr = d != null ? ('<span style="font-size:10px;color:' + (d >= 0 ? 'var(--color-green)' : 'var(--color-red)') + '">' + (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp</span>') : '';
-        cell += '<div style="font-size:10px;color:var(--text-tertiary)">25: ' + (v25 * 100).toFixed(1) + '%</div>' + dStr;
-        s25 += v25; c25++;
-      }
-      mHtml += '<td class="num" style="text-align:right">' + cell + '</td>';
-    });
-    const avg26 = c26 ? s26 / c26 : null;
-    const avg25 = c25 ? s25 / c25 : null;
-    let avgCell = avg26 != null ? (avg26 * 100).toFixed(1) + '%' : '—';
-    if (avg26 != null && avg25 != null) {
-      const d = avg26 - avg25;
-      avgCell += '<br/><span style="font-size:10px;color:' + (d >= 0 ? 'var(--color-green)' : 'var(--color-red)') + '">' + (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp</span>';
+  // ========== 小倍数折线图：每个 RDC 一张图，2025 vs 2026 双线 ==========
+  const gridContainer = document.getElementById('chart-fulfill-history-grid');
+  if (gridContainer) {
+    // 清理旧实例
+    if (window._fulHtyChartInstances && window._fulHtyChartInstances.length) {
+      window._fulHtyChartInstances.forEach(function(c) { try { c.dispose(); } catch (e) {} });
     }
-    mHtml += '<td class="num" style="text-align:right;font-weight:600">' + avgCell + '</td></tr>';
-  });
-  mHtml += '</tbody></table>';
-  document.getElementById('table-fulfill-history-matrix').innerHTML = mHtml;
+    window._fulHtyChartInstances = [];
+    const months = ['1月', '2月', '3月', '4月', '5月', '6月'];
+    let gridHtml = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px">' +
+      '<div style="grid-column:span 3;display:flex;align-items:center;gap:16px;padding:4px 8px;font-size:11px;color:var(--text-secondary)"><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#94a3b8"></span>2025 上半年</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#2563EB"></span>2026 上半年</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#10B981;border-radius:50%"></span>同比改善</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%"></span>同比下滑</span></div>';
+    RDC_LIST.forEach(function(r) {
+      var id = 'chart-fulHty-' + r;
+      gridHtml += '<div style="background:#fafbfc;border:1px solid var(--border-card);border-radius:6px;padding:8px"><div style="font-size:12px;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">' +
+        '<span>' + r + '</span>' +
+        '<span id="' + id + '-badge" style="font-size:10px;color:var(--text-secondary)"></span>' +
+        '</div><div id="' + id + '" style="height:160px"></div></div>';
+    });
+    gridHtml += '</div>';
+    gridContainer.innerHTML = gridHtml;
+
+    // 每个 RDC 渲染一张折线图
+    var yMin = 0.7, yMax = 1.0;
+    RDC_LIST.forEach(function(r) {
+      var v26Arr = months.map(function(_, i) { return (H['2026'].monthly[r] && H['2026'].monthly[r][i] != null) ? H['2026'].monthly[r][i] : null; });
+      var v25Arr = months.map(function(_, i) { return (H['2025'].monthly[r] && H['2025'].monthly[r][i] != null) ? H['2025'].monthly[r][i] : null; });
+      // 计算同比均值
+      var s26 = 0, c26 = 0, s25 = 0, c25 = 0;
+      for (var i = 0; i < 6; i++) { if (v26Arr[i] != null) { s26 += v26Arr[i]; c26++; } if (v25Arr[i] != null) { s25 += v25Arr[i]; c25++; } }
+      var avg26 = c26 ? s26 / c26 : null, avg25 = c25 ? s25 / c25 : null;
+      var delta = (avg26 != null && avg25 != null) ? (avg26 - avg25) : null;
+      var badgeEl = document.getElementById('chart-fulHty-' + r + '-badge');
+      if (badgeEl && delta != null) {
+        var color = delta >= 0 ? 'var(--color-green)' : 'var(--color-red)';
+        badgeEl.innerHTML = '均值 YoY <span style="font-weight:600;color:' + color + '">' + (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp</span>';
+      }
+
+      // 点位颜色：改善绿 / 下滑红 / 持平灰
+      var ptColors = [];
+      for (var i = 0; i < 6; i++) {
+        if (v26Arr[i] != null && v25Arr[i] != null) {
+          ptColors.push(v26Arr[i] >= v25Arr[i] ? '#10B981' : '#EF4444');
+        } else {
+          ptColors.push('#2563EB');
+        }
+      }
+
+      var dom = document.getElementById('chart-fulHty-' + r);
+      if (!dom) return;
+      var chart = echarts.init(dom);
+      chart.setOption({
+        grid: { left: 38, right: 8, top: 12, bottom: 18 },
+        tooltip: { trigger: 'axis', textStyle: { fontSize: 10 }, formatter: function(p) {
+          var i = p[0].dataIndex;
+          var v26 = v26Arr[i], v25 = v25Arr[i];
+          var h = months[i] + '<br/>' + p[0].marker + '2026: ' + (v26 != null ? (v26 * 100).toFixed(1) + '%' : '—') + '<br/>' + p[1].marker + '2025: ' + (v25 != null ? (v25 * 100).toFixed(1) + '%' : '—');
+          if (v26 != null && v25 != null) {
+            var d = v26 - v25;
+            h += '<br/>同比: <b style="color:' + (d >= 0 ? '#10B981' : '#EF4444') + '">' + (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp</b>';
+          }
+          return h;
+        }},
+        xAxis: { type: 'category', data: months, axisLabel: { fontSize: 9 }, axisLine: { show: false }, axisTick: { show: false } },
+        yAxis: { type: 'value', min: yMin, max: yMax, axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 9 }, splitLine: { lineStyle: { type: 'dashed', color: '#e5e7eb' } } },
+        series: [
+          { name: '2025', type: 'line', data: v25Arr, smooth: false, symbol: 'circle', symbolSize: 5, itemStyle: { color: '#94a3b8' }, lineStyle: { color: '#94a3b8', width: 1.5, type: 'dashed' }, connectNulls: true },
+          { name: '2026', type: 'line', data: v26Arr, smooth: false, symbol: 'circle', symbolSize: 7,
+            itemStyle: { color: function(p) { return ptColors[p.dataIndex] || '#2563EB'; } },
+            lineStyle: { color: '#2563EB', width: 2 },
+            label: { show: true, position: 'top', fontSize: 9, color: '#1E40AF', formatter: function(p) { return p.value != null ? (p.value * 100).toFixed(0) + '%' : ''; } },
+            connectNulls: true,
+            markPoint: { symbol: 'pin', symbolSize: 0, data: [], silent: true } // 占位避免 bug
+          }
+        ]
+      }, true);
+      window._fulHtyChartInstances.push(chart);
+    });
+  }
 
   // KPI overview (first-half YoY)
   const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
+  const h1 = [0, 1, 2, 3, 4, 5];
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
     rdcList.forEach(r => { idxs.forEach(i => { const v = H[year][type][r] && H[year][type][r][i]; if (v != null) { s += v; c++; } }); });
