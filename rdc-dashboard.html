@@ -5983,12 +5983,6 @@ function renderInventoryForecast(page, tabBar) {
       '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 6 月末库存量 ÷ 7 月未来需求（支）。&gt;2 个月冗余，1–2 个月正常，&lt;1 个月偏瘦（缺货风险）。</div>' +
     '</div>' +
 
-    '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">各地点年末库存金额推演（单位：亿元）</span></div>' +
-      '<div class="table-wrap" id="table-forecast-proj"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">渐进入市（参数可调，⬆ 面板）。起始库存 = 计划可用库存 + 在途库存（不含残次/过期/退货/近效期）。<b>总仓固定 '+twYi.toFixed(2)+' 亿</b>｜全国合计（参考）= <b>'+(rdcSumYi+twYi).toFixed(2)+' 亿</b></div>' +
-    '</div>' +
-
     '<div class="card">' +
       '<div class="card-header"><span class="card-title">结论与建议</span></div>' +
       '<div style="font-size:13px;line-height:1.8">' +
@@ -6026,16 +6020,6 @@ function renderInventoryForecast(page, tabBar) {
   });
   document.getElementById('table-forecast-cover').innerHTML =
     '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th><th>库存量（支）</th><th>7 月需求（支）</th><th>覆盖月数</th><th>判断</th><th style="text-align:left">说明</th></tr></thead><tbody>'+cb+'</tbody></table>';
-
-  // === 推演表 ===
-  let pb = '';
-  proj.forEach(function(r){
-    const isTotal = (r[0]==='全国合计' || r[0]==='6RDC合计');
-    const style = isTotal ? 'style="background:#EEF2FF;font-weight:700"' : '';
-    pb += '<tr '+style+'><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+r[1].toFixed(2)+'</td><td style="text-align:left">'+r[2]+'</td></tr>';
-  });
-  document.getElementById('table-forecast-proj').innerHTML =
-    '<table class="data-table"><thead><tr><th style="text-align:left">地点</th><th>渐进入市（亿元）</th><th style="text-align:left">说明</th></tr></thead><tbody>'+pb+'</tbody></table>';
 }
 
 // 推演参数变更后自动刷新（被 ⚙ 面板 onchange 调用）
