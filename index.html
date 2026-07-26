@@ -2464,8 +2464,8 @@ function renderShortageOrderDetail() {
           <div class="table-wrap" style="max-height:220px;overflow-y:auto">
             <table class="data-table" style="font-size:12px">
               <thead><tr>
-                <th>品牌</th><th style="text-align:right;color:var(--color-red)">所有订单</th><th style="text-align:right;color:var(--color-green)">已满足</th>
-                <th style="text-align:right;background:#FEF3C7">KA</th><th style="text-align:right;background:#DBEAFE">经销商</th>
+                <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日未满足</th><th style="text-align:right;color:var(--color-green)">首日已发</th>
+                <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#DBEAFE">经销首日未满足</th>
               </tr></thead>
               <tbody>
                 ${brandSorted.map(([brand, v]) => '<tr>' +
