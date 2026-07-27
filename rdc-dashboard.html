@@ -141,6 +141,13 @@ a { color: var(--color-blue); text-decoration: none; }
 .table-wrap { max-height: 420px; overflow: auto; }
 .table-search { padding: 8px 12px; border: 1px solid var(--border-card); border-radius: 6px; font-size: 12px; width: 200px; outline: none; background: var(--bg-card); color: var(--text-primary); }
 
+/* 品牌×RDC 矩阵：单列屏显示 */
+.brand-rdc-matrix { table-layout: fixed; width: 100%; }
+.brand-rdc-matrix th, .brand-rdc-matrix td { padding: 6px 4px; font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-rdc-matrix th:first-child, .brand-rdc-matrix td:first-child { width: 70px; text-align: left; }
+.brand-rdc-matrix th:nth-child(n+2):nth-child(-n+7), .brand-rdc-matrix td:nth-child(n+2):nth-child(-n+7) { width: calc((100% - 150px) / 6); }
+.brand-rdc-matrix th:last-child, .brand-rdc-matrix td:last-child { width: 80px; }
+
 /* Filters */
 .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
 .filter-bar select, .filter-bar input { padding: 6px 12px; border: 1px solid var(--border-card); border-radius: 6px; font-size: 12px; background: var(--bg-card); color: var(--text-primary); outline: none; }
@@ -8024,7 +8031,7 @@ function renderSlowMoving() {
   else { topNew.forEach(function(r) { html += '<tr><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+(r.prevCoverageLevel||'-')+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
   html += '</tbody></table></div></div>';
 
-  html += '<div class="card" style="margin-top:12px"><div class="card-header"><span class="card-title">📋 品牌×RDC 矩阵（金额千元）</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>品牌</th>'+allRdcs.map(function(r){return '<th>'+r+'</th>';}).join('')+'<th>合计</th></tr></thead><tbody>';
+  html += '<div class="card" style="margin-top:12px"><div class="card-header"><span class="card-title">📋 品牌×RDC 矩阵（金额千元）</span></div><div class="table-wrap"><table class="data-table brand-rdc-matrix"><thead><tr><th>品牌</th>'+allRdcs.map(function(r){return '<th>'+r+'</th>';}).join('')+'<th>合计</th></tr></thead><tbody>';
   sortedBrands.forEach(function(b) { var rowTotal = allRdcs.reduce(function(s,r) { return s + (brandRdc[b][r]||0); }, 0) / 1000; html += '<tr><td><strong>'+b+'</strong></td>'+allRdcs.map(function(r){return '<td class="num">'+formatMoney((brandRdc[b][r]||0)/1000)+'</td>';}).join('')+'<td class="num"><strong>'+formatMoney(rowTotal)+'</strong></td></tr>'; });
   html += '</tbody></table></div></div>';
 
