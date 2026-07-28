@@ -2369,13 +2369,15 @@ function renderShortageOrderDetail() {
   }
 
   // ---- 汇总统计 (all/ka/dealer from filtered data, respecting channel) ----
+  // 新口径：A=订单总量，B=首日未满足，C=累计未满足，D=累计已满足，E=拒绝（删单）；A=C+D，E⊂C
   function buildSummary(src) {
-    const s = { firstShort: 0, fulfilled: 0, reject: 0, gap: 0 };
+    const s = { orderQty: 0, firstShort: 0, gap: 0, totalFulfilled: 0, reject: 0 };
     src.forEach(d => {
+      s.orderQty += d.orderQty;
       s.firstShort += d.firstDayShort;
-      s.fulfilled += d.firstDayQty;
-      if (d.rejectReason && d.rejectReason.trim() !== '') s.reject += d.firstDayShort;
       s.gap += d.totalGap;
+      s.totalFulfilled += d.totalFulfillQty;
+      if (d.rejectReason && d.rejectReason.trim() !== '') s.reject += d.firstDayShort;
     });
     return s;
   }
@@ -2401,15 +2403,15 @@ function renderShortageOrderDetail() {
     const key = d.brand + '|' + d.skuCode;
     if (!skuMap[key]) skuMap[key] = {
       brand: d.brand, skuCode: d.skuCode, skuName: d.skuName,
-      firstShort:0, fulfilled:0, gap:0, reject:0, orderQty:0,
+      orderQty:0, firstShort:0, gap:0, totalFulfilled:0, reject:0,
       kaFirstShort:0, kaGap:0, dealerFirstShort:0, dealerGap:0,
       dates: new Set()
     };
     const s = skuMap[key];
-    s.firstShort += d.firstDayShort;
-    s.fulfilled += d.firstDayQty;
-    s.gap += d.totalGap;
     s.orderQty += d.orderQty;
+    s.firstShort += d.firstDayShort;
+    s.gap += d.totalGap;
+    s.totalFulfilled += d.totalFulfillQty;
     if (d.rejectReason && d.rejectReason.trim() !== '') s.reject += d.firstDayShort;
     s.dates.add(d.dateStr);
     if (d.channel === 'KA') { s.kaFirstShort += d.firstDayShort; s.kaGap += d.totalGap; }
@@ -2498,10 +2500,10 @@ function renderShortageOrderDetail() {
         <div class="chart-container" style="flex:1;min-width:280px;height:240px" id="chart-od-summary-dealer"></div>
       </div>
       <div style="margin-top:12px">
-        <table class="data-table" style="font-size:12px;max-width:600px">
+        <table class="data-table" style="font-size:12px;max-width:720px">
           <thead><tr>
-            <th>统计范围</th><th style="text-align:right;color:var(--color-red)">首日未满足</th><th style="text-align:right;color:var(--color-green)">已满足</th>
-            <th style="text-align:right;color:var(--color-orange)">拒绝</th><th style="text-align:right;color:var(--color-blue)">剩余缺口</th><th style="text-align:right">总量</th>
+            <th>统计范围</th><th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日未满足(B)</th>
+            <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th><th style="text-align:right;color:var(--color-orange)">拒绝（删单）(E)</th>
           </tr></thead>
           <tbody>
             ${[
@@ -2509,14 +2511,17 @@ function renderShortageOrderDetail() {
               {key:'经销商订单', s:sumDealer}
             ].map(({key,s}) => '<tr>' +
               '<td>'+key+'</td>' +
+              '<td style="text-align:right;font-weight:600">'+s.orderQty.toLocaleString()+'</td>' +
               '<td style="text-align:right;color:var(--color-red);font-weight:500">'+s.firstShort.toLocaleString()+'</td>' +
-              '<td style="text-align:right">'+s.fulfilled.toLocaleString()+'</td>' +
-              '<td style="text-align:right;color:var(--color-orange)">'+s.reject.toLocaleString()+'</td>' +
-              '<td style="text-align:right;color:var(--color-blue);font-weight:600">'+s.gap.toLocaleString()+'</td>' +
-              '<td style="text-align:right">'+(s.firstShort+s.fulfilled).toLocaleString()+'</td></tr>'
+              '<td style="text-align:right;color:var(--color-blue)">'+s.gap.toLocaleString()+'</td>' +
+              '<td style="text-align:right;color:var(--color-green)">'+s.totalFulfilled.toLocaleString()+'</td>' +
+              '<td style="text-align:right;color:var(--color-orange)">'+s.reject.toLocaleString()+'</td></tr>'
             ).join('')}
           </tbody>
         </table>
+        <div style="margin-top:8px;padding:8px 10px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
+          <strong>口径说明：</strong>A = C + D；E 包含在 C 中。C（累计未满足）后续还会因补货到位后继续发货；E（拒绝/删单）是订单删除，后续不会再排单发货。B（首日未满足）是订单首日的缺口量，不等同于 C。
+        </div>
       </div>
     </div>
 
@@ -2563,22 +2568,22 @@ function renderShortageOrderDetail() {
         <table class="data-table" style="font-size:12px">
           <thead><tr>
             <th>品牌</th><th>SKU编码</th><th>SKU名称</th>
-            <th style="text-align:right;color:var(--color-red)">首日未满足</th><th style="text-align:right">已满足</th>
-            <th style="text-align:right">剩余缺口</th><th style="text-align:right;color:var(--color-orange)">拒绝</th>
-            <th style="text-align:right">订单总量</th><th style="text-align:center;color:#8B5CF6">KA&amp;经销商<br/>都缺货</th>
-            <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#FEF3C7">KA剩余缺口</th>
-            <th style="text-align:right;background:#DBEAFE">经销首日未满足</th><th style="text-align:right;background:#DBEAFE">经销剩余缺口</th>
+            <th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日未满足(B)</th>
+            <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th>
+            <th style="text-align:right;color:var(--color-orange)">拒绝（删单）(E)</th><th style="text-align:center;color:#8B5CF6">KA&amp;经销商<br/>都缺货</th>
+            <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#FEF3C7">KA累计未满足</th>
+            <th style="text-align:right;background:#DBEAFE">经销首日未满足</th><th style="text-align:right;background:#DBEAFE">经销累计未满足</th>
           </tr></thead>
           <tbody>
             ${skuPageData.map(s => '<tr>' +
               '<td>' + s.brand + '</td>' +
               '<td style="font-family:monospace">' + s.skuCode + '</td>' +
               '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + s.skuName + '">' + s.skuName + '</td>' +
+              '<td style="text-align:right;font-weight:600">' + s.orderQty.toLocaleString() + '</td>' +
               '<td style="text-align:right;color:var(--color-red);font-weight:500">' + s.firstShort.toLocaleString() + '</td>' +
-              '<td style="text-align:right">' + s.fulfilled.toLocaleString() + '</td>' +
-              '<td style="text-align:right">' + s.gap.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:var(--color-blue)">' + s.gap.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:var(--color-green)">' + s.totalFulfilled.toLocaleString() + '</td>' +
               '<td style="text-align:right;color:var(--color-orange)">' + (s.reject > 0 ? s.reject.toLocaleString() : '-') + '</td>' +
-              '<td style="text-align:right">' + s.orderQty.toLocaleString() + '</td>' +
               '<td style="text-align:center">' + (s.kaFirstShort > 0 && s.dealerFirstShort > 0 ? '<span style="color:#8B5CF6;font-weight:600">是</span>' : '') + '</td>' +
               '<td style="text-align:right;background:#FEF3C7">' + (s.kaFirstShort > 0 ? s.kaFirstShort.toLocaleString() : '-') + '</td>' +
               '<td style="text-align:right;background:#FEF3C7">' + (s.kaGap > 0 ? s.kaGap.toLocaleString() : '-') + '</td>' +
@@ -2602,10 +2607,10 @@ function renderShortageOrderDetail() {
   // Summary pie charts: KA & Dealer structure
   function buildPieOption(title, s) {
     const data = [
-      { name: '首日未满足', value: s.firstShort, color: '#EF4444' },
-      { name: '已满足', value: s.fulfilled, color: '#10B981' },
-      { name: '拒绝订单', value: s.reject, color: '#F59E0B' },
-      { name: '剩余缺口', value: s.gap, color: '#2563EB' }
+      { name: '首日未满足(B)', value: s.firstShort, color: '#EF4444' },
+      { name: '累计已满足(D)', value: s.totalFulfilled, color: '#10B981' },
+      { name: '拒绝（删单）(E)', value: s.reject, color: '#F59E0B' },
+      { name: '累计未满足(C)', value: s.gap, color: '#2563EB' }
     ].filter(d => d.value > 0);
     return {
       title: { text: title, left: 'center', top: 5, textStyle: { fontSize: 13, fontWeight: 600 } },
@@ -2875,14 +2880,14 @@ function exportShortageOrderDetailCSV() {
     const key = d.brand + '|' + d.skuCode;
     if (!skuMap[key]) skuMap[key] = {
       brand: d.brand, skuCode: d.skuCode, skuName: d.skuName,
-      firstShort:0, fulfilled:0, gap:0, reject:0, orderQty:0,
+      orderQty:0, firstShort:0, gap:0, totalFulfilled:0, reject:0,
       kaFirstShort:0, kaGap:0, dealerFirstShort:0, dealerGap:0
     };
     const s = skuMap[key];
-    s.firstShort += d.firstDayShort;
-    s.fulfilled += d.firstDayQty;
-    s.gap += d.totalGap;
     s.orderQty += d.orderQty;
+    s.firstShort += d.firstDayShort;
+    s.gap += d.totalGap;
+    s.totalFulfilled += d.totalFulfillQty;
     if (d.rejectReason && d.rejectReason.trim() !== '') s.reject += d.firstDayShort;
     if (!skuMap[key]._dates) skuMap[key]._dates = new Set();
     skuMap[key]._dates.add(d.dateStr);
@@ -2890,10 +2895,10 @@ function exportShortageOrderDetailCSV() {
     else if (d.channel === '经销商') { s.dealerFirstShort += d.firstDayShort; s.dealerGap += d.totalGap; }
   });
   const skuList = Object.values(skuMap);
-  let csv = '\uFEFF品牌,SKU编码,SKU名称,首日未满足,已满足,剩余缺口,拒绝,订单总量,KA&经销商都缺货,KA首日未满足,KA剩余缺口,经销首日未满足,经销剩余缺口\n';
+  let csv = '\uFEFF品牌,SKU编码,SKU名称,订单总量(A),首日未满足(B),累计未满足(C),累计已满足(D),拒绝（删单）(E),KA&经销商都缺货,KA首日未满足,KA累计未满足,经销首日未满足,经销累计未满足\n';
   skuList.forEach(s => {
     const bothShort = (s.kaFirstShort > 0 && s.dealerFirstShort > 0) ? '是' : '';
-    csv += s.brand + ',' + s.skuCode + ',"' + s.skuName + '",' + s.firstShort + ',' + s.fulfilled + ',' + s.gap + ',' + s.reject + ',' + s.orderQty + ',' + bothShort + ',' + s.kaFirstShort + ',' + s.kaGap + ',' + s.dealerFirstShort + ',' + s.dealerGap + '\n';
+    csv += s.brand + ',' + s.skuCode + ',"' + s.skuName + '",' + s.orderQty + ',' + s.firstShort + ',' + s.gap + ',' + s.totalFulfilled + ',' + s.reject + ',' + bothShort + ',' + s.kaFirstShort + ',' + s.kaGap + ',' + s.dealerFirstShort + ',' + s.dealerGap + '\n';
   });
   downloadFile('订单缺货分析_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
