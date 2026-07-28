@@ -2369,7 +2369,7 @@ function renderShortageOrderDetail() {
   }
 
   // ---- 汇总统计 (all/ka/dealer from filtered data, respecting channel) ----
-  // 新口径：A=订单总量，B=首日未满足，C=累计未满足，D=累计已满足，E=拒绝（删单）；A=C+D，E⊂C
+  // 新口径：A=订单总量，B=首日累计未满足，C=累计未满足，D=累计已满足，E=拒绝（删单）；A=C+D，E⊂C，C≤B
   function buildSummary(src) {
     const s = { orderQty: 0, firstShort: 0, gap: 0, totalFulfilled: 0, reject: 0 };
     src.forEach(d => {
@@ -2502,7 +2502,7 @@ function renderShortageOrderDetail() {
       <div style="margin-top:12px">
         <table class="data-table" style="font-size:12px;max-width:720px">
           <thead><tr>
-            <th>统计范围</th><th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日未满足(B)</th>
+            <th>统计范围</th><th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日累计未满足(B)</th>
             <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th><th style="text-align:right;color:var(--color-orange)">拒绝（删单）(E)</th>
           </tr></thead>
           <tbody>
@@ -2520,7 +2520,7 @@ function renderShortageOrderDetail() {
           </tbody>
         </table>
         <div style="margin-top:8px;padding:8px 10px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
-          <strong>口径说明：</strong>A = C + D；E 包含在 C 中。C（累计未满足）后续还会因补货到位后继续发货；E（拒绝/删单）是订单删除，后续不会再排单发货。B（首日未满足）是订单首日的缺口量，不等同于 C。
+          <strong>口径说明：</strong>A = C + D；E 包含在 C 中；C ≤ B。C（累计未满足）是当月订单累计尚未满足的缺口量；E（拒绝/删单）是订单删除，后续不会再排单发货；B（首日累计未满足）是当月首日累计未满足的量，后续即使被满足也不会减少。
         </div>
       </div>
     </div>
@@ -2568,11 +2568,11 @@ function renderShortageOrderDetail() {
         <table class="data-table" style="font-size:12px">
           <thead><tr>
             <th>品牌</th><th>SKU编码</th><th>SKU名称</th>
-            <th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日未满足(B)</th>
+            <th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日累计未满足(B)</th>
             <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th>
             <th style="text-align:right;color:var(--color-orange)">拒绝（删单）(E)</th><th style="text-align:center;color:#8B5CF6">KA&amp;经销商<br/>都缺货</th>
-            <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#FEF3C7">KA累计未满足</th>
-            <th style="text-align:right;background:#DBEAFE">经销首日未满足</th><th style="text-align:right;background:#DBEAFE">经销累计未满足</th>
+            <th style="text-align:right;background:#FEF3C7">KA首日累计未满足</th><th style="text-align:right;background:#FEF3C7">KA累计未满足</th>
+            <th style="text-align:right;background:#DBEAFE">经销首日累计未满足</th><th style="text-align:right;background:#DBEAFE">经销累计未满足</th>
           </tr></thead>
           <tbody>
             ${skuPageData.map(s => '<tr>' +
@@ -2607,7 +2607,7 @@ function renderShortageOrderDetail() {
   // Summary pie charts: KA & Dealer structure
   function buildPieOption(title, s) {
     const data = [
-      { name: '首日未满足(B)', value: s.firstShort, color: '#EF4444' },
+      { name: '首日累计未满足(B)', value: s.firstShort, color: '#EF4444' },
       { name: '累计已满足(D)', value: s.totalFulfilled, color: '#10B981' },
       { name: '拒绝（删单）(E)', value: s.reject, color: '#F59E0B' },
       { name: '累计未满足(C)', value: s.gap, color: '#2563EB' }
@@ -2895,7 +2895,7 @@ function exportShortageOrderDetailCSV() {
     else if (d.channel === '经销商') { s.dealerFirstShort += d.firstDayShort; s.dealerGap += d.totalGap; }
   });
   const skuList = Object.values(skuMap);
-  let csv = '\uFEFF品牌,SKU编码,SKU名称,订单总量(A),首日未满足(B),累计未满足(C),累计已满足(D),拒绝（删单）(E),KA&经销商都缺货,KA首日未满足,KA累计未满足,经销首日未满足,经销累计未满足\n';
+  let csv = '\uFEFF品牌,SKU编码,SKU名称,订单总量(A),首日累计未满足(B),累计未满足(C),累计已满足(D),拒绝（删单）(E),KA&经销商都缺货,KA首日累计未满足,KA累计未满足,经销首日累计未满足,经销累计未满足\n';
   skuList.forEach(s => {
     const bothShort = (s.kaFirstShort > 0 && s.dealerFirstShort > 0) ? '是' : '';
     csv += s.brand + ',' + s.skuCode + ',"' + s.skuName + '",' + s.orderQty + ',' + s.firstShort + ',' + s.gap + ',' + s.totalFulfilled + ',' + s.reject + ',' + bothShort + ',' + s.kaFirstShort + ',' + s.kaGap + ',' + s.dealerFirstShort + ',' + s.dealerGap + '\n';
