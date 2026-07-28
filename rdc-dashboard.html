@@ -1792,12 +1792,37 @@ function renderFulfillment() {
     monthRdcChMap[key].totalFulfillQty += d.totalFulfillQty;
   });
 
+  // MTD满足率（从月初至选中日期累计）
+  const mtdRdcChMap = {};
+  if (filters.fulfillDate && filters.fulfillDate !== 'all') {
+    const monthPrefix = filters.fulfillDate.slice(0, 7);
+    dataStore.orderDetail.filter(d => d.dateStr && d.dateStr.startsWith(monthPrefix) && d.dateStr <= filters.fulfillDate).forEach(d => {
+      const key = d.warehouse + '|' + d.channel;
+      if (!mtdRdcChMap[key]) mtdRdcChMap[key] = { rdc: d.warehouse, channel: d.channel, orderQty: 0, firstDayQty: 0, totalFulfillQty: 0 };
+      mtdRdcChMap[key].orderQty += d.orderQty;
+      mtdRdcChMap[key].firstDayQty += d.firstDayQty;
+      mtdRdcChMap[key].totalFulfillQty += d.totalFulfillQty;
+    });
+  }
+
   // 获取RDC某渠道某日缺货TOP5（tooltip用）
   function getRdcChannelShortageSKUs(rdc, channel, dateStr, limit) {
     limit = limit || 5;
     if (!rdc || !channel || !dateStr) return [];
     const dedup = {};
     dataStore.orderDetail.filter(d => d.warehouse === rdc && d.channel === channel && d.dateStr === dateStr && d.totalGap > 0).forEach(d => {
+      if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+      dedup[d.skuCode].gap += d.totalGap;
+    });
+    return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
+  }
+
+  // 获取RDC某渠道某日期范围缺货TOP5（MTD tooltip用）
+  function getRdcChannelShortageSKUsRange(rdc, channel, startDate, endDate, limit) {
+    limit = limit || 5;
+    if (!rdc || !channel || !startDate || !endDate) return [];
+    const dedup = {};
+    dataStore.orderDetail.filter(d => d.warehouse === rdc && d.channel === channel && d.dateStr >= startDate && d.dateStr <= endDate && d.totalGap > 0).forEach(d => {
       if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
       dedup[d.skuCode].gap += d.totalGap;
     });
@@ -1825,7 +1850,7 @@ function renderFulfillment() {
         <option value="all" ${filters.fulfillRDC==='all'?'selected':''}>所有RDC</option>
         ${RDC_LIST.map(r => '<option value="'+r+'"'+(filters.fulfillRDC===r?' selected':'')+'>'+r+'</option>').join('')}
       </select>
-      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">日满足率基于所选日期 · 月满足率基于全月数据</span>
+      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">${filters.fulfillRateType==='mtd'?'MTD满足率基于月初至所选日期累计':'日满足率基于所选日期'} · 月满足率基于全月数据</span>
     </div>
     ${renderFulfillmentHistory() || ''}
     <div class="card">
@@ -1835,7 +1860,11 @@ function renderFulfillment() {
     <div class="card">
       <div class="card-header">
         <span class="card-title">RDC × 渠道 订单满足率统计表</span>
-        <div style="display:flex;align-items:center;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <select onchange="filters.fulfillRateType=this.value;renderFulfillment()" style="min-width:100px;padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">
+            <option value="day" ${filters.fulfillRateType==='day'?'selected':''}>日满足率</option>
+            <option value="mtd" ${filters.fulfillRateType==='mtd'?'selected':''}>MTD满足率</option>
+          </select>
           <label style="font-size:11px;color:var(--text-secondary)">📅</label>
           <select onchange="filters.fulfillDate=this.value;renderFulfillment()" style="min-width:120px;padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">
             ${dateOptions.map(d => '<option value="'+d+'"'+(filters.fulfillDate===d?' selected':'')+'>'+d+'</option>').join('')}
@@ -1893,28 +1922,39 @@ function renderFulfillment() {
 
   // ---- 统计表：RDC×渠道 ----
   const channels = ['KA', '经销商'];
+  const isMtdMode = filters.fulfillRateType === 'mtd';
+  const dispKey = isMtdMode ? 'mtd' : 'day';
+  const dispLabel = isMtdMode ? 'MTD满足率' : '日满足率';
   const tableRows = [];
   RDC_LIST.forEach(rdc => {
     const row = { rdc: rdc };
-    let allDayOrder = 0, allDayFirst = 0, allMonthOrder = 0, allMonthFulfill = 0;
+    let allDayOrder = 0, allDayFirst = 0, allMtdOrder = 0, allMtdFirst = 0, allMonthOrder = 0, allMonthFulfill = 0;
     channels.forEach(ch => {
       const dk = rdc + '|' + ch;
       const dayData = dayRdcChMap[dk];
+      const mtdData = mtdRdcChMap[dk];
       const monthData = monthRdcChMap[dk];
       const dOrder = dayData ? dayData.orderQty : 0;
       const dFirst = dayData ? dayData.firstDayQty : 0;
       const mOrder = monthData ? monthData.orderQty : 0;
       const mFulfill = monthData ? monthData.totalFulfillQty : 0;
+      const mtOrder = mtdData ? mtdData.orderQty : 0;
+      const mtFirst = mtdData ? mtdData.firstDayQty : 0;
       row[ch + '_dayOrder'] = dOrder;
       row[ch + '_dayFirst'] = dFirst;
       row[ch + '_dayRate'] = dOrder > 0 ? dFirst / dOrder : 0;
+      row[ch + '_mtdOrder'] = mtOrder;
+      row[ch + '_mtdFirst'] = mtFirst;
+      row[ch + '_mtdRate'] = mtOrder > 0 ? mtFirst / mtOrder : 0;
       row[ch + '_monthOrder'] = mOrder;
       row[ch + '_monthFulfill'] = mFulfill;
       row[ch + '_monthRate'] = mOrder > 0 ? mFulfill / mOrder : 0;
       allDayOrder += dOrder; allDayFirst += dFirst;
+      allMtdOrder += mtOrder; allMtdFirst += mtFirst;
       allMonthOrder += mOrder; allMonthFulfill += mFulfill;
     });
     row['total_dayRate'] = allDayOrder > 0 ? allDayFirst / allDayOrder : 0;
+    row['total_mtdRate'] = allMtdOrder > 0 ? allMtdFirst / allMtdOrder : 0;
     row['total_monthRate'] = allMonthOrder > 0 ? allMonthFulfill / allMonthOrder : 0;
     tableRows.push(row);
   });
@@ -1927,7 +1967,7 @@ function renderFulfillment() {
 
   let tableHtml = '<table class="data-table"><thead><tr>' +
     '<th rowspan="2" style="vertical-align:middle">RDC</th>' +
-    '<th colspan="3" style="text-align:center;background:#FFFBEB">日满足率（' + filters.fulfillDate + '）</th>' +
+    '<th colspan="3" style="text-align:center;background:#FFFBEB">' + dispLabel + '（' + filters.fulfillDate + '）</th>' +
     '<th colspan="3" style="text-align:center;background:#EFF6FF">月满足率（全月）</th>' +
     '</tr><tr>' +
     '<th style="text-align:center;background:#FFFBEB">KA</th><th style="text-align:center;background:#FFFBEB">经销商</th><th style="text-align:center;background:#FFFBEB">合计</th>' +
@@ -1936,28 +1976,36 @@ function renderFulfillment() {
 
   window._tipStore.length = 0;
   tableRows.forEach(r => {
-    const dayKa = getRdcChannelShortageSKUs(r.rdc, 'KA', filters.fulfillDate, 5);
-    const dayDealer = getRdcChannelShortageSKUs(r.rdc, '经销商', filters.fulfillDate, 5);
+    const rangeStart = isMtdMode ? (filters.fulfillDate.slice(0, 7) + '-01') : filters.fulfillDate;
+    const leftKa = isMtdMode
+      ? getRdcChannelShortageSKUsRange(r.rdc, 'KA', rangeStart, filters.fulfillDate, 5)
+      : getRdcChannelShortageSKUs(r.rdc, 'KA', filters.fulfillDate, 5);
+    const leftDealer = isMtdMode
+      ? getRdcChannelShortageSKUsRange(r.rdc, '经销商', rangeStart, filters.fulfillDate, 5)
+      : getRdcChannelShortageSKUs(r.rdc, '经销商', filters.fulfillDate, 5);
 
     function skuTooltipHTML(channel, skus) {
+      const periodTip = isMtdMode ? 'MTD订单支数：' + formatNum(r[channel + '_mtdOrder']) + '<br/>MTD期间 ' + rangeStart + ' ~ ' + filters.fulfillDate : '订单支数：' + formatNum(r[channel + '_dayOrder']);
       let head = '<div style="font-weight:600;margin-bottom:4px">' + r.rdc + ' · ' + channel + '</div>'
-        + '<div style="color:#6b7280;font-size:11px;margin-bottom:4px">订单支数：' + formatNum(r[channel + '_dayOrder']) + '</div>';
-      if (skus.length === 0) return head + '<div style="color:#9ca3af">当日无缺货记录</div>';
+        + '<div style="color:#6b7280;font-size:11px;margin-bottom:4px">' + periodTip + '</div>';
+      if (skus.length === 0) return head + '<div style="color:#9ca3af">' + (isMtdMode ? 'MTD期间无缺货记录' : '当日无缺货记录') + '</div>';
       return head + buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, r.rdc);
     }
 
+    const kaRate = r['KA_' + dispKey + 'Rate'];
+    const dealerRate = r['经销商_' + dispKey + 'Rate'];
     tableHtml += '<tr>' +
       '<td><strong>' + r.rdc + '</strong></td>' +
-      // 日满足率（淡黄底）
-      '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('KA', dayKa)) + '">' +
-        '<span class="' + (r.KA_dayRate >= 0.95 ? 'rate-good' : r.KA_dayRate >= 0.9 ? 'rate-warn' : 'rate-bad') + '">' + formatPct(r.KA_dayRate) + '</span>' +
-        (dayKa.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + dayKa.length + 'SKU</span>' : '') +
+      // 日/MTD满足率（淡黄底）
+      '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('KA', leftKa)) + '">' +
+        '<span class="' + (kaRate >= 0.95 ? 'rate-good' : kaRate >= 0.9 ? 'rate-warn' : 'rate-bad') + '">' + formatPct(kaRate) + '</span>' +
+        (leftKa.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + leftKa.length + 'SKU</span>' : '') +
       '</td>' +
-      '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('经销商', dayDealer)) + '">' +
-        '<span class="' + (r.经销商_dayRate >= 0.95 ? 'rate-good' : r.经销商_dayRate >= 0.9 ? 'rate-warn' : r.经销商_dayRate > 0 ? 'rate-bad' : '') + '">' + formatPct(r.经销商_dayRate) + '</span>' +
-        (dayDealer.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + dayDealer.length + 'SKU</span>' : '') +
+      '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('经销商', leftDealer)) + '">' +
+        '<span class="' + (dealerRate >= 0.95 ? 'rate-good' : dealerRate >= 0.9 ? 'rate-warn' : dealerRate > 0 ? 'rate-bad' : '') + '">' + formatPct(dealerRate) + '</span>' +
+        (leftDealer.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + leftDealer.length + 'SKU</span>' : '') +
       '</td>' +
-      pctCell(r.total_dayRate, 'day') +
+      pctCell(r['total_' + dispKey + 'Rate'], 'day') +
       // 月满足率（淡蓝底）
       pctCell(r.KA_monthRate, 'month') +
       pctCell(r.经销商_monthRate, 'month') +
