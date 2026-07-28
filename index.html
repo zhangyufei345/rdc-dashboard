@@ -2529,7 +2529,7 @@ function renderShortageOrderDetail() {
     <div class="card" style="margin-bottom:12px">
       <div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="card-title">品牌维度</span>
-        <span style="font-size:12px;color:var(--text-secondary)">首日未满足订单量 + 首日满足率对比</span>
+        <span style="font-size:12px;color:var(--text-secondary)">首日累计未满足订单量 + 首日满足率对比</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         <div class="chart-container" style="flex:1;min-width:300px;height:240px" id="chart-od-fulfill-rate"></div>
@@ -2537,8 +2537,8 @@ function renderShortageOrderDetail() {
           <div class="table-wrap" style="max-height:240px;overflow-y:auto">
             <table class="data-table" style="font-size:12px">
               <thead><tr>
-                <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日未满足</th><th style="text-align:right;color:var(--color-green)">首日已发</th>
-                <th style="text-align:right;background:#FEF3C7">KA首日未满足</th><th style="text-align:right;background:#DBEAFE">经销首日未满足</th>
+                <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日累计未满足</th><th style="text-align:right;color:var(--color-green)">首日累计已满足</th>
+                <th style="text-align:right;background:#FEF3C7">KA首日累计未满足</th><th style="text-align:right;background:#DBEAFE">经销首日累计未满足</th>
               </tr></thead>
               <tbody>
                 ${brandSorted.map(([brand, v]) => '<tr>' +
@@ -2659,7 +2659,7 @@ function renderShortageOrderDetail() {
       var topShort = brandTopShortage[brand] || [];
       if (topShort.length > 0) {
         html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要未满足 TOP5：</div>';
-        html += buildTopShortTipTable(topShort, '首日缺口(箱)', function(s, info) {
+        html += buildTopShortTipTable(topShort, '首日累计缺口(箱)', function(s, info) {
           // firstDayShort 是基本单位(支)，按箱规换算成箱
           return info.boxSpec ? formatNum(Math.round(s.gap / info.boxSpec)) : formatNum(s.gap);
         }, null);
