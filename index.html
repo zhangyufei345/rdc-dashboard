@@ -2551,8 +2551,8 @@ function renderShortageOrderDetail() {
         ${summaryFilterHtml}
       </div>
       <div style="display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px">
-        <div class="chart-container" style="flex:0 0 320px;height:240px" id="chart-od-summary-ka"></div>
-        <div class="chart-container" style="flex:0 0 320px;height:240px" id="chart-od-summary-dealer"></div>
+        <div class="chart-container" style="flex:0 0 320px;height:260px" id="chart-od-summary-ka"></div>
+        <div class="chart-container" style="flex:0 0 320px;height:260px" id="chart-od-summary-dealer"></div>
       </div>
       <div style="margin-top:12px">
         <table class="data-table" style="font-size:12px;max-width:720px">
@@ -2670,11 +2670,15 @@ function renderShortageOrderDetail() {
     return {
       title: { text: title, left: 'center', top: 5, textStyle: { fontSize: 13, fontWeight: 600 } },
       tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + '（' + p.percent.toFixed(1) + '%）' },
-      legend: { bottom: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 12, itemHeight: 12 },
+      legend: { orient: 'vertical', right: 5, top: 'middle', itemGap: 6, textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
       series: [{
-        type: 'pie', radius: ['40%', '65%'], center: ['50%', '50%'],
+        type: 'pie', radius: ['42%', '62%'], center: ['38%', '55%'],
         data: data,
-        label: { formatter: '{b}\n{d}%', fontSize: 10 },
+        minAngle: 3,
+        avoidLabelOverlap: true,
+        label: { show: true, position: 'outside', formatter: '{b}\n{d}%', fontSize: 10, lineHeight: 12 },
+        labelLine: { show: true, length: 12, length2: 8, smooth: 0.1 },
+        labelLayout: { hideOverlap: true },
         color: data.map(d => d.color),
         emphasis: { itemStyle: { shadowBlur: 10 } }
       }]
