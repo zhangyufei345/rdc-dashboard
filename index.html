@@ -1792,7 +1792,7 @@ function renderFulfillment() {
     monthRdcChMap[key].totalFulfillQty += d.totalFulfillQty;
   });
 
-  // MTD满足率（从月初至选中日期累计）
+  // MTD日满足率（从月初至选中日期累计，替换左侧日满足率列）
   const mtdRdcChMap = {};
   if (filters.fulfillDate && filters.fulfillDate !== 'all') {
     const monthPrefix = filters.fulfillDate.slice(0, 7);
@@ -1850,7 +1850,7 @@ function renderFulfillment() {
         <option value="all" ${filters.fulfillRDC==='all'?'selected':''}>所有RDC</option>
         ${RDC_LIST.map(r => '<option value="'+r+'"'+(filters.fulfillRDC===r?' selected':'')+'>'+r+'</option>').join('')}
       </select>
-      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">${filters.fulfillRateType==='mtd'?'MTD满足率基于月初至所选日期累计':'日满足率基于所选日期'} · 月满足率基于全月数据</span>
+      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">${filters.fulfillRateType==='mtd'?'MTD日满足率基于月初至所选日期累计':'日满足率基于所选日期'} · 月满足率基于全月数据</span>
     </div>
     ${renderFulfillmentHistory() || ''}
     <div class="card">
@@ -1863,7 +1863,7 @@ function renderFulfillment() {
         <div style="display:flex;align-items:center;gap:8px">
           <select onchange="filters.fulfillRateType=this.value;renderFulfillment()" style="min-width:100px;padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">
             <option value="day" ${filters.fulfillRateType==='day'?'selected':''}>日满足率</option>
-            <option value="mtd" ${filters.fulfillRateType==='mtd'?'selected':''}>MTD满足率</option>
+            <option value="mtd" ${filters.fulfillRateType==='mtd'?'selected':''}>MTD日满足率</option>
           </select>
           <label style="font-size:11px;color:var(--text-secondary)">📅</label>
           <select onchange="filters.fulfillDate=this.value;renderFulfillment()" style="min-width:120px;padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">
@@ -1924,7 +1924,7 @@ function renderFulfillment() {
   const channels = ['KA', '经销商'];
   const isMtdMode = filters.fulfillRateType === 'mtd';
   const dispKey = isMtdMode ? 'mtd' : 'day';
-  const dispLabel = isMtdMode ? 'MTD满足率' : '日满足率';
+  const dispLabel = isMtdMode ? 'MTD日满足率' : '日满足率';
   const tableRows = [];
   RDC_LIST.forEach(rdc => {
     const row = { rdc: rdc };
