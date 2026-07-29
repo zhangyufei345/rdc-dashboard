@@ -1381,7 +1381,7 @@ function renderOverview() {
       <div class="kpi-card teal"><div class="kpi-label">在途总箱数（截止至${dateLabel}）</div><div class="kpi-value">${formatNum(totalTransitBoxes)}<span class="kpi-unit">箱</span></div></div>
       <div class="kpi-card purple"><div class="kpi-label">涉及RDC数（截止至${dateLabel}）</div><div class="kpi-value">${affectedRdcs}<span class="kpi-unit">个</span></div></div>
     </div>
-    ${(renderOverviewHistory() || '')}
+    ${renderWeekdayFulfillCard()}
     <div class="row-2">
       <div class="card">
         <div class="card-header"><span class="card-title">RDC日订单满足率</span></div>
@@ -1469,7 +1469,7 @@ function renderOverview() {
             const rate = (p.value * 100).toFixed(1) + '%';
             html += '<div style="margin-top:6px"><strong>' + rdc + '：' + rate + '</strong></div>';
             const skus = getTopFirstDayShortSKUs(dateStr, rdc, 5);
-            html += buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, rdc);
+            html += buildTopShortTipTable(skus, '订单缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, rdc);
           });
           return html;
         }
@@ -1564,7 +1564,7 @@ function renderOverview() {
           let html = '<strong>' + brand + ' · ' + rdc + '</strong><br/>月满足率：' + rate;
           const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
           if (skus.length > 0) {
-            html += buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, rdc);
+            html += buildTopShortTipTable(skus, '订单缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, rdc);
           } else {
             // 从orderDetail计算当月该品牌×RDC的总缺货
             const monthStr = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (filters.overviewDate ? filters.overviewDate.slice(0, 7) : '');
@@ -1689,8 +1689,8 @@ function renderOverview() {
       <td>${d.dcSupply}</td></tr>`).join('') + '</tbody></table>');
   document.getElementById('table-shortage-overview').innerHTML = tableHtml;
 
-  // 月度订单满足率历史趋势（2025 vs 2026）
-  renderOverviewHistoryCharts();
+  // 工作日订单满足率折线图
+  renderWeekdayFulfillChart();
 }
 
 // 日度订单满足率历史趋势卡片（HTML 部分）
@@ -1733,6 +1733,88 @@ function renderOverviewHistoryCharts() {
   });
 }
 
+// 获取某日（跨所有RDC、渠道）的缺货TOP N（折线图tooltip用）
+function getDateShortageSKUs(dateStr, limit) {
+  limit = limit || 5;
+  if (!dateStr) return [];
+  const dedup = {};
+  dataStore.orderDetail.filter(d => d.dateStr === dateStr && d.totalGap > 0).forEach(d => {
+    if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+    dedup[d.skuCode].gap += d.totalGap;
+  });
+  return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
+}
+
+// 工作日订单满足率卡片（HTML）
+function renderWeekdayFulfillCard() {
+  return '<div class="card" style="margin-bottom:16px">' +
+    '<div class="card-header"><span class="card-title">日订单满足率（跳过双休日）</span></div>' +
+    '<div class="chart-container" id="chart-fulfill-weekday"></div>' +
+  '</div>';
+}
+
+// 工作日订单满足率折线图渲染（自包含，可在 Overview/Fulfillment 复用）
+function renderWeekdayFulfillChart() {
+  const selectedRdc = filters.fulfillRDC || 'all';
+  const monthFilter = filters.dataMonth && filters.dataMonth !== 'all';
+  const activeChannels = ['KA', '经销商'];
+
+  const weekdayMap = {};
+  dataStore.orderDetail.forEach(d => {
+    if (monthFilter && !d.dateStr.startsWith(filters.dataMonth)) return;
+    if (selectedRdc !== 'all' && d.warehouse !== selectedRdc) return;
+    if (!isWorkday(d.dateStr)) return;
+    if (d.channel !== 'KA' && d.channel !== '经销商') return;
+    const key = d.dateStr + '|' + d.channel;
+    if (!weekdayMap[key]) weekdayMap[key] = { dateStr: d.dateStr, channel: d.channel, orderQty: 0, firstDayQty: 0 };
+    weekdayMap[key].orderQty += d.orderQty;
+    weekdayMap[key].firstDayQty += d.firstDayQty;
+  });
+  const weekdayData = Object.values(weekdayMap);
+  const wdDates = [...new Set(weekdayData.map(d => d.dateStr))].sort();
+
+  if (wdDates.length === 0 || activeChannels.length === 0) return;
+  const chart1 = initChart('chart-fulfill-weekday');
+  const colors = { 'KA': '#2563EB', '经销商': '#10B981' };
+  chart1.setOption({
+    tooltip: {
+      trigger: 'axis',
+      confine: true,
+      textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        const dateStr = params[0].axisValue;
+        let html = '<strong>' + dateStr + '</strong>';
+        params.forEach(p => {
+          const ch = p.seriesName;
+          const rate = (p.value * 100).toFixed(1) + '%';
+          html += '<br/>' + ch + '：' + rate;
+        });
+        const topShort = getDateShortageSKUs(dateStr, 5);
+        if (topShort.length > 0) {
+          html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日主要缺货 TOP5：</div>';
+          html += buildTopShortTipTable(topShort, '订单缺口(箱)', function(s, info){
+            return info.boxSpec ? formatNum(Math.round(s.gap / info.boxSpec)) : formatNum(s.gap);
+          }, null);
+        } else {
+          html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日无缺货记录</div>';
+        }
+        return html;
+      }
+    },
+    legend: { data: activeChannels, top: 5, left: 10, textStyle: { fontSize: 11 } },
+    grid: { left: 55, right: 20, top: 40, bottom: 60 },
+    xAxis: { type: 'category', data: wdDates, axisLabel: { rotate: 45, fontSize: 10, interval: Math.max(0, Math.floor(wdDates.length / 10) - 1) }, boundaryGap: true },
+    yAxis: { type: 'value', min: 0.55, max: 1.03, axisLabel: { formatter: v => (v*100).toFixed(0)+'%' } },
+    series: activeChannels.map(ch => {
+      const chData = wdDates.map(d => {
+        const item = weekdayMap[d + '|' + ch];
+        return item ? (item.orderQty > 0 ? item.firstDayQty / item.orderQty : null) : null;
+      });
+      return { name: ch, type: 'line', data: chData, smooth: true, symbol: 'none', lineStyle: { width: 2 }, color: colors[ch] || '#64748B' };
+    })
+  });
+}
+
 // ============ FULFILLMENT PAGE ============
 function renderFulfillment() {
   setTitle('订单满足率分析');
@@ -1750,23 +1832,7 @@ function renderFulfillment() {
     filters.fulfillDate = dateOptions[0] || 'all';
   }
 
-  const activeChannels = getFulfillCheckedChannels();
   const monthFilter = filters.dataMonth && filters.dataMonth !== 'all';
-
-  // ---- 工作日日订单满足率趋势数据（按RDC+月份筛选） ----
-  const selectedRdc = filters.fulfillRDC;
-  const weekdayMap = {};
-  dataStore.orderDetail.forEach(d => {
-    if (monthFilter && !d.dateStr.startsWith(filters.dataMonth)) return;
-    if (selectedRdc !== 'all' && d.warehouse !== selectedRdc) return; // 按RDC筛选
-    if (!isWorkday(d.dateStr)) return; // 跳过周末和国定假日
-    const key = d.dateStr + '|' + d.channel;
-    if (!weekdayMap[key]) weekdayMap[key] = { dateStr: d.dateStr, channel: d.channel, orderQty: 0, firstDayQty: 0 };
-    weekdayMap[key].orderQty += d.orderQty;
-    weekdayMap[key].firstDayQty += d.firstDayQty;
-  });
-  const weekdayData = Object.values(weekdayMap);
-  const wdDates = [...new Set(weekdayData.map(d => d.dateStr))].sort();
 
   // ---- RDC×渠道 统计表数据 ----
   // 日满足率（按选中日期过滤）
@@ -1829,18 +1895,6 @@ function renderFulfillment() {
     return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
   }
 
-  // 获取某日（跨所有RDC、渠道）的缺货TOP N（折线图tooltip用）
-  function getDateShortageSKUs(dateStr, limit) {
-    limit = limit || 5;
-    if (!dateStr) return [];
-    const dedup = {};
-    dataStore.orderDetail.filter(d => d.dateStr === dateStr && d.totalGap > 0).forEach(d => {
-      if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
-      dedup[d.skuCode].gap += d.totalGap;
-    });
-    return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
-  }
-
   page.innerHTML = `
     <div class="filter-bar">
       <label>显示渠道：</label>
@@ -1853,10 +1907,7 @@ function renderFulfillment() {
       <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">${filters.fulfillRateType==='mtd'?'MTD日满足率基于月初至所选日期累计':'日满足率基于所选日期'} · 月满足率基于全月数据</span>
     </div>
     ${renderFulfillmentHistory() || ''}
-    <div class="card">
-      <div class="card-header"><span class="card-title">日订单满足率（跳过双休日）</span></div>
-      <div class="chart-container" id="chart-fulfill-weekday"></div>
-    </div>
+    ${renderOverviewHistory() || ''}
     <div class="card">
       <div class="card-header">
         <span class="card-title">RDC × 渠道 订单满足率统计表</span>
@@ -1874,51 +1925,6 @@ function renderFulfillment() {
       <div class="table-wrap" id="table-rdc-channel-fulfill"></div>
     </div>
   `;
-
-  // ---- 折线图：工作日订单满足趋势 ----
-  if (wdDates.length > 0 && activeChannels.length > 0) {
-    const chart1 = initChart('chart-fulfill-weekday');
-    const colors = { 'KA': '#2563EB', '经销商': '#10B981' };
-    chart1.setOption({
-      tooltip: {
-        trigger: 'axis',
-        confine: true,
-        textStyle: { fontSize: 11 },
-        formatter: function(params) {
-          const dateStr = params[0].axisValue;
-          let html = '<strong>' + dateStr + '</strong>';
-          params.forEach(p => {
-            const ch = p.seriesName;
-            const rate = (p.value * 100).toFixed(1) + '%';
-            html += '<br/>' + ch + '：' + rate;
-          });
-          // 当日主要缺货产品 TOP5（按缺口总量，含 RDC在途 + 大仓供应）
-          const topShort = getDateShortageSKUs(dateStr, 5);
-          if (topShort.length > 0) {
-            html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日主要缺货 TOP5：</div>';
-            html += buildTopShortTipTable(topShort, '缺口(箱)', function(s, info){
-              // orderDetail.totalGap 是基本单位(支)，按箱规换算成箱
-              return info.boxSpec ? formatNum(Math.round(s.gap / info.boxSpec)) : formatNum(s.gap);
-            }, null);
-          } else {
-            html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">当日无缺货记录</div>';
-          }
-          return html;
-        }
-      },
-      legend: { data: activeChannels, top: 5, left: 10, textStyle: { fontSize: 11 } },
-      grid: { left: 55, right: 20, top: 40, bottom: 60 },
-      xAxis: { type: 'category', data: wdDates, axisLabel: { rotate: 45, fontSize: 10, interval: Math.max(0, Math.floor(wdDates.length / 10) - 1) }, boundaryGap: true },
-      yAxis: { type: 'value', min: 0.55, max: 1.03, axisLabel: { formatter: v => (v*100).toFixed(0)+'%' } },
-      series: activeChannels.map(ch => {
-        const chData = wdDates.map(d => {
-          const item = weekdayMap[d + '|' + ch];
-          return item ? (item.orderQty > 0 ? item.firstDayQty / item.orderQty : null) : null;
-        });
-        return { name: ch, type: 'line', data: chData, smooth: true, symbol: 'none', lineStyle: { width: 2 }, color: colors[ch] || '#64748B' };
-      })
-    });
-  }
 
   // ---- 统计表：RDC×渠道 ----
   const channels = ['KA', '经销商'];
@@ -1989,7 +1995,7 @@ function renderFulfillment() {
       let head = '<div style="font-weight:600;margin-bottom:4px">' + r.rdc + ' · ' + channel + '</div>'
         + '<div style="color:#6b7280;font-size:11px;margin-bottom:4px">' + periodTip + '</div>';
       if (skus.length === 0) return head + '<div style="color:#9ca3af">' + (isMtdMode ? 'MTD期间无缺货记录' : '当日无缺货记录') + '</div>';
-      return head + buildTopShortTipTable(skus, '缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, r.rdc);
+      return head + buildTopShortTipTable(skus, '订单缺口(箱)', function(s, info){ return (info.boxSpec && s.gap) ? formatNum(Math.round(s.gap / info.boxSpec)) : '—'; }, r.rdc);
     }
 
     const kaRate = r['KA_' + dispKey + 'Rate'];
@@ -2019,6 +2025,7 @@ function renderFulfillment() {
 
   // 订单满足率历史同比矩阵 + 年度概览
   renderFulfillmentHistoryCharts();
+  renderOverviewHistoryCharts();
 }
 
 // 月度订单满足率历史对比卡片（HTML 部分，由 renderFulfillment 调用）
@@ -2707,7 +2714,7 @@ function renderShortageOrderDetail() {
       var topShort = brandTopShortage[brand] || [];
       if (topShort.length > 0) {
         html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要未满足 TOP5：</div>';
-        html += buildTopShortTipTable(topShort, '首日累计缺口(箱)', function(s, info) {
+        html += buildTopShortTipTable(topShort, '首日累计订单缺口(箱)', function(s, info) {
           // firstDayShort 是基本单位(支)，按箱规换算成箱
           return info.boxSpec ? formatNum(Math.round(s.gap / info.boxSpec)) : formatNum(s.gap);
         }, null);
@@ -3035,7 +3042,7 @@ function renderBrandChannel() {
           if (skus.length > 0) {
             html += '<br/>—— TOP5 缺货SKU ——';
             skus.forEach((s, i) => {
-              html += '<br/>' + (i+1) + '. ' + s.name + '<br/>   缺口：' + s.gap + '箱';
+              html += '<br/>' + (i+1) + '. ' + s.name + '<br/>   订单缺口：' + s.gap + '箱';
             });
           } else {
             html += '<br/>该品牌在该RDC下无缺货';
@@ -3489,7 +3496,7 @@ function renderCustomerDrillDetail(customer) {
             <span style="color:var(--text-secondary)">首日缺货量（箱）</span><strong style="color:#EF4444">${formatNum(totalGapBoxes)}</strong>
           </div>
           <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-card)">
-            <span style="color:var(--text-secondary)">总履约缺口（箱）</span><strong style="color:#EF4444">${formatNum(totalGapBoxes)}</strong>
+            <span style="color:var(--text-secondary)">总履约订单缺口（箱）</span><strong style="color:#EF4444">${formatNum(totalGapBoxes)}</strong>
             ${customer.rejectQty > 0 ? '<span style="font-size:10px;color:#F59E0B;margin-left:6px">（已扣除拒绝量，箱数按各SKU箱规换算）</span>' : '<span style="font-size:10px;color:var(--text-tertiary);margin-left:6px">箱数按各SKU箱规换算</span>'}
           </div>
         </div>
