@@ -6120,170 +6120,457 @@ function reRenderForecast() {
   if (ctx && ctx.page && ctx.tabBar) renderInventoryForecast(ctx.page, ctx.tabBar);
 }
 
-// === 库存变化根因分析（数量/箱） ===
-// 数据源：cov5/cov6 availableQty（5-6月库存数量）、shipmentCost/avgCost（出货箱数估算）、pullbackByRdcMonth.qty（拉回箱数）、transship.deliveryQty（转储箱数）
-// 库存变动（箱）= 月末库存 - 月初库存 = 拉回 + 转储入 - 出货(估算)
+// === 库存变化根因分析（数量/箱，2026年5-6月） ===
+// 数据源：
+//   - cov5.availableQty（5月末库存，=6月期初）
+//   - cov6.availableQty（6月末库存）
+//   - pullbackByRdcMonth.qty + pullbackRaw（拉回箱数，按发货RDC+月份）
+//   - transship.deliveryQty（转储入箱数，按收货RDC+月份）
+//   - orderDetail.totalFulfillQty（累计出货，按SKU箱规换算）
+// 库存变动（箱）= 期末库存 - 期初库存 = 拉回 + 转储入 - 出货
 function renderInventoryRootCause(page, tabBar) {
   const pullback = (dataStore.inventory && dataStore.inventory.pullbackByRdcMonth) || {};
+  const pullbackRaw = (dataStore.inventory && dataStore.inventory.pullbackRaw) || [];
   const transship = dataStore.transship || [];
   const productMaster = (dataStore.inventory && dataStore.inventory.productMaster) || {};
   const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
+  const orderDetail = dataStore.orderDetail || [];
 
-  // 7 大 RDC（含华东）
   const rdcOrder = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
-  const monthAbbrev = ['1月','2月','3月','4月','5月','6月'];
+  const yms = ['2026-05','2026-06'];
+  const ymsLabel = ['5月','6月'];
 
-  // 拉回箱数（按发货RDC + YYYY-MM）
+  // ====== 通用工具函数 ======
+  function rn(v) { return Math.round(v || 0); }
+  function getSpec(sku) { const m = productMaster[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+
+  // 构建 SKU→品牌 字典（从覆盖数据）
+  const skuBrand = {};
+  [...cov5, ...cov6].forEach(function(d) { if (d.sku && d.brand && !skuBrand[d.sku]) skuBrand[d.sku] = d.brand; });
+
+  // ====== 数据聚合：库存（cov5/6 availableQty → 箱，按SKU箱规） ======
+  function invByRdc(covArr) {
+    var m = {};
+    covArr.forEach(function(d) {
+      if (!m[d.rdc]) m[d.rdc] = 0;
+      m[d.rdc] += (d.availableQty || 0) / getSpec(d.sku);
+    });
+    Object.keys(m).forEach(function(k) { m[k] = rn(m[k]); });
+    return m;
+  }
+  var inv5 = invByRdc(cov5); // 5月末=6月初
+  var inv6 = invByRdc(cov6); // 6月末
+
+  // 品牌×RDC 期末库存
+  function brandRdcInv(covArr) {
+    var m = {};
+    covArr.forEach(function(d) {
+      if (!d.brand) return;
+      if (!m[d.brand]) m[d.brand] = {};
+      if (!m[d.brand][d.rdc]) m[d.brand][d.rdc] = 0;
+      m[d.brand][d.rdc] += (d.availableQty || 0) / getSpec(d.sku);
+    });
+    Object.keys(m).forEach(function(b) { Object.keys(m[b]).forEach(function(r) { m[b][r] = rn(m[b][r]); }); });
+    return m;
+  }
+  var brandRdcInv6 = brandRdcInv(cov6);
+  var brandRdcInv5 = brandRdcInv(cov5);
+
+  // ====== 拉回箱数（pullbackByRdcMonth + 品牌维度从pullbackRaw重聚合） ======
   function pullQty(rdc, ym) {
-    const m = pullback[rdc] || {};
-    const o = m[ym];
-    return o ? o.qty : 0;
+    var o = (pullback[rdc] || {})[ym];
+    return o ? rn(o.qty) : 0;
   }
-  // 转储入箱数（按收货方RDC + YYYY-MM）
+  // 品牌×RDC×月 拉回
+  function brandPullRdc() {
+    var m = {};
+    for (var i = 1; i < pullbackRaw.length; i++) {
+      var r = pullbackRaw[i]; if (!r || !r[0]) continue;
+      var dt0 = r[0], dt = null;
+      if (typeof dt0 === 'number' && dt0 > 1000) dt = new Date((dt0 - 25569) * 86400 * 1000);
+      else if (typeof dt0 === 'string' && dt0.length >= 7) dt = new Date(dt0);
+      if (!dt || isNaN(dt.getTime())) continue;
+      var ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth() + 1).toString().padStart(2,'0');
+      if (ym !== '2026-05' && ym !== '2026-06') continue;
+      var rdcRaw = String(r[7] || '').trim().replace('仓','RDC'); if (!rdcRaw) continue;
+      var sku = String(r[3] || '').trim();
+      var spec = (productMaster[sku] && productMaster[sku].spec > 0) ? productMaster[sku].spec : 0;
+      var unit = String(r[6] || '').trim(); var qty = Number(r[5]) || 0;
+      var qtyBox = 0;
+      if (unit === '箱') qtyBox = qty; else if (spec > 0) qtyBox = qty / spec;
+      if (qtyBox === 0) continue;
+      var brand = skuBrand[sku] || '其他';
+      if (!m[brand]) m[brand] = {};
+      if (!m[brand][rdcRaw]) m[brand][rdcRaw] = {};
+      if (!m[brand][rdcRaw][ym]) m[brand][rdcRaw][ym] = 0;
+      m[brand][rdcRaw][ym] += qtyBox;
+    }
+    Object.keys(m).forEach(function(b) { Object.keys(m[b]).forEach(function(r) { Object.keys(m[b][r]).forEach(function(y) { m[b][r][y] = rn(m[b][r][y]); }); }); });
+    return m;
+  }
+  var brandPullByRdc = brandPullRdc();
+
+  // ====== 转储入箱数（transship deliveryQty） ======
   function transQty(rdc, ym) {
-    let qty = 0;
-    for (const t of transship) {
-      if (t.rdc !== rdc) continue;
-      const d = (t.date instanceof Date) ? t.date : new Date(t.date);
-      const t_ym = d.getUTCFullYear() + '-' + (d.getUTCMonth() + 1).toString().padStart(2, '0');
-      if (t_ym !== ym) continue;
-      qty += t.deliveryQty || t.confirmQty || t.invoiceQty || 0;
+    var q = 0;
+    for (var t = 0; t < transship.length; t++) {
+      var d = transship[t]; if (d.rdc !== rdc) continue;
+      var dt = (d.date instanceof Date) ? d.date : new Date(d.date);
+      var dy = dt.getUTCFullYear() + '-' + (dt.getUTCMonth() + 1).toString().padStart(2,'0');
+      if (dy !== ym) continue;
+      q += d.deliveryQty || d.confirmQty || d.invoiceQty || 0;
     }
-    return qty;
+    return rn(q);
   }
-  // 出货箱数估算：从 history.shipmentCost（元）÷ 平均单位成本（元/箱）= 箱数
-  // 平均单位成本（元/箱）= 平均成本价 × 平均箱规
-  function avgCostPerBox() {
-    let totalCost = 0, cnt = 0;
-    for (const sku in productMaster) {
-      const m = productMaster[sku];
-      if (m && m.cost > 0 && m.spec > 0) {
-        totalCost += m.cost * m.spec;  // 元/箱
-        cnt++;
-      }
+  // 品牌×RDC×月 转储入
+  function brandTransRdc() {
+    var m = {};
+    for (var t = 0; t < transship.length; t++) {
+      var d = transship[t];
+      var dt = (d.date instanceof Date) ? d.date : new Date(d.date);
+      var dy = dt.getUTCFullYear() + '-' + (dt.getUTCMonth() + 1).toString().padStart(2,'0');
+      if (dy !== '2026-05' && dy !== '2026-06') continue;
+      var q = d.deliveryQty || d.confirmQty || d.invoiceQty || 0;
+      if (q === 0) continue;
+      var brand = skuBrand[d.material] || '其他';
+      if (!m[brand]) m[brand] = {};
+      if (!m[brand][d.rdc]) m[brand][d.rdc] = {};
+      if (!m[brand][d.rdc][dy]) m[brand][d.rdc][dy] = 0;
+      m[brand][d.rdc][dy] += q;
     }
-    return cnt > 0 ? totalCost / cnt : 50;  // 默认 50元/箱 兜底
+    Object.keys(m).forEach(function(b) { Object.keys(m[b]).forEach(function(r) { Object.keys(m[b][r]).forEach(function(y) { m[b][r][y] = rn(m[b][r][y]); }); }); });
+    return m;
   }
-  const avgBoxCost = avgCostPerBox();
-  function shipQty(rdc, monthIdx) {
-    const hist = dataStore.history && dataStore.history.inventory;
-    if (!hist) return 0;
-    const arr = (hist['2026'] && hist['2026'].shipmentCost[rdc]) || [];
-    const amt = (arr.length > monthIdx ? arr[monthIdx] : 0) || 0;  // 千元
-    return Math.round(amt * 1000 / avgBoxCost);  // 箱数（元 / 元/箱）
+  var brandTransByRdc = brandTransRdc();
+
+  // ====== 出货（累计）from orderDetail.totalFulfillQty → 箱（按SKU箱规换算） ======
+  // 按 RDC×月×SKU 聚合后再换算
+  var shipSkuAgg = {}; // {rdc|ym: {sku: qty}}
+  orderDetail.forEach(function(d) {
+    if (!d.warehouse || !d.dateStr) return;
+    var dy = d.dateStr.slice(0, 7);
+    if (dy !== '2026-05' && dy !== '2026-06') return;
+    var key = d.warehouse + '|' + dy;
+    if (!shipSkuAgg[key]) shipSkuAgg[key] = {};
+    var sku = d.skuCode;
+    if (!shipSkuAgg[key][sku]) shipSkuAgg[key][sku] = 0;
+    shipSkuAgg[key][sku] += d.totalFulfillQty || 0;
+  });
+  // 换算成箱
+  function aggShip(rdc, ym) {
+    var skuMap = shipSkuAgg[rdc + '|' + ym]; if (!skuMap) return 0;
+    var t = 0; Object.keys(skuMap).forEach(function(s) { t += skuMap[s] / getSpec(s); });
+    return rn(t);
   }
-  // 库存数量（5/6 月）：从 cov availableQty 聚合（单位"支"，约等于"个"；按箱规换算箱数）
-  function invQty(rdc, covArr) {
-    let qty = 0;
-    for (const d of covArr) {
-      if (d.rdc !== rdc) continue;
-      qty += d.availableQty || 0;
-    }
-    const m = productMaster;  // 总箱规平均值
-    let totalSpec = 0, cnt = 0;
-    for (const sku in m) {
-      const mm = m[sku];
-      if (mm && mm.spec > 0) { totalSpec += mm.spec; cnt++; }
-    }
-    const avgSpec = cnt > 0 ? totalSpec / cnt : 30;
-    return Math.round(qty / avgSpec);
+  // 按渠道
+  var shipChAgg = {};
+  orderDetail.forEach(function(d) {
+    if (!d.warehouse || !d.dateStr || !d.channel) return;
+    var dy = d.dateStr.slice(0, 7);
+    if (dy !== '2026-05' && dy !== '2026-06') return;
+    var k = d.warehouse + '|' + d.channel + '|' + dy;
+    if (!shipChAgg[k]) shipChAgg[k] = {};
+    var sku = d.skuCode;
+    if (!shipChAgg[k][sku]) shipChAgg[k][sku] = 0;
+    shipChAgg[k][sku] += d.totalFulfillQty || 0;
+  });
+  function shipCh(rdc, ch, ym) {
+    var m = shipChAgg[rdc + '|' + ch + '|' + ym]; if (!m) return 0;
+    var t = 0; Object.keys(m).forEach(function(s) { t += m[s] / getSpec(s); });
+    return rn(t);
+  }
+  // 按品牌
+  var shipBrAgg = {};
+  orderDetail.forEach(function(d) {
+    if (!d.warehouse || !d.dateStr || !d.brand) return;
+    var dy = d.dateStr.slice(0, 7);
+    if (dy !== '2026-05' && dy !== '2026-06') return;
+    var k = d.warehouse + '|' + d.brand + '|' + dy;
+    if (!shipBrAgg[k]) shipBrAgg[k] = {};
+    var sku = d.skuCode;
+    if (!shipBrAgg[k][sku]) shipBrAgg[k][sku] = 0;
+    shipBrAgg[k][sku] += d.totalFulfillQty || 0;
+  });
+  function shipBr(rdc, brand, ym) {
+    var m = shipBrAgg[rdc + '|' + brand + '|' + ym]; if (!m) return 0;
+    var t = 0; Object.keys(m).forEach(function(s) { t += m[s] / getSpec(s); });
+    return rn(t);
   }
 
-  // === 1-4 月简表：只有拉回 + 转储入（因为无月初/末库存数量数据）===
-  // === 5-6 月详表：拉回 + 转储入 + 出货(估) + 库存变动 ===
-  let rowsHtml = '';
-  rdcOrder.forEach((rdc) => {
-    rowsHtml += '<tr style="background:#F1F5F9"><td style="text-align:left;font-weight:600">'+rdc+'</td>';
-    for (let m = 0; m < 6; m++) {
-      const ym = '2026-' + (m+1).toString().padStart(2,'0');
-      const pull = pullQty(rdc, ym);
-      const trIn = transQty(rdc, ym);
-      const ship = (m >= 4) ? shipQty(rdc, m) : null;  // 5-6月有出货估算
-      // 库存变动（箱）：5-6月可用 = 6月库存 - 5月库存
-      let invDelta = null;
-      if (m === 4) {  // 5月 vs 4月（4月无库存数量）
-        invDelta = null;
-      } else if (m === 5) {  // 6月 vs 5月
-        const q6 = invQty(rdc, cov6);
-        const q5 = invQty(rdc, cov5);
-        invDelta = q6 - q5;
-      }
-      let html = '<td style="text-align:right;font-size:11px">';
-      html += '<div style="color:#666">'+monthAbbrev[m]+'</div>';
-      if (pull > 0 || trIn > 0 || (ship !== null && ship > 0) || (invDelta !== null && invDelta !== 0)) {
-        html += '<div style="margin-top:2px"><span style="color:#F59E0B">拉回</span> '+pull+'</div>';
-        html += '<div style="margin-top:2px"><span style="color:#10B981">转储入</span> '+trIn+'</div>';
-        if (ship !== null) html += '<div style="margin-top:2px"><span style="color:#EF4444">出货</span> '+ship+'</div>';
-        if (invDelta !== null) html += '<div style="margin-top:2px"><span style="color:#3B82F6">库存变动</span> '+((invDelta>=0?'+':'')+invDelta)+'</div>';
-      } else {
-        html += '<div style="color:#94a3b8">—</div>';
-      }
-      html += '</td>';
-      rowsHtml += html;
-    }
-    rowsHtml += '</tr>';
+  // ====== 每RDC聚合卡片数据 ======
+  var rdcData = {};
+  rdcOrder.forEach(function(rdc) {
+    var p5 = pullQty(rdc, '2026-05'), p6 = pullQty(rdc, '2026-06');
+    var t5 = transQty(rdc, '2026-05'), t6 = transQty(rdc, '2026-06');
+    var s5 = aggShip(rdc, '2026-05'), s6 = aggShip(rdc, '2026-06');
+    var op = inv5[rdc] || 0, cl = inv6[rdc] || 0;
+    rdcData[rdc] = {
+      open: op, close: cl, netChange: cl - op,
+      pull5: p5, pull6: p6, totalPull: p5 + p6,
+      trans5: t5, trans6: t6, totalTrans: t5 + t6,
+      ship5: s5, ship6: s6, totalShip: s5 + s6
+    };
   });
 
-  // === 5-6月详表：箱数 + 转化金额（参考）===
-  let detailRows = '';
-  rdcOrder.forEach((rdc) => {
-    for (let m = 4; m <= 5; m++) {
-      const ym = '2026-' + (m+1).toString().padStart(2,'0');
-      const pull = pullQty(rdc, ym);
-      const trIn = transQty(rdc, ym);
-      const ship = shipQty(rdc, m);
-      const invE = (m === 5) ? invQty(rdc, cov6) : invQty(rdc, cov5);
-      const invS = (m === 5) ? invQty(rdc, cov5) : invQty(rdc, cov5);  // 5月无 4月数据，标—
-      const invDelta = (m === 5) ? (invE - invS) : null;
-      let note = '';
-      if (rdc === '华东RDC' && m === 4) {
-        note = ' <span style="background:#FEF3C7;color:#92400E;padding:2px 6px;border-radius:4px;font-size:10px">4月暂停返回</span>';
-      }
-      detailRows += '<tr>' +
-        '<td style="text-align:left">' + rdc + note + '</td>' +
-        '<td style="text-align:left">' + monthAbbrev[m] + '</td>' +
-        '<td style="text-align:right;color:#3B82F6;font-weight:600">' + (invDelta !== null ? ((invDelta>=0?'+':'')+invDelta) : '—') + '</td>' +
-        '<td style="text-align:right;color:#F59E0B">' + pull + '</td>' +
-        '<td style="text-align:right;color:#10B981">' + trIn + '</td>' +
-        '<td style="text-align:right;color:#EF4444">' + ship + '</td>' +
-        '<td style="text-align:right">' + invE + '</td>' +
-        '<td style="text-align:right;color:var(--text-secondary);font-size:11px">~' + Math.round(avgBoxCost) + '元/箱</td>' +
-        '</tr>';
-    }
-  });
+  // ====== 全局汇总 ======
+  function sumRdc(field) { return rdcOrder.reduce(function(s, r) { return s + (rdcData[r][field] || 0); }, 0); }
+  var allOpen = sumRdc('open'), allClose = sumRdc('close'), allPull = sumRdc('totalPull'),
+      allTrans = sumRdc('totalTrans'), allShip = sumRdc('totalShip'),
+      allNet = allClose - allOpen, calcNet = allPull + allTrans - allShip;
 
+  // ====== 品牌列表 ======
+  var allBrands = [];
+  Object.keys(brandRdcInv6).forEach(function(b) { if (allBrands.indexOf(b) < 0) allBrands.push(b); });
+  Object.keys(brandPullByRdc).forEach(function(b) { if (allBrands.indexOf(b) < 0) allBrands.push(b); });
+  Object.keys(brandTransByRdc).forEach(function(b) { if (allBrands.indexOf(b) < 0) allBrands.push(b); });
+  allBrands.sort();
+
+  // ====== 周转天数（从历史数据取2026年5-6月平均值） ======
+  var hist = dataStore.history && dataStore.history.inventory;
+  function turnoverDays(m) {
+    var d = 0, c = 0;
+    rdcOrder.forEach(function(r) {
+      var arr2026 = hist && hist['2026'] && hist['2026'].turnoverDays && hist['2026'].turnoverDays[r];
+      if (arr2026 && arr2026.length > m && arr2026[m] != null) { d += arr2026[m]; c++; }
+    });
+    return c > 0 ? rn(d / c) : '—';
+  }
+  var tDays5 = turnoverDays(4), tDays6 = turnoverDays(5);
+
+  // ====== KPI + 口径说明 ======
+  var kpiHtml = '<div class="kpi-row" style="padding:0 8px 8px">' +
+    '<div class="kpi-card blue"><div class="kpi-label">5月末库存（期初）</div><div class="kpi-value">' + allOpen.toLocaleString() + '<span class="kpi-unit">箱</span></div>' +
+      '<div style="font-size:11px;color:#64748B">7大RDC合计</div></div>' +
+    '<div class="kpi-card purple"><div class="kpi-label">6月末库存（期末）</div><div class="kpi-value">' + allClose.toLocaleString() + '<span class="kpi-unit">箱</span></div>' +
+      '<div style="font-size:11px;color:' + (allNet >= 0 ? '#EF4444' : '#10B981') + '">净变动 ' + (allNet >= 0 ? '+' : '') + allNet.toLocaleString() + ' 箱</div></div>' +
+    '<div class="kpi-card orange"><div class="kpi-label">5-6月累计拉回</div><div class="kpi-value">' + allPull.toLocaleString() + '<span class="kpi-unit">箱</span></div>' +
+      '<div style="font-size:11px;color:#64748B">占入库 ' + (allPull + allTrans > 0 ? rn(allPull / (allPull + allTrans) * 100) + '%' : '—') + '</div></div>' +
+    '<div class="kpi-card green"><div class="kpi-label">5-6月累计出货</div><div class="kpi-value">' + allShip.toLocaleString() + '<span class="kpi-unit">箱</span></div>' +
+      '<div style="font-size:11px;color:#64748B">从订单明细聚合</div></div>' +
+  '</div>' +
+  '<div style="font-size:11px;color:var(--text-secondary);padding:0 8px 4px;line-height:1.5">' +
+    '<b>公式</b>：期末−期初 = 拉回 + 转储入 − 出货（<span style="color:' + (Math.abs(allNet - calcNet) <= 3 ? '#10B981' : '#F59E0B') + '">' + allNet.toLocaleString() + ' ≈ ' + calcNet.toLocaleString() + '</span>）| ' +
+    '<b>口径</b>：7大RDC（含华东），5-6月 | 库存量按SKU箱规换算为箱 | 出货=订单累计已满足(totalFulfillQty)' +
+  '</div>';
+
+  // ====== 构建页面HTML（含图表容器） ======
   page.innerHTML = tabBar +
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">🔍 库存变化根因分析（2026年1-6月，单位：箱）</span></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">' +
-      '<b>公式</b>：库存变动(箱) = 月末库存 − 月初库存 = 拉回 + 转储入 − 出货<br>' +
-      '<b>口径</b>：7 大 RDC（含华东RDC，2026年华东仓暂停返回总仓）<br>' +
-      '<b>数据源</b>：<br>' +
-      '&nbsp;&nbsp;• 拉回箱数：「拉回数据」sheet 按发货RDC + 月份 聚合（单位=箱，自动按箱规转换）<br>' +
-      '&nbsp;&nbsp;• 转储入箱数：「转储数据」sheet 按收货方RDC + 月份 聚合（deliveryQty/confQty/invoiceQty）<br>' +
-      '&nbsp;&nbsp;• 出货箱数（5-6月）：从 history.shipmentCost（出货成本，金额）÷ 平均箱成本（元/箱）≈ 估算<br>' +
-      '&nbsp;&nbsp;• 库存数量（5/6 月）：从 cov5/cov6 availableQty 聚合 ÷ 平均箱规 换算<br>' +
-      '&nbsp;&nbsp;• 1-4 月库存数量暂无月度快照数据，只显示拉回/转储' +
+      '<div class="card-header"><span class="card-title">🔍 库存变化根因分析（2026年5-6月）</span></div>' +
+      kpiHtml +
+    '</div>' +
+    // 图1：各RDC库存水位对比（期初 vs 期末）+ 净变动
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">各RDC库存水位对比：期初(5月末) → 期末(6月末)</span></div>' +
+      '<div class="chart-container" style="height:280px" id="rc-chart-waterfall"></div>' +
+    '</div>' +
+    // 图2：库存变化驱动因素构成
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">各RDC库存变化驱动因素</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">5-6月合计（箱）</span></div>' +
+      '<div class="chart-container" style="height:280px" id="rc-chart-driver"></div>' +
+    '</div>' +
+    // 图3+4 并排：品牌维度 + 渠道维度
+    '<div style="display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;margin-bottom:16px">' +
+      '<div class="card" style="flex:0 0 380px">' +
+        '<div class="card-header"><span class="card-title">品牌×RDC期末库存分布</span></div>' +
+        '<div class="chart-container" style="height:260px" id="rc-chart-brand"></div>' +
+      '</div>' +
+      '<div class="card" style="flex:0 0 380px">' +
+        '<div class="card-header"><span class="card-title">渠道出货构成（KA vs 经销商）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">5-6月合计</span></div>' +
+        '<div class="chart-container" style="height:260px" id="rc-chart-channel"></div>' +
       '</div>' +
     '</div>' +
-
+    // 图5：库存效率
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">各RDC库存变动箱数（按月）</span></div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th style="text-align:left">RDC</th>' +
-      monthAbbrev.map(m=>'<th style="text-align:right">'+m+'</th>').join('') +
-      '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+      '<div class="card-header"><span class="card-title">库存效率指标</span></div>' +
+      '<div class="kpi-row" style="padding:0 8px 8px">' +
+        '<div class="kpi-card blue"><div class="kpi-label">5月周转天数</div><div class="kpi-value">' + tDays5 + '<span class="kpi-unit">天</span></div></div>' +
+        '<div class="kpi-card blue"><div class="kpi-label">6月周转天数</div><div class="kpi-value">' + tDays6 + '<span class="kpi-unit">天</span></div></div>' +
+        '<div class="kpi-card green"><div class="kpi-label">5月库销比</div><div class="kpi-value">' + (allShip > 0 ? Number(tDays5 / (allShip / 61)).toFixed(1) : '—') + '<span class="kpi-unit"></span></div></div>' +
+        '<div class="kpi-card green"><div class="kpi-label">6月库销比</div><div class="kpi-value">' + (allShip > 0 ? Number(tDays6 / (allShip / 61)).toFixed(1) : '—') + '<span class="kpi-unit"></span></div></div>' +
+      '</div>' +
     '</div>' +
-
+    // 明细表
     '<div class="card">' +
-      '<div class="card-header"><span class="card-title">库存变动明细（5-6月，按RDC × 月份）— 单位：箱</span></div>' +
+      '<div class="card-header"><span class="card-title">库存变动明细（按RDC × 月份）— 单位：箱</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr>' +
       '<th style="text-align:left">RDC</th><th style="text-align:left">月份</th>' +
-      '<th style="text-align:right">库存变动</th><th style="text-align:right">拉回</th>' +
-      '<th style="text-align:right">转储入</th><th style="text-align:right">出货(估)</th>' +
-      '<th style="text-align:right">月末库存</th><th style="text-align:right">参考单价</th>' +
-      '</tr></thead><tbody>' + detailRows + '</tbody></table></div>' +
+      '<th style="text-align:right;color:#3B82F6">期初库存</th><th style="text-align:right;color:#F59E0B">拉回</th>' +
+      '<th style="text-align:right;color:#10B981">转储入</th><th style="text-align:right;color:#EF4444">出货(累计)</th>' +
+      '<th style="text-align:right;color:#6366F1">期末库存</th><th style="text-align:right">净变动</th>' +
+      '</tr></thead><tbody>' +
+      (function() {
+        var h = '';
+        rdcOrder.forEach(function(rdc) {
+          [0,1].forEach(function(mi) {
+            var ym = yms[mi], lab = ymsLabel[mi];
+            var rd = rdcData[rdc];
+            var op = mi === 0 ? rd.open : rd.close;
+            var pull = mi === 0 ? rd.pull5 : rd.pull6;
+            var trans = mi === 0 ? rd.trans5 : rd.trans6;
+            var ship = mi === 0 ? rd.ship5 : rd.ship6;
+            var close = mi === 0 ? rd.close : rd.close;
+            var net = mi === 0 ? (rd.close - rd.open) : 0; // net只在第二行(6月)
+            h += '<tr>' +
+              '<td style="text-align:left">' + (mi === 0 ? rdc : '') + '</td>' +
+              '<td style="text-align:left">' + lab + '</td>' +
+              '<td style="text-align:right;color:#3B82F6;font-weight:500">' + op.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:#F59E0B">' + pull.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:#10B981">' + trans.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:#EF4444">' + ship.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:#6366F1;font-weight:600">' + close.toLocaleString() + '</td>' +
+              '<td style="text-align:right;font-weight:600;color:' + (rd.netChange >= 0 ? '#EF4444' : '#10B981') + '">' + (rd.netChange >= 0 ? '+' : '') + rd.netChange.toLocaleString() + '</td>' +
+              '</tr>';
+          });
+        });
+        return h;
+      })() +
+      '</tbody></table></div>' +
     '</div>';
+
+  // ====== 图表渲染 ======
+
+  // ---- 图1：各RDC库存水位对比 ----
+  var chart1 = initChart('rc-chart-waterfall');
+  chart1.setOption({
+    tooltip: {
+      trigger: 'axis', confine: true,
+      textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        var rdc = params[0].axisValue;
+        var d = rdcData[rdc];
+        var h = '<strong>' + rdc + '</strong>';
+        h += '<br/>期初库存：' + (d.open || 0).toLocaleString() + ' 箱';
+        h += '<br/>+ 拉回：' + d.totalPull.toLocaleString() + ' 箱';
+        h += '<br/>+ 转储入：' + d.totalTrans.toLocaleString() + ' 箱';
+        h += '<br/>− 出货：' + d.totalShip.toLocaleString() + ' 箱';
+        h += '<br/><strong>期末库存：' + (d.close || 0).toLocaleString() + ' 箱</strong>';
+        h += '<br/><span style="color:' + (d.netChange >= 0 ? '#EF4444' : '#10B981') + '">净变动：' + (d.netChange >= 0 ? '+' : '') + d.netChange.toLocaleString() + ' 箱</span>';
+        return h;
+      }
+    },
+    legend: { data: ['期初库存','拉回','转储入','出货','期末库存'], top: 0, left: 'center', textStyle: { fontSize: 10 } },
+    grid: { left: 65, right: 20, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: rdcOrder, axisLabel: { fontSize: 10, interval: 0 } },
+    yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: [
+      { name: '期初库存', type: 'bar', data: rdcOrder.map(function(r) { return rdcData[r].open || 0; }), color: '#3B82F6', barWidth: 16 },
+      { name: '拉回', type: 'bar', data: rdcOrder.map(function(r) { return rdcData[r].totalPull || 0; }), color: '#F59E0B', barWidth: 16 },
+      { name: '转储入', type: 'bar', data: rdcOrder.map(function(r) { return rdcData[r].totalTrans || 0; }), color: '#10B981', barWidth: 16 },
+      { name: '出货', type: 'bar', data: rdcOrder.map(function(r) { return -(rdcData[r].totalShip || 0); }), color: '#EF4444', barWidth: 16 },
+      { name: '期末库存', type: 'scatter', data: rdcOrder.map(function(r) { return rdcData[r].close || 0; }), color: '#6366F1', symbolSize: 10, z: 10,
+        label: { show: true, position: 'top', fontSize: 10, formatter: function(p) { return (rdcData[p.name] && rdcData[p.name].netChange >= 0 ? '+' : '') + (rdcData[p.name] ? rdcData[p.name].netChange.toLocaleString() : ''); } }
+      }
+    ]
+  });
+
+  // ---- 图2：库存变化驱动因素（堆积） ----
+  var chart2 = initChart('rc-chart-driver');
+  chart2.setOption({
+    tooltip: {
+      trigger: 'axis', confine: true,
+      textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        var rdc = params[0].axisValue;
+        var d = rdcData[rdc];
+        var h = '<strong>' + rdc + '</strong>';
+        h += '<br/>拉回：' + d.totalPull.toLocaleString() + ' 箱';
+        h += '<br/>转储入：' + d.totalTrans.toLocaleString() + ' 箱';
+        h += '<br/>出货：' + d.totalShip.toLocaleString() + ' 箱';
+        h += '<br/><span style="font-weight:600;color:' + (d.netChange >= 0 ? '#EF4444' : '#10B981') + '">净变动：' + (d.netChange >= 0 ? '+' : '') + d.netChange.toLocaleString() + ' 箱</span>';
+        return h;
+      }
+    },
+    legend: { data: ['入库（拉回+转储）','出货（累计）','净变动'], top: 0, left: 'center', textStyle: { fontSize: 10 } },
+    grid: { left: 65, right: 20, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: rdcOrder, axisLabel: { fontSize: 10, interval: 0 } },
+    yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: [
+      {
+        name: '入库（拉回+转储）',
+        type: 'bar',
+        data: rdcOrder.map(function(r) { return rdcData[r].totalPull + rdcData[r].totalTrans; }),
+        color: '#8B5CF6', barWidth: 16
+      },
+      {
+        name: '出货（累计）',
+        type: 'bar',
+        data: rdcOrder.map(function(r) { return -(rdcData[r].totalShip || 0); }),
+        color: '#EF4444', barWidth: 16
+      },
+      {
+        name: '净变动',
+        type: 'scatter',
+        data: rdcOrder.map(function(r) { return rdcData[r].netChange; }),
+        color: '#3B82F6', symbolSize: 8, z: 10,
+        label: {
+          show: true, position: 'top', fontSize: 10,
+          formatter: function(p) { return (p.value >= 0 ? '+' : '') + p.value.toLocaleString(); }
+        }
+      }
+    ]
+  });
+
+  // ---- 图3：品牌×RDC 期末库存分布 ----
+  var brandTop = allBrands.slice(0, 8); // 取前8大品牌
+  var chart3 = initChart('rc-chart-brand');
+  var brSeries = brandTop.map(function(b) {
+    return {
+      name: b,
+      type: 'bar',
+      data: rdcOrder.map(function(r) { return (brandRdcInv6[b] && brandRdcInv6[b][r]) || 0; }),
+      barWidth: 10
+    };
+  });
+  chart3.setOption({
+    tooltip: {
+      trigger: 'axis', confine: true,
+      textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        var rdc = params[0].axisValue;
+        var h = '<strong>' + rdc + '</strong>';
+        var tot = 0;
+        params.forEach(function(p) { var v = p.value || 0; if (v > 0) { h += '<br/>' + p.marker + p.seriesName + '：' + v.toLocaleString(); tot += v; } });
+        h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' 箱</span>';
+        return h;
+      }
+    },
+    legend: { data: brandTop, top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+    grid: { left: 55, right: 10, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: rdcOrder, axisLabel: { fontSize: 10, interval: 0 } },
+    yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: brSeries
+  });
+
+  // ---- 图4：渠道出货构成 ----
+  var channels = ['KA', '经销商'];
+  var chart4 = initChart('rc-chart-channel');
+  chart4.setOption({
+    tooltip: {
+      trigger: 'axis', confine: true,
+      textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        var rdc = params[0].axisValue;
+        var h = '<strong>' + rdc + '</strong>';
+        params.forEach(function(p) { h += '<br/>' + p.marker + p.seriesName + '：' + (p.value || 0).toLocaleString() + ' 箱'; });
+        return h;
+      }
+    },
+    legend: { data: channels, top: 0, left: 'center', textStyle: { fontSize: 10 } },
+    grid: { left: 55, right: 20, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: rdcOrder, axisLabel: { fontSize: 10, interval: 0 } },
+    yAxis: { type: 'value', name: '箱', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: channels.map(function(ch) {
+      return {
+        name: ch,
+        type: 'bar',
+        data: rdcOrder.map(function(r) { return shipCh(r, ch, '2026-05') + shipCh(r, ch, '2026-06'); }),
+        barWidth: 14,
+        color: ch === 'KA' ? '#2563EB' : '#10B981'
+      };
+    })
+  });
 }
 
 // === 海南花露水筛选器：库存金额维度 ===
