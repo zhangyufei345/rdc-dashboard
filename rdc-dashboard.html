@@ -2343,7 +2343,7 @@ function renderOrderInsight() {
   const byTypeRdc = sumBy(selRows, r => r.type + '|' + r.rdc);       // 类型|RDC
   const byTypeCust = sumBy(selRows, r => r.type + '|' + r.customerGroup); // 类型|客户
   const byBrand = sumBy(selRows, r => r.brand);      // 品牌×月
-  const byCustRows = (window._oiTopCustFilter === 'exclude') ? selRows.filter(r => r.customerGroup.indexOf('AAA经销商') < 0) : selRows;
+  const byCustRows = (window._oiTopCustFilter === 'exclude') ? selRows.filter(r => r.customerGroup.indexOf('AAA-经销商') < 0) : selRows;
   const byCust = sumBy(byCustRows, r => r.customerGroup); // 客户×月（按卡片筛选）
 
   function rateOf(o) { return o.orderQty > 0 ? o.firstDayQty / o.orderQty : 0; }
