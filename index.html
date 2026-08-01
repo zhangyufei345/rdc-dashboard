@@ -2276,12 +2276,17 @@ function renderOrderInsight() {
 
   if (typeof window._oiMonth === 'undefined') window._oiMonth = '2026-07';
   if (typeof window._oiHainan === 'undefined') window._oiHainan = 'all';
+  if (typeof window._oiByBox === 'undefined') window._oiByBox = false;
+  const u = window._oiByBox ? '箱' : '支';
 
   // ====== SKU → 是否海南花露水 映射（从 cov5/cov6 isHainan 字段聚合） ======
   const skuIsHainan = {};
   [...((dataStore.inventory && dataStore.inventory.cov6) || []), ...((dataStore.inventory && dataStore.inventory.cov5) || [])].forEach(d => {
     if (d.sku && d.isHainan) skuIsHainan[d.sku] = true;
   });
+
+  const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
+  function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
 
   // ====== 归一化行 ======
   const rows = [];
@@ -2304,15 +2309,30 @@ function renderOrderInsight() {
 
   // ====== 聚合工具 ======
   function sumBy(arr, keyFn) {
+    const byBox = window._oiByBox === true;
     const m = {};
     arr.forEach(r => {
       const k = keyFn(r);
       if (!m[k]) m[k] = { orderQty: 0, lines: 0, firstDayQty: 0, totalFulfillQty: 0 };
-      m[k].orderQty += r.orderQty;
+      if (byBox) {
+        const s = specOf(r.skuCode);
+        m[k].orderQty += r.orderQty / s;
+        m[k].firstDayQty += r.firstDayQty / s;
+        m[k].totalFulfillQty += r.totalFulfillQty / s;
+      } else {
+        m[k].orderQty += r.orderQty;
+        m[k].firstDayQty += r.firstDayQty;
+        m[k].totalFulfillQty += r.totalFulfillQty;
+      }
       m[k].lines += r.line;
-      m[k].firstDayQty += r.firstDayQty;
-      m[k].totalFulfillQty += r.totalFulfillQty;
     });
+    if (byBox) {
+      Object.keys(m).forEach(k => {
+        m[k].orderQty = Math.round(m[k].orderQty);
+        m[k].firstDayQty = Math.round(m[k].firstDayQty);
+        m[k].totalFulfillQty = Math.round(m[k].totalFulfillQty);
+      });
+    }
     return m;
   }
   const byMonth = sumBy(rows, r => r.month);       // 月
@@ -2357,7 +2377,13 @@ function renderOrderInsight() {
 
   // ====== 交叉洞察：库存覆盖联动（品牌 7月订单 vs 6月末库存） ======
   const brandInv = {};
-  cov6.forEach(d => { if (d.brand) brandInv[d.brand] = (brandInv[d.brand] || 0) + (d.availableQty || 0); });
+  cov6.forEach(d => {
+    if (!d.brand) return;
+    const q = d.availableQty || 0;
+    const s = window._oiByBox ? specOf(d.sku) : 1;
+    brandInv[d.brand] = (brandInv[d.brand] || 0) + q / s;
+  });
+  if (window._oiByBox) Object.keys(brandInv).forEach(k => { brandInv[k] = Math.round(brandInv[k]); });
   const invWarn = [];
   brandList.forEach(b => {
     const o = byBrand[b]; if (!o || o.orderQty <= 0) return;
@@ -2380,17 +2406,20 @@ function renderOrderInsight() {
       '<option value="yes" ' + (window._oiHainan === 'yes' ? 'selected' : '') + '>仅海南花露水</option>' +
       '<option value="no" ' + (window._oiHainan === 'no' ? 'selected' : '') + '>不含海南花露水</option>' +
     '</select>';
+  const byBoxCheckbox = '<label style="font-size:12px;color:var(--text-secondary);margin-left:8px;display:inline-flex;align-items:center;cursor:pointer">' +
+    '<input type="checkbox" onchange="window._oiByBox=this.checked;renderOrderInsight()" ' + (window._oiByBox ? 'checked' : '') + ' style="margin-right:4px;cursor:pointer">是否按箱统计（按SKU箱规换算）' +
+    '</label>';
 
   // KPI 卡片
   const mom7 = mom('2026-07', '2026-06', sumBy(rows, r => r.month));
   const kpiHtml = '<div class="kpi-row" style="padding:0 8px 8px">' +
-    '<div class="kpi-card blue"><div class="kpi-label">' + (window._oiMonth === 'all' ? '5-7月合计订单量' : monthLabels[months.indexOf(window._oiMonth)] + '订单量') + '</div><div class="kpi-value">' + fmtN(totalQty) + '<span class="kpi-unit">支</span></div>' +
+    '<div class="kpi-card blue"><div class="kpi-label">' + (window._oiMonth === 'all' ? '5-7月合计订单量' : monthLabels[months.indexOf(window._oiMonth)] + '订单量') + '</div><div class="kpi-value">' + fmtN(totalQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px;color:#64748B">' + selRows.length.toLocaleString() + ' 行订单</div></div>' +
-    '<div class="kpi-card blue"><div class="kpi-label">普通订单</div><div class="kpi-value">' + fmtN(typeArr[0].orderQty) + '<span class="kpi-unit">支</span></div>' +
+    '<div class="kpi-card blue"><div class="kpi-label">普通订单</div><div class="kpi-value">' + fmtN(typeArr[0].orderQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[0].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['普通订单'] ? ppColor(momType['普通订单'].pct) : '#64748B') + '">' + (momType['普通订单'] ? (momType['普通订单'].pct >= 0 ? '+' : '') + (momType['普通订单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
-    '<div class="kpi-card orange"><div class="kpi-label">特殊价格订单</div><div class="kpi-value">' + fmtN(typeArr[1].orderQty) + '<span class="kpi-unit">支</span></div>' +
+    '<div class="kpi-card orange"><div class="kpi-label">特殊价格订单</div><div class="kpi-value">' + fmtN(typeArr[1].orderQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[1].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['特殊价格订单'] ? ppColor(momType['特殊价格订单'].pct) : '#64748B') + '">' + (momType['特殊价格订单'] ? (momType['特殊价格订单'].pct >= 0 ? '+' : '') + (momType['特殊价格订单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
-    '<div class="kpi-card green"><div class="kpi-label">免费单</div><div class="kpi-value">' + fmtN(typeArr[2].orderQty) + '<span class="kpi-unit">支</span></div>' +
+    '<div class="kpi-card green"><div class="kpi-label">免费单</div><div class="kpi-value">' + fmtN(typeArr[2].orderQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[2].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['免费单'] ? ppColor(momType['免费单'].pct) : '#64748B') + '">' + (momType['免费单'] ? (momType['免费单'].pct >= 0 ? '+' : '') + (momType['免费单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
   '</div>';
 
@@ -2409,16 +2438,16 @@ function renderOrderInsight() {
 
   const invWarnHtml = invWarn.length > 0
     ? '<div style="margin-top:8px;font-size:12px;line-height:1.8">' +
-        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '订单 ' + fmtN(w.orderQty) + ' 支 &gt; 6月末库存 ' + fmtN(w.inv) + ' 支（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
+        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '订单 ' + fmtN(w.orderQty) + ' ' + u + ' &gt; 6月末库存 ' + fmtN(w.inv) + ' ' + u + '（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
       '</div>'
     : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; 6月末库存」的预警</div>';
 
-  page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + hainanSelect + '</div>' +
+  page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + hainanSelect + byBoxCheckbox + '</div>' +
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">🔎 订单数据洞察</span></div>' +
       kpiHtml +
       '<div style="font-size:11px;color:var(--text-secondary);padding:0 8px 4px;line-height:1.5">' +
-        '<b>口径</b>：普通订单=订单明细Sheet；免费单=其他订单表 G列「ZKFD-跨公司免费销售订单」；特殊价格订单=其他订单表 G列「ZDTA-特殊价格标准订单」| 订单量单位：支' +
+        '<b>口径</b>：普通订单=订单明细Sheet；免费单=其他订单表 G列「ZKFD-跨公司免费销售订单」；特殊价格订单=其他订单表 G列「ZDTA-特殊价格标准订单」| 订单量单位：' + u + '（按SKU箱规换算：' + (window._oiByBox ? '当前为箱' : '当前为支，可勾选"按箱统计"') + '）' +
       '</div>' +
     '</div>' +
 
@@ -2462,7 +2491,7 @@ function renderOrderInsight() {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">⚡ 交叉洞察</span></div>' +
       '<div class="kpi-row" style="padding:0 8px 8px">' +
-        rateRows.map(r => '<div class="kpi-card" style="background:' + TYPE_COLORS[r.type] + '11"><div class="kpi-label">' + r.type + ' 首日满足率</div><div class="kpi-value">' + fmtPct(r.rate) + '</div><div style="font-size:11px;color:#64748B">订单 ' + fmtN(r.qty) + ' 支</div></div>').join('') +
+        rateRows.map(r => '<div class="kpi-card" style="background:' + TYPE_COLORS[r.type] + '11"><div class="kpi-label">' + r.type + ' 首日满足率</div><div class="kpi-value">' + fmtPct(r.rate) + '</div><div style="font-size:11px;color:#64748B">订单 ' + fmtN(r.qty) + ' ' + u + '</div></div>').join('') +
       '</div>' +
       '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px"><span class="card-title" style="font-size:13px">📦 库存覆盖预警（订单 vs 6月末库存）</span></div>' +
       invWarnHtml +
@@ -2470,7 +2499,7 @@ function renderOrderInsight() {
 
     // 明细表
     '<div class="card">' +
-      '<div class="card-header"><span class="card-title">品牌订单量明细（' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '）— 单位：支</span></div>' +
+      '<div class="card-header"><span class="card-title">品牌订单量明细（' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '）— 单位：' + u + '</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr>' +
       '<th style="text-align:left">品牌</th><th style="text-align:right">合计</th>' +
       '<th style="text-align:right;color:#2563EB">普通订单</th><th style="text-align:right;color:#F59E0B">特殊价格订单</th><th style="text-align:right;color:#10B981">免费单</th>' +
@@ -2483,7 +2512,7 @@ function renderOrderInsight() {
   const c1 = initChart('oi-chart-type');
   c1.setOption({
     title: { text: (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + ' 三类订单占比', left: 'center', top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
-    tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + ' 支（' + p.percent.toFixed(1) + '%）' },
+    tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + ' ' + u + '（' + p.percent.toFixed(1) + '%）' },
     legend: { bottom: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
     series: [{
       type: 'pie', radius: ['38%', '62%'], center: ['50%', '52%'],
@@ -2501,13 +2530,13 @@ function renderOrderInsight() {
     tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
       const m = params[0].axisValue;
       let h = '<strong>' + m.replace('2026-', '') + '月</strong>';
-      params.forEach(p => h += '<br/>' + p.marker + p.seriesName + '：' + (p.value != null ? p.value.toLocaleString() + ' 支' : '—'));
+      params.forEach(p => h += '<br/>' + p.marker + p.seriesName + '：' + (p.value != null ? p.value.toLocaleString() + ' ' + u : '—'));
       return h;
     }},
     legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 } },
     grid: { left: 60, right: 20, top: 35, bottom: 30 },
     xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 10 } },
-    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
       name: t, type: 'line', smooth: false, symbol: 'circle', symbolSize: 6,
       data: months.map(m => { const e = trendByMonthType[m + '|' + t]; return e ? e.orderQty : null; }),
@@ -2524,13 +2553,13 @@ function renderOrderInsight() {
       const b = params[0].axisValue;
       let h = '<strong>' + b + '</strong>'; let tot = 0;
       params.forEach(p => { if (p.value) { h += '<br/>' + p.marker + p.seriesName + '：' + p.value.toLocaleString(); tot += p.value; } });
-      h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' 支</span>';
+      h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' ' + u + '</span>';
       return h;
     }},
     legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
     grid: { left: 65, right: 15, top: 35, bottom: 45 },
     xAxis: { type: 'category', data: brandList, axisLabel: { fontSize: 10, rotate: 25, interval: 0 } },
-    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
       name: t, type: 'bar', stack: 'total', barWidth: 18,
       data: brandList.map(b => { const e = byTypeBrand[t + '|' + b]; return e ? e.orderQty : 0; }),
@@ -2545,13 +2574,13 @@ function renderOrderInsight() {
       const r = params[0].axisValue;
       let h = '<strong>' + r + '</strong>'; let tot = 0;
       params.forEach(p => { if (p.value) { h += '<br/>' + p.marker + p.seriesName + '：' + p.value.toLocaleString(); tot += p.value; } });
-      h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' 支</span>';
+      h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' ' + u + '</span>';
       return h;
     }},
     legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
     grid: { left: 60, right: 15, top: 35, bottom: 30 },
     xAxis: { type: 'category', data: rdcList, axisLabel: { fontSize: 10, interval: 0 } },
-    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
       name: t, type: 'bar', stack: 'total', barWidth: 20,
       data: rdcList.map(r => { const e = byTypeRdc[t + '|' + r]; return e ? e.orderQty : 0; }),
@@ -2571,7 +2600,7 @@ function renderOrderInsight() {
     legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
     grid: { left: 60, right: 15, top: 35, bottom: 55 },
     xAxis: { type: 'category', data: custList, axisLabel: { fontSize: 9, rotate: 35, interval: 0 } },
-    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
       name: t, type: 'bar', barWidth: 8,
       data: custList.map(cg => { const e = byTypeCust[t + '|' + cg]; return e ? e.orderQty : 0; }),
