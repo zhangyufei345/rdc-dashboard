@@ -2396,6 +2396,41 @@ function renderOrderInsight() {
   });
   invWarn.sort((a, b) => b.ratio - a.ratio);
 
+  // ====== 交叉洞察：转储入库 vs 实际出货（按 RDC） ======
+  const transMonths = new Set();
+  (dataStore.transship || []).forEach(r => { if (r.dateStr && r.dateStr.length >= 7) transMonths.add(r.dateStr.slice(0, 7)); });
+  let compareMonth = window._oiMonth;
+  if (compareMonth === 'all') {
+    const shipMonths = [...new Set(selRows.map(r => r.month))].sort();
+    compareMonth = shipMonths.slice().reverse().find(m => transMonths.has(m)) || '';
+  } else if (!transMonths.has(compareMonth)) {
+    const arr = [...transMonths].sort();
+    compareMonth = arr.filter(m => m <= compareMonth).pop() || arr[arr.length - 1] || '';
+  }
+  const compareRows = compareMonth ? selRows.filter(r => r.month === compareMonth) : [];
+  const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth)) : [];
+  const shipByRdc = {}, transByRdc = {};
+  compareRows.forEach(r => {
+    if (!r.rdc) return;
+    const s = window._oiByBox ? specOf(r.skuCode) : 1;
+    shipByRdc[r.rdc] = (shipByRdc[r.rdc] || 0) + (r.totalFulfillQty || 0) / s;
+  });
+  compareTrans.forEach(r => {
+    if (!r.rdc || r.rdc === '未知') return;
+    const s = window._oiByBox ? specOf(r.material) : 1;
+    const qty = r.isBox ? (r.inboundQty || 0) : ((r.inboundQty || 0) / s);
+    transByRdc[r.rdc] = (transByRdc[r.rdc] || 0) + qty;
+  });
+  if (window._oiByBox) {
+    Object.keys(shipByRdc).forEach(k => shipByRdc[k] = Math.round(shipByRdc[k]));
+    Object.keys(transByRdc).forEach(k => transByRdc[k] = Math.round(transByRdc[k]));
+  }
+  const transShipRdcs = RDC_LIST.filter(r => shipByRdc[r] || transByRdc[r]);
+  if (transShipRdcs.length === 0) transShipRdcs.push(...RDC_LIST);
+  const diffByRdc = {};
+  transShipRdcs.forEach(rdc => { diffByRdc[rdc] = (transByRdc[rdc] || 0) - (shipByRdc[rdc] || 0); });
+  const transShipMonthLabel = compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无数据';
+
   // ====== 页面 HTML ======
   const monthSelect = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">统计月份：</label>' +
     '<select onchange="window._oiMonth=this.value;renderOrderInsight()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
@@ -2497,6 +2532,10 @@ function renderOrderInsight() {
       '</div>' +
       '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px"><span class="card-title" style="font-size:13px">📦 库存覆盖预警（订单 vs 6月末库存）</span></div>' +
       invWarnHtml +
+      '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px;margin-top:12px"><span class="card-title" style="font-size:13px">🚚 转储入库 vs 实际出货（按RDC）— ' + transShipMonthLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">差异 = 转储入库 − 实际出货</span></div>' +
+      (compareMonth
+        ? '<div class="chart-container" style="height:280px" id="oi-chart-trans-ship"></div>'
+        : '<div style="padding:24px 8px;font-size:12px;color:var(--text-secondary)">当前筛选月份暂无转储数据，无法对比。</div>') +
     '</div>' +
 
     // 明细表
@@ -2609,6 +2648,33 @@ function renderOrderInsight() {
       color: TYPE_COLORS[t]
     }))
   });
+
+  // 图6：转储入库 vs 实际出货（双轴图）
+  if (compareMonth) {
+    const c6 = initChart('oi-chart-trans-ship');
+    c6.setOption({
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
+        const r = params[0].axisValue;
+        let h = '<strong>' + r + '</strong>';
+        params.forEach(p => {
+          h += '<br/>' + p.marker + p.seriesName + '：' + (p.value || 0).toLocaleString() + ' ' + u;
+        });
+        return h;
+      }},
+      legend: { data: ['转储入库', '实际出货', '差异（库存增减）'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+      grid: { left: 65, right: 55, top: 35, bottom: 30 },
+      xAxis: { type: 'category', data: transShipRdcs, axisLabel: { fontSize: 10, interval: 0 } },
+      yAxis: [
+        { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+        { type: 'value', name: '差异' + u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, splitLine: { show: false } }
+      ],
+      series: [
+        { name: '转储入库', type: 'bar', barWidth: 16, data: transShipRdcs.map(r => transByRdc[r] || 0), color: '#3B82F6' },
+        { name: '实际出货', type: 'bar', barWidth: 16, data: transShipRdcs.map(r => shipByRdc[r] || 0), color: '#10B981' },
+        { name: '差异（库存增减）', type: 'line', yAxisIndex: 1, symbol: 'circle', symbolSize: 7, lineStyle: { width: 2 }, data: transShipRdcs.map(r => diffByRdc[r] || 0), color: '#F59E0B' }
+      ]
+    });
+  }
 }
 
 // ============ SHORTAGE PAGE ============
