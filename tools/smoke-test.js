@@ -21,7 +21,8 @@ const EXPECTED_RENDERERS = [
   'renderShortageCompare', 'renderReplenishment', 'renderReplenishLogic',
   'renderInventoryStructure', 'renderInventoryTurnover', 'renderInventoryForecast',
   'renderInventoryCoverageDetail', 'renderSlowMoving', 'renderSlowMovingLogic',
-  'renderBizDemand', 'renderBizDemandDetail', 'renderBizDemandDACR'
+  'renderBizDemand', 'renderBizDemandDetail', 'renderBizDemandDACR',
+  'renderOrderInsight'
 ];
 
 let errors = 0;

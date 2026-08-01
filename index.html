@@ -245,6 +245,7 @@ const dataStore = {
   orderDetail: [],
   customerFulfill: [],
   transship: [],
+  otherOrders: [],
   loaded: false,
   // Inventory structure data (from 库存分析模版.xlsx)
   inventory: null
@@ -812,6 +813,7 @@ function parseExcel(rawData, mode, options) {
       dataStore.orderDetail = [];
       dataStore.customerFulfill = [];
       dataStore.transship = [];
+      dataStore.otherOrders = [];
     }
 
     // Create dedup key Sets from existing data (append mode) or empty (replace mode)
@@ -821,6 +823,7 @@ function parseExcel(rawData, mode, options) {
     const existingBrandKeys = new Set(dataStore.overall.brandFulfill.map(d => d.brand));
     const existingOrderKeys = new Set(dataStore.orderDetail.map(d => d.dateStr + '|' + d.orderNo + '|' + d.skuCode));
     const existingTransKeys = new Set(dataStore.transship.map(d => d.dateStr + '|' + d.material + '|' + d.location));
+    const existingOtherKeys = new Set(dataStore.otherOrders.map(d => d.dateStr + '|' + d.orderNo + '|' + d.skuCode + '|' + d.orderType));
 
     // Sheet1: 缺货汇总 (2 header rows)
     const sh1 = sheetToArray(wb.Sheets[sheetNames[0]]);
@@ -997,6 +1000,50 @@ function parseExcel(rawData, mode, options) {
         totalFulfillQty: getSafeNum(r,11), firstDayShort: getSafeNum(r,12),
         totalGap: getSafeNum(r,13)
       });
+    }
+
+    // Sheet: 其他订单（按名称查找；7月起新增，存放 免费单/特殊价格订单，含 5/6/7 三个月数据）
+    // 表头：A SAP放行日期 / B 销售单号 / C 主渠道 / D 品牌名称 / E SKU编码 / F SKU名称 /
+    //       G 订单类型（ZKFD-跨公司免费销售订单=免费单 / ZDTA-特殊价格标准订单=特殊价格订单）/
+    //       H 订单拒绝原因 / I 客户组5 / J 仓库名称 / K 订单支数 / L 首日排单支数 / M 总履约排单支数
+    const otherIdx = sheetNames.findIndex(n => n.includes('其他订单') || n.includes('其他'));
+    if (otherIdx >= 0) {
+      const shO = sheetToArray(wb.Sheets[sheetNames[otherIdx]]);
+      const oHeader = shO[0] || [];
+      function oColIdx(name) {
+        for (let i = 0; i < oHeader.length; i++) {
+          if (String(oHeader[i] || '').trim() === name) return i;
+        }
+        return -1;
+      }
+      const O_DATE = oColIdx('SAP放行日期'), O_NO = oColIdx('销售单号'), O_CH = oColIdx('主渠道'),
+            O_BRAND = oColIdx('品牌名称'), O_SKU = oColIdx('SKU编码'), O_SKUNAME = oColIdx('SKU名称'),
+            O_TYPE = oColIdx('订单类型'), O_REJECT = oColIdx('订单拒绝原因'), O_CUST = oColIdx('客户组5'),
+            O_RDC = oColIdx('仓库名称'), O_QTY = oColIdx('订单支数'), O_FIRST = oColIdx('首日排单支数'),
+            O_FULFILL = oColIdx('总履约排单支数');
+      for (let i = 1; i < shO.length; i++) {
+        const r = shO[i];
+        if (!r || O_DATE < 0 || O_TYPE < 0) continue;
+        const d = normalizeDate(r[O_DATE]);
+        if (!d) continue;
+        const typeRaw = String(r[O_TYPE] || '').trim();
+        let orderType = '特殊价格订单';
+        if (typeRaw.indexOf('免费') >= 0 || typeRaw.indexOf('ZKFD') >= 0) orderType = '免费单';
+        else if (typeRaw.indexOf('特殊') >= 0 || typeRaw.indexOf('ZDTA') >= 0) orderType = '特殊价格订单';
+        else continue; // 无法识别的订单类型跳过
+        const oKey = fmtDate(d) + '|' + getSafeStr(r, O_NO) + '|' + getSafeStr(r, O_SKU) + '|' + orderType;
+        if (existingOtherKeys.has(oKey)) continue;
+        existingOtherKeys.add(oKey);
+        dataStore.otherOrders.push({
+          date: d, dateStr: fmtDate(d),
+          orderNo: getSafeStr(r, O_NO), channel: getSafeStr(r, O_CH),
+          brand: normalizeBrandName(getSafeStr(r, O_BRAND)), skuCode: getSafeStr(r, O_SKU),
+          skuName: getSafeStr(r, O_SKUNAME), orderType: orderType,
+          rejectReason: getSafeStr(r, O_REJECT), customerGroup: getSafeStr(r, O_CUST),
+          warehouse: getSafeStr(r, O_RDC), orderQty: getSafeNum(r, O_QTY),
+          firstDayQty: getSafeNum(r, O_FIRST), totalFulfillQty: getSafeNum(r, O_FULFILL)
+        });
+      }
     }
 
     // Sheet7: 客户订单满足率（按名称查找，兼容不同版本Sheet顺序）
@@ -1183,6 +1230,7 @@ function renderPage(page) {
     switch(page) {
       case 'overview': renderOverview(); break;
       case 'fulfillment': renderFulfillment(); break;
+      case 'order-insight': renderOrderInsight(); break;
       case 'shortage': renderShortage(); break;
       case 'weekend-sim': renderWeekendSim(); break;
       case 'customer': renderCustomer(); break;
@@ -2206,6 +2254,305 @@ function renderFulfillmentHistoryCharts() {
     '</div>' +
     '</div>';
   document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
+}
+
+// ============ 订单数据洞察（普通 / 特殊价格 / 免费单，品牌×客户×RDC 环比） ============
+// 数据源：
+//   普通订单   ← dataStore.orderDetail（订单明细 sheet）
+//   免费单     ← dataStore.otherOrders 中 orderType==='免费单'（其他订单 sheet，G列 ZKFD-跨公司免费销售订单）
+//   特殊价格   ← dataStore.otherOrders 中 orderType==='特殊价格订单'（其他订单 sheet，G列 ZDTA-特殊价格标准订单）
+// 时间：5/6/7 连续三个月环比（其他订单表本身含 5/6/7 三个月数据）
+function renderOrderInsight() {
+  setTitle('订单数据洞察');
+  const page = document.getElementById('page-order-insight');
+  if (!page) return;
+
+  const orderDetail = dataStore.orderDetail || [];
+  const otherOrders = dataStore.otherOrders || [];
+  const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
+  const months = ['2026-05', '2026-06', '2026-07'];
+  const monthLabels = ['5月', '6月', '7月'];
+  const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
+
+  if (typeof window._oiMonth === 'undefined') window._oiMonth = '2026-07';
+
+  // ====== 归一化行 ======
+  const rows = [];
+  orderDetail.forEach(d => {
+    if (!d.dateStr) return;
+    rows.push({ type: '普通订单', month: d.dateStr.slice(0, 7), brand: d.brand || '未知',
+      customerGroup: d.customerGroup || '未知', rdc: d.warehouse || '未知', channel: d.channel || '',
+      orderQty: d.orderQty || 0, firstDayQty: d.firstDayQty || 0, totalFulfillQty: d.totalFulfillQty || 0, line: 1 });
+  });
+  otherOrders.forEach(d => {
+    if (!d.dateStr) return;
+    rows.push({ type: d.orderType || '特殊价格订单', month: d.dateStr.slice(0, 7), brand: d.brand || '未知',
+      customerGroup: d.customerGroup || '未知', rdc: d.warehouse || '未知', channel: d.channel || '',
+      orderQty: d.orderQty || 0, firstDayQty: d.firstDayQty || 0, totalFulfillQty: d.totalFulfillQty || 0, line: 1 });
+  });
+
+  // ====== 聚合工具 ======
+  function sumBy(arr, keyFn) {
+    const m = {};
+    arr.forEach(r => {
+      const k = keyFn(r);
+      if (!m[k]) m[k] = { orderQty: 0, lines: 0, firstDayQty: 0, totalFulfillQty: 0 };
+      m[k].orderQty += r.orderQty;
+      m[k].lines += r.line;
+      m[k].firstDayQty += r.firstDayQty;
+      m[k].totalFulfillQty += r.totalFulfillQty;
+    });
+    return m;
+  }
+  const byMonth = sumBy(rows, r => r.month);       // 月
+  const selRows = (window._oiMonth === 'all') ? rows : rows.filter(r => r.month === window._oiMonth);
+  const byType = sumBy(selRows, r => r.type);       // 类型×月
+  const byTypeBrand = sumBy(selRows, r => r.type + '|' + r.brand);   // 类型|品牌
+  const byTypeRdc = sumBy(selRows, r => r.type + '|' + r.rdc);       // 类型|RDC
+  const byTypeCust = sumBy(selRows, r => r.type + '|' + r.customerGroup); // 类型|客户
+  const byBrand = sumBy(selRows, r => r.brand);      // 品牌×月
+  const byCust = sumBy(selRows, r => r.customerGroup); // 客户×月
+
+  function rateOf(o) { return o.orderQty > 0 ? o.firstDayQty / o.orderQty : 0; }
+  function fmtN(n) { return (n || 0).toLocaleString(); }
+  function fmtPct(v) { return (v * 100).toFixed(1) + '%'; }
+  function ppColor(v) { return v >= 0 ? 'var(--color-green)' : 'var(--color-red)'; }
+
+  // 环比（7 vs 6）
+  function mom(curKey, prevKey, map) {
+    const c = map[curKey], p = map[prevKey];
+    if (!c || !p || !p.orderQty) return null;
+    return { d: c.orderQty - p.orderQty, pct: (c.orderQty - p.orderQty) / p.orderQty, lines: c.lines - p.lines };
+  }
+  const momType = {};
+  ['普通订单', '特殊价格订单', '免费单'].forEach(t => { momType[t] = mom(t + '|2026-07', t + '|2026-06', sumBy(rows, r => r.type + '|' + r.month)); });
+
+  // 最新月（7月）类型构成
+  const typeArr = ['普通订单', '特殊价格订单', '免费单'].map(t => byType[t] || { orderQty: 0, lines: 0 });
+  const totalQty = typeArr.reduce((s, o) => s + o.orderQty, 0);
+
+  // 品牌列表（按选中月订单量降序）
+  const brandList = Object.keys(byBrand).sort((a, b) => (byBrand[b].orderQty || 0) - (byBrand[a].orderQty || 0)).slice(0, 10);
+  // 客户TOP10
+  const custList = Object.keys(byCust).sort((a, b) => (byCust[b].orderQty || 0) - (byCust[a].orderQty || 0)).slice(0, 10);
+  // RDC 列表
+  const rdcList = RDC_LIST.filter(r => byTypeRdc['普通订单|' + r] || byTypeRdc['特殊价格订单|' + r] || byTypeRdc['免费单|' + r]);
+  if (rdcList.length === 0) rdcList.push(...RDC_LIST);
+
+  // ====== 交叉洞察：满足率对比 ======
+  const rateRows = typeArr.map((o, i) => ({ type: ['普通订单', '特殊价格订单', '免费单'][i], qty: o.orderQty, rate: rateOf(o) }));
+
+  // ====== 交叉洞察：库存覆盖联动（品牌 7月订单 vs 6月末库存） ======
+  const brandInv = {};
+  cov6.forEach(d => { if (d.brand) brandInv[d.brand] = (brandInv[d.brand] || 0) + (d.availableQty || 0); });
+  const invWarn = [];
+  brandList.forEach(b => {
+    const o = byBrand[b]; if (!o || o.orderQty <= 0) return;
+    const inv = brandInv[b] || 0;
+    if (inv > 0 && o.orderQty > inv) {
+      invWarn.push({ brand: b, orderQty: o.orderQty, inv: inv, ratio: o.orderQty / inv });
+    }
+  });
+  invWarn.sort((a, b) => b.ratio - a.ratio);
+
+  // ====== 页面 HTML ======
+  const monthSelect = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">统计月份：</label>' +
+    '<select onchange="window._oiMonth=this.value;renderOrderInsight()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+      '<option value="all" ' + (window._oiMonth === 'all' ? 'selected' : '') + '>全部（5-7月）</option>' +
+      months.map((m, i) => '<option value="' + m + '"' + (window._oiMonth === m ? ' selected' : '') + '>' + monthLabels[i] + '</option>').join('') +
+    '</select>';
+
+  // KPI 卡片
+  const mom7 = mom('2026-07', '2026-06', sumBy(rows, r => r.month));
+  const kpiHtml = '<div class="kpi-row" style="padding:0 8px 8px">' +
+    '<div class="kpi-card blue"><div class="kpi-label">' + (window._oiMonth === 'all' ? '5-7月合计订单量' : monthLabels[months.indexOf(window._oiMonth)] + '订单量') + '</div><div class="kpi-value">' + fmtN(totalQty) + '<span class="kpi-unit">支</span></div>' +
+      '<div style="font-size:11px;color:#64748B">' + selRows.length.toLocaleString() + ' 行订单</div></div>' +
+    '<div class="kpi-card blue"><div class="kpi-label">普通订单</div><div class="kpi-value">' + fmtN(typeArr[0].orderQty) + '<span class="kpi-unit">支</span></div>' +
+      '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[0].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['普通订单'] ? ppColor(momType['普通订单'].pct) : '#64748B') + '">' + (momType['普通订单'] ? (momType['普通订单'].pct >= 0 ? '+' : '') + (momType['普通订单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
+    '<div class="kpi-card orange"><div class="kpi-label">特殊价格订单</div><div class="kpi-value">' + fmtN(typeArr[1].orderQty) + '<span class="kpi-unit">支</span></div>' +
+      '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[1].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['特殊价格订单'] ? ppColor(momType['特殊价格订单'].pct) : '#64748B') + '">' + (momType['特殊价格订单'] ? (momType['特殊价格订单'].pct >= 0 ? '+' : '') + (momType['特殊价格订单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
+    '<div class="kpi-card green"><div class="kpi-label">免费单</div><div class="kpi-value">' + fmtN(typeArr[2].orderQty) + '<span class="kpi-unit">支</span></div>' +
+      '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[2].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['免费单'] ? ppColor(momType['免费单'].pct) : '#64748B') + '">' + (momType['免费单'] ? (momType['免费单'].pct >= 0 ? '+' : '') + (momType['免费单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
+  '</div>';
+
+  // 明细表
+  const detailRows = brandList.map(b => {
+    const o = byBrand[b];
+    const cells = ['普通订单', '特殊价格订单', '免费单'].map(t => {
+      const key = t + '|' + b;
+      const e = byTypeBrand[key];
+      return e ? e.orderQty.toLocaleString() : '-';
+    });
+    return '<tr><td style="text-align:left">' + b + '</td><td style="text-align:right;font-weight:600">' + o.orderQty.toLocaleString() + '</td>' +
+      cells.map((c, i) => '<td style="text-align:right;color:' + TYPE_COLORS[['普通订单','特殊价格订单','免费单'][i]] + '">' + c + '</td>').join('') +
+      '<td style="text-align:right">' + o.lines.toLocaleString() + '</td></tr>';
+  }).join('');
+
+  const invWarnHtml = invWarn.length > 0
+    ? '<div style="margin-top:8px;font-size:12px;line-height:1.8">' +
+        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '订单 ' + fmtN(w.orderQty) + ' 支 &gt; 6月末库存 ' + fmtN(w.inv) + ' 支（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
+      '</div>'
+    : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; 6月末库存」的预警</div>';
+
+  page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + '</div>' +
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">🔎 订单数据洞察</span></div>' +
+      kpiHtml +
+      '<div style="font-size:11px;color:var(--text-secondary);padding:0 8px 4px;line-height:1.5">' +
+        '<b>口径</b>：普通订单=订单明细Sheet；免费单=其他订单表 G列「ZKFD-跨公司免费销售订单」；特殊价格订单=其他订单表 G列「ZDTA-特殊价格标准订单」| 订单量单位：支' +
+      '</div>' +
+    '</div>' +
+
+    // 图1+2 并排：类型构成 + 月度趋势
+    '<div style="display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;margin-bottom:16px">' +
+      '<div class="card" style="flex:0 0 340px">' +
+        '<div class="card-header"><span class="card-title">订单类型构成</span></div>' +
+        '<div class="chart-container" style="height:250px" id="oi-chart-type"></div>' +
+      '</div>' +
+      '<div class="card" style="flex:1;min-width:380px">' +
+        '<div class="card-header"><span class="card-title">5-7月 订单量趋势（环比）</span></div>' +
+        '<div class="chart-container" style="height:250px" id="oi-chart-trend"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // 图3：品牌×类型
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">品牌 × 订单类型</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">' + (window._oiMonth === 'all' ? '5-7月合计' : monthLabels[months.indexOf(window._oiMonth)] + '数据') + '</span></div>' +
+      '<div class="chart-container" style="height:280px" id="oi-chart-brand"></div>' +
+    '</div>' +
+
+    // 图4+5 并排：RDC×类型 + 客户TOP10×类型
+    '<div style="display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;margin-bottom:16px">' +
+      '<div class="card" style="flex:1;min-width:360px">' +
+        '<div class="card-header"><span class="card-title">RDC × 订单类型</span></div>' +
+        '<div class="chart-container" style="height:250px" id="oi-chart-rdc"></div>' +
+      '</div>' +
+      '<div class="card" style="flex:1;min-width:360px">' +
+        '<div class="card-header"><span class="card-title">客户 TOP10 × 订单类型</span></div>' +
+        '<div class="chart-container" style="height:250px" id="oi-chart-cust"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // 交叉洞察
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">⚡ 交叉洞察</span></div>' +
+      '<div class="kpi-row" style="padding:0 8px 8px">' +
+        rateRows.map(r => '<div class="kpi-card" style="background:' + TYPE_COLORS[r.type] + '11"><div class="kpi-label">' + r.type + ' 首日满足率</div><div class="kpi-value">' + fmtPct(r.rate) + '</div><div style="font-size:11px;color:#64748B">订单 ' + fmtN(r.qty) + ' 支</div></div>').join('') +
+      '</div>' +
+      '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px"><span class="card-title" style="font-size:13px">📦 库存覆盖预警（订单 vs 6月末库存）</span></div>' +
+      invWarnHtml +
+    '</div>' +
+
+    // 明细表
+    '<div class="card">' +
+      '<div class="card-header"><span class="card-title">品牌订单量明细（' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '）— 单位：支</span></div>' +
+      '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<th style="text-align:left">品牌</th><th style="text-align:right">合计</th>' +
+      '<th style="text-align:right;color:#2563EB">普通订单</th><th style="text-align:right;color:#F59E0B">特殊价格订单</th><th style="text-align:right;color:#10B981">免费单</th>' +
+      '<th style="text-align:right">订单行数</th>' +
+      '</tr></thead><tbody>' + detailRows + '</tbody></table></div>' +
+    '</div>';
+
+  // ====== 图表 ======
+  // 图1：类型构成（环形图）
+  const c1 = initChart('oi-chart-type');
+  c1.setOption({
+    title: { text: (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + ' 三类订单占比', left: 'center', top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
+    tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + ' 支（' + p.percent.toFixed(1) + '%）' },
+    legend: { bottom: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+    series: [{
+      type: 'pie', radius: ['38%', '62%'], center: ['50%', '52%'],
+      data: ['普通订单', '特殊价格订单', '免费单'].map((t, i) => ({ name: t, value: typeArr[i].orderQty, color: TYPE_COLORS[t] })),
+      label: { formatter: '{b}\n{d}%', fontSize: 10 },
+      color: ['普通订单', '特殊价格订单', '免费单'].map(t => TYPE_COLORS[t]),
+      emphasis: { itemStyle: { shadowBlur: 10 } }
+    }]
+  });
+
+  // 图2：5-7月趋势（三类折线）
+  const c2 = initChart('oi-chart-trend');
+  const trendByMonthType = sumBy(rows, r => r.month + '|' + r.type);
+  c2.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
+      const m = params[0].axisValue;
+      let h = '<strong>' + m.replace('2026-', '') + '月</strong>';
+      params.forEach(p => h += '<br/>' + p.marker + p.seriesName + '：' + (p.value != null ? p.value.toLocaleString() + ' 支' : '—'));
+      return h;
+    }},
+    legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 } },
+    grid: { left: 60, right: 20, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
+      name: t, type: 'line', smooth: false, symbol: 'circle', symbolSize: 6,
+      data: months.map(m => { const e = trendByMonthType[m + '|' + t]; return e ? e.orderQty : null; }),
+      lineStyle: { width: 2 }, color: TYPE_COLORS[t],
+      label: { show: true, position: 'top', fontSize: 9, formatter: p => p.value != null ? p.value.toLocaleString() : '' },
+      connectNulls: true
+    }))
+  });
+
+  // 图3：品牌×类型（堆积柱状图）
+  const c3 = initChart('oi-chart-brand');
+  c3.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
+      const b = params[0].axisValue;
+      let h = '<strong>' + b + '</strong>'; let tot = 0;
+      params.forEach(p => { if (p.value) { h += '<br/>' + p.marker + p.seriesName + '：' + p.value.toLocaleString(); tot += p.value; } });
+      h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' 支</span>';
+      return h;
+    }},
+    legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+    grid: { left: 65, right: 15, top: 35, bottom: 45 },
+    xAxis: { type: 'category', data: brandList, axisLabel: { fontSize: 10, rotate: 25, interval: 0 } },
+    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
+      name: t, type: 'bar', stack: 'total', barWidth: 18,
+      data: brandList.map(b => { const e = byTypeBrand[t + '|' + b]; return e ? e.orderQty : 0; }),
+      color: TYPE_COLORS[t]
+    }))
+  });
+
+  // 图4：RDC×类型（堆积柱状图）
+  const c4 = initChart('oi-chart-rdc');
+  c4.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
+      const r = params[0].axisValue;
+      let h = '<strong>' + r + '</strong>'; let tot = 0;
+      params.forEach(p => { if (p.value) { h += '<br/>' + p.marker + p.seriesName + '：' + p.value.toLocaleString(); tot += p.value; } });
+      h += '<br/><span style="font-weight:600">小计：' + tot.toLocaleString() + ' 支</span>';
+      return h;
+    }},
+    legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+    grid: { left: 60, right: 15, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: rdcList, axisLabel: { fontSize: 10, interval: 0 } },
+    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
+      name: t, type: 'bar', stack: 'total', barWidth: 20,
+      data: rdcList.map(r => { const e = byTypeRdc[t + '|' + r]; return e ? e.orderQty : 0; }),
+      color: TYPE_COLORS[t]
+    }))
+  });
+
+  // 图5：客户TOP10×类型（分组柱状图）
+  const c5 = initChart('oi-chart-cust');
+  c5.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
+      const c = params[0].axisValue;
+      let h = '<strong>' + c + '</strong>';
+      params.forEach(p => h += '<br/>' + p.marker + p.seriesName + '：' + (p.value || 0).toLocaleString());
+      return h;
+    }},
+    legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+    grid: { left: 60, right: 15, top: 35, bottom: 55 },
+    xAxis: { type: 'category', data: custList, axisLabel: { fontSize: 9, rotate: 35, interval: 0 } },
+    yAxis: { type: 'value', name: '支', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+    series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
+      name: t, type: 'bar', barWidth: 8,
+      data: custList.map(cg => { const e = byTypeCust[t + '|' + cg]; return e ? e.orderQty : 0; }),
+      color: TYPE_COLORS[t]
+    }))
+  });
 }
 
 // ============ SHORTAGE PAGE ============
@@ -6754,6 +7101,7 @@ function init() {
           <div class="menu-group-body" data-group="order">
           <div class="menu-item" data-page="overview" onclick="navigateTo('overview')"><span class="icon">◉</span>总览仪表板</div>
           <div class="menu-item" data-page="fulfillment" onclick="navigateTo('fulfillment')"><span class="icon">◈</span>订单满足率</div>
+          <div class="menu-item" data-page="order-insight" onclick="navigateTo('order-insight')"><span class="icon">🔎</span>订单数据洞察</div>
           <div class="menu-item" data-page="shortage" onclick="navigateTo('shortage')"><span class="icon">⚠</span>缺货分析</div>
           <div class="menu-item" data-page="customer" onclick="navigateTo('customer')"><span class="icon">◎</span>客户维度</div>
           <div class="menu-item" data-page="weekend-sim" onclick="navigateTo('weekend-sim')"><span class="icon">📅</span>周末模拟</div>
@@ -6791,6 +7139,7 @@ function init() {
         <main class="content">
           <div class="page" id="page-overview"></div>
           <div class="page" id="page-fulfillment"></div>
+          <div class="page" id="page-order-insight"></div>
           <div class="page" id="page-shortage"></div>
           <div class="page" id="page-customer"></div>
           <div class="page" id="page-weekend-sim"></div>
@@ -6815,7 +7164,7 @@ function init() {
   // Handle hash routing
   function handleHash() {
     const hash = window.location.hash.replace('#/', '');
-    if (hash && ['overview','fulfillment','shortage','weekend-sim','customer','transship','data','shortage-compare','replenishment','replenish-logic','inventory','inventory-structure','inventory-coverage-detail','slow-moving','slow-moving-logic','biz-demand','biz-demand-detail','biz-demand-dacr'].includes(hash)) {
+    if (hash && ['overview','fulfillment','order-insight','shortage','weekend-sim','customer','transship','data','shortage-compare','replenishment','replenish-logic','inventory','inventory-structure','inventory-coverage-detail','slow-moving','slow-moving-logic','biz-demand','biz-demand-detail','biz-demand-dacr'].includes(hash)) {
       if (!isAuthenticated) return;
       if (hash === 'login') return;
       currentPage = hash;
