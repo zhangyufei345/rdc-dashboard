@@ -2275,6 +2275,13 @@ function renderOrderInsight() {
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
 
   if (typeof window._oiMonth === 'undefined') window._oiMonth = '2026-07';
+  if (typeof window._oiHainan === 'undefined') window._oiHainan = 'all';
+
+  // ====== SKU → 是否海南花露水 映射（从 cov5/cov6 isHainan 字段聚合） ======
+  const skuIsHainan = {};
+  [...((dataStore.inventory && dataStore.inventory.cov6) || []), ...((dataStore.inventory && dataStore.inventory.cov5) || [])].forEach(d => {
+    if (d.sku && d.isHainan) skuIsHainan[d.sku] = true;
+  });
 
   // ====== 归一化行 ======
   const rows = [];
@@ -2282,12 +2289,16 @@ function renderOrderInsight() {
     if (!d.dateStr) return;
     rows.push({ type: '普通订单', month: d.dateStr.slice(0, 7), brand: d.brand || '未知',
       customerGroup: d.customerGroup || '未知', rdc: d.warehouse || '未知', channel: d.channel || '',
+      skuCode: d.skuCode || '',
+      isHainan: !!(d.skuCode && skuIsHainan[d.skuCode]),
       orderQty: d.orderQty || 0, firstDayQty: d.firstDayQty || 0, totalFulfillQty: d.totalFulfillQty || 0, line: 1 });
   });
   otherOrders.forEach(d => {
     if (!d.dateStr) return;
     rows.push({ type: d.orderType || '特殊价格订单', month: d.dateStr.slice(0, 7), brand: d.brand || '未知',
       customerGroup: d.customerGroup || '未知', rdc: d.warehouse || '未知', channel: d.channel || '',
+      skuCode: d.skuCode || '',
+      isHainan: !!(d.skuCode && skuIsHainan[d.skuCode]),
       orderQty: d.orderQty || 0, firstDayQty: d.firstDayQty || 0, totalFulfillQty: d.totalFulfillQty || 0, line: 1 });
   });
 
@@ -2305,7 +2316,8 @@ function renderOrderInsight() {
     return m;
   }
   const byMonth = sumBy(rows, r => r.month);       // 月
-  const selRows = (window._oiMonth === 'all') ? rows : rows.filter(r => r.month === window._oiMonth);
+  const monthFiltered = (window._oiMonth === 'all') ? rows : rows.filter(r => r.month === window._oiMonth);
+  const selRows = (window._oiHainan === 'all') ? monthFiltered : monthFiltered.filter(r => window._oiHainan === 'yes' ? r.isHainan : !r.isHainan);
   const byType = sumBy(selRows, r => r.type);       // 类型×月
   const byTypeBrand = sumBy(selRows, r => r.type + '|' + r.brand);   // 类型|品牌
   const byTypeRdc = sumBy(selRows, r => r.type + '|' + r.rdc);       // 类型|RDC
@@ -2361,6 +2373,12 @@ function renderOrderInsight() {
       '<option value="all" ' + (window._oiMonth === 'all' ? 'selected' : '') + '>全部（5-7月）</option>' +
       months.map((m, i) => '<option value="' + m + '"' + (window._oiMonth === m ? ' selected' : '') + '>' + monthLabels[i] + '</option>').join('') +
     '</select>';
+  const hainanSelect = '<label style="font-size:12px;color:var(--text-secondary);margin-left:8px;margin-right:6px">是否海南花露水：</label>' +
+    '<select onchange="window._oiHainan=this.value;renderOrderInsight()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+      '<option value="all" ' + (window._oiHainan === 'all' ? 'selected' : '') + '>全部</option>' +
+      '<option value="yes" ' + (window._oiHainan === 'yes' ? 'selected' : '') + '>仅海南花露水</option>' +
+      '<option value="no" ' + (window._oiHainan === 'no' ? 'selected' : '') + '>不含海南花露水</option>' +
+    '</select>';
 
   // KPI 卡片
   const mom7 = mom('2026-07', '2026-06', sumBy(rows, r => r.month));
@@ -2394,7 +2412,7 @@ function renderOrderInsight() {
       '</div>'
     : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; 6月末库存」的预警</div>';
 
-  page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + '</div>' +
+  page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + hainanSelect + '</div>' +
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">🔎 订单数据洞察</span></div>' +
       kpiHtml +
