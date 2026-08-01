@@ -2323,7 +2323,8 @@ function renderOrderInsight() {
   const byTypeRdc = sumBy(selRows, r => r.type + '|' + r.rdc);       // 类型|RDC
   const byTypeCust = sumBy(selRows, r => r.type + '|' + r.customerGroup); // 类型|客户
   const byBrand = sumBy(selRows, r => r.brand);      // 品牌×月
-  const byCust = sumBy(selRows, r => r.customerGroup); // 客户×月
+  const byCustRows = (window._oiTopCustFilter === 'exclude') ? selRows.filter(r => r.customerGroup.indexOf('AAA经销商') < 0) : selRows;
+  const byCust = sumBy(byCustRows, r => r.customerGroup); // 客户×月（按卡片筛选）
 
   function rateOf(o) { return o.orderQty > 0 ? o.firstDayQty / o.orderQty : 0; }
   function fmtN(n) { return (n || 0).toLocaleString(); }
@@ -2446,7 +2447,13 @@ function renderOrderInsight() {
         '<div class="chart-container" style="height:250px" id="oi-chart-rdc"></div>' +
       '</div>' +
       '<div class="card" style="flex:1;min-width:360px">' +
-        '<div class="card-header"><span class="card-title">客户 TOP10 × 订单类型</span></div>' +
+        '<div class="card-header"><span class="card-title">客户 TOP10 × 订单类型</span>' +
+        '<label style="font-size:11px;color:var(--text-secondary);margin-left:auto;margin-right:6px">AAA经销商：</label>' +
+        '<select onchange="window._oiTopCustFilter=this.value;renderOrderInsight()" style="min-width:90px;font-size:11px;padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+          '<option value="all" ' + (window._oiTopCustFilter === 'all' || !window._oiTopCustFilter ? 'selected' : '') + '>包含</option>' +
+          '<option value="exclude" ' + (window._oiTopCustFilter === 'exclude' ? 'selected' : '') + '>排除</option>' +
+        '</select>' +
+        '</div>' +
         '<div class="chart-container" style="height:250px" id="oi-chart-cust"></div>' +
       '</div>' +
     '</div>' +
