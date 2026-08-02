@@ -7293,6 +7293,7 @@ function renderInventoryTurnoverHistoryCharts() {
   const hainanSuffix = hainanFilter === 'yes' ? '·仅海南花露水' : hainanFilter === 'no' ? '·不含海南花露水' : '';
 
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  const months = (dataStore.inventoryTurnover && dataStore.inventoryTurnover.months) || ['1月','2月','3月','4月','5月','6月'];
 
   function valOrNull(map, k, i) { const arr = map && map[k]; return (arr && arr.length > i) ? arr[i] : null; }
   const EXCLUDE_KEYS = ['总仓'];
