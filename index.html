@@ -2271,10 +2271,29 @@ function renderOrderInsight() {
   const otherOrders = dataStore.otherOrders || [];
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
   const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
-  // SKU 名称补全表：转储数据 materialName 常为空，优先从订单明细/otherOrders 取名称
+  // SKU 名称补全表：转储数据 materialName 常为空，从多源补全（订单 → 库存覆盖 → 周转 sheet）
   const skuNameMap = {};
   orderDetail.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
   otherOrders.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
+  cov6.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
+  cov5.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
+  const _invT = dataStore.inventoryTurnover;
+  if (_invT) {
+    Object.keys(_invT).forEach(k => {
+      if (k === 'rdcOrder' || k === 'months' || k === 'formula') return;
+      const m = _invT[k];
+      if (m && typeof m === 'object' && !Array.isArray(m)) {
+        Object.keys(m).forEach(r => {
+          const arr = m[r];
+          if (Array.isArray(arr)) {
+            // 周转 sheet 子项暂不存 skuName，仅 productMaster 之外补充inventoryTurnover.productMaster
+          }
+        });
+      }
+    });
+  }
+  const _pm2 = (dataStore.inventory && dataStore.inventory.productMaster) || {};
+  Object.keys(_pm2).forEach(k => { if (_pm2[k] && _pm2[k].skuName && !skuNameMap[k]) skuNameMap[k] = _pm2[k].skuName; });
   const months = ['2026-05', '2026-06', '2026-07'];
   const monthLabels = ['5月', '6月', '7月'];
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
@@ -2754,9 +2773,10 @@ function renderOrderInsight() {
         if (top.length) {
           h += '<div style="margin-top:4px;font-weight:600">差异最大 TOP5 SKU</div>';
           h += '<table style="border-collapse:collapse;font-size:10px;margin-top:2px">' +
-            '<tr style="color:#94a3b8"><td style="padding:1px 5px">SKU</td><td style="padding:1px 5px">差异</td><td style="padding:1px 5px">转储</td><td style="padding:1px 5px">出货</td><td style="padding:1px 5px">订单</td><td style="padding:1px 5px">根因</td></tr>';
+            '<tr style="color:#94a3b8"><td style="padding:1px 5px">SKU</td><td style="padding:1px 5px">名称</td><td style="padding:1px 5px">差异</td><td style="padding:1px 5px">转储</td><td style="padding:1px 5px">出货</td><td style="padding:1px 5px">订单</td><td style="padding:1px 5px">根因</td></tr>';
           top.forEach(it => {
-            h += '<tr><td style="padding:1px 5px">' + it.sku + '</td><td style="padding:1px 5px">' + fmtN(it.diff) + '</td><td style="padding:1px 5px">' + fmtN(it.trans) + '</td><td style="padding:1px 5px">' + fmtN(it.ship) + '</td><td style="padding:1px 5px">' + fmtN(it.order) + '</td><td style="padding:1px 5px">' + it.rootCause + '</td></tr>';
+            const nm = it.skuName ? ('<span title="' + it.skuName + '">' + (it.skuName.length > 8 ? it.skuName.slice(0, 8) + '…' : it.skuName) + '</span>') : '<span style="color:#94a3b8">—</span>';
+            h += '<tr><td style="padding:1px 5px">' + it.sku + '</td><td style="padding:1px 5px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nm + '</td><td style="padding:1px 5px">' + fmtN(it.diff) + '</td><td style="padding:1px 5px">' + fmtN(it.trans) + '</td><td style="padding:1px 5px">' + fmtN(it.ship) + '</td><td style="padding:1px 5px">' + fmtN(it.order) + '</td><td style="padding:1px 5px">' + it.rootCause + '</td></tr>';
           });
           h += '</table><div style="font-size:9px;color:#94a3b8;margin-top:3px">↳ 下方明细表可查看全部并导出</div>';
         } else {
@@ -6445,14 +6465,14 @@ function renderInventoryTurnover() {
   });
   chart3.setOption({
     tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 } },
-    legend: { data: ['全库位','各分库'], top: 5, left: 10, textStyle: { fontSize: 11 } },
+    legend: { data: ['全库位','共享仓'], top: 5, left: 10, textStyle: { fontSize: 11 } },
     grid: { left: 50, right: 20, top: 40, bottom: 30 },
     xAxis: { type: 'category', data: compareLabels.map(function(r) { return r + 'RDC'; }), axisLabel: { fontSize: 10, rotate: 15 } },
     yAxis: { type: 'value', name: '天', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: [
       { name: '全库位', type: 'bar', data: allVals, color: '#3B82F6', barWidth: '30%',
         label: { show: true, position: 'top', fontSize: 10, color: '#1E40AF', formatter: p => p.value > 0 ? p.value + '天' : '' } },
-      { name: '各分库', type: 'bar', data: sharedVals, color: '#10B981', barWidth: '30%',
+      { name: '共享仓', type: 'bar', data: sharedVals, color: '#10B981', barWidth: '30%',
         label: { show: true, position: 'top', fontSize: 10, color: '#065F46', formatter: p => p.value > 0 ? p.value + '天' : '' } }
     ]
   });
