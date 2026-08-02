@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 14; // v14: 基础数据 新增「是否为淘汰品」F列→productMaster.obsolete；慢动品分析新增是否淘汰筛选
+const DB_VERSION = 15; // v15: 库存周转Sheet扩展至7个月（1-7月），解析/渲染支持动态月份，空白单元格按 null 处理（显示"–"）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -728,10 +728,10 @@ function parseInventoryTurnoverSheet(shI) {
   const RDC_SHORT = ['东北','华北','华东','华南','华中','西南','西北'];
   const RDC_FULL = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西南RDC','西北RDC'];
   const ALL_RDC_NAMES = ['东北','华北','华东','华南','华中','西南','西北','总仓'];
-  function num(v){ if(v==null||v==='') return 0; const s=String(v).replace(/,/g,'').replace(/[^\d.\-]/g,''); const n=parseFloat(s); return isNaN(n)?0:n; }
+  function num(v){ if(v==null||v==='') return null; const s=String(v).replace(/,/g,'').replace(/[^\d.\-]/g,''); const n=parseFloat(s); return isNaN(n)?null:n; }
   function rowVals(r, c1, c2){ const a=[]; for(let c=c1;c<=c2;c++) a.push(num(r?r[c]:null)); return a; }
 
-  const invData = { allLocation: {}, sharedLocation: {}, subLocation: {}, inventoryByRdc: {}, shipmentCost: {}, rdcOrder: [], months: ['1月','2月','3月','4月','5月','6月'], formula: '' };
+  const invData = { allLocation: {}, sharedLocation: {}, subLocation: {}, inventoryByRdc: {}, shipmentCost: {}, rdcOrder: [], months: ['1月','2月','3月','4月','5月','6月','7月'], formula: '' };
 
   // 找到「出货成本统计」表头所在行（右表 I 列），其上为库存金额、其下为出货成本
   let splitPoint = shI.length;
@@ -752,25 +752,25 @@ function parseInventoryTurnoverSheet(shI) {
     const right = r[8]!=null ? String(r[8]).trim() : '';
 
     // 左表：周转天数（B-G 列）
-    if (left === 'RDC（全库位）') invData.totalAllLocation = rowVals(r,1,6);
-    else if (left === 'RDC（共享仓）') invData.totalSharedLocation = rowVals(r,1,6);
-    else if (left === '总仓') invData.headquarters = rowVals(r,1,6);
+    if (left === 'RDC（全库位）') invData.totalAllLocation = rowVals(r,1,7);
+    else if (left === 'RDC（共享仓）') invData.totalSharedLocation = rowVals(r,1,7);
+    else if (left === '总仓') invData.headquarters = rowVals(r,1,7);
     else if (left.indexOf('RDC分仓')>=0 && (sharedHeaderRow<0 || i<sharedHeaderRow)) {
       const idx = RDC_SHORT.findIndex(x=>left.indexOf(x)===0);
-      if (idx>=0){ const name=RDC_FULL[idx]; invData.allLocation[name]=rowVals(r,1,6); if(invData.rdcOrder.indexOf(name)<0) invData.rdcOrder.push(name); }
+      if (idx>=0){ const name=RDC_FULL[idx]; invData.allLocation[name]=rowVals(r,1,7); if(invData.rdcOrder.indexOf(name)<0) invData.rdcOrder.push(name); }
     }
     else if (sharedHeaderRow>=0 && i>sharedHeaderRow) {
       const idx = RDC_SHORT.findIndex(x=>left===x);
-      if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,6); }
+      if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,7); }
     }
 
     // 右表：库存金额（出货成本统计之前）/ 出货成本（之后），I 列标签为 RDC 简称
     if (right && ALL_RDC_NAMES.indexOf(right)>=0){
       const mapKey = right === '总仓' ? '总仓' : RDC_FULL[RDC_SHORT.indexOf(right)];
-      if (i < splitPoint) invData.inventoryByRdc[mapKey] = rowVals(r,9,14);
+      if (i < splitPoint) invData.inventoryByRdc[mapKey] = rowVals(r,9,15);
       else {
-        invData.shipmentCost[mapKey] = rowVals(r,9,14);
-        if (right==='总仓') invData.shipmentCost['总部'] = rowVals(r,9,14);
+        invData.shipmentCost[mapKey] = rowVals(r,9,15);
+        if (right==='总仓') invData.shipmentCost['总部'] = rowVals(r,9,15);
       }
     }
   }
@@ -2270,6 +2270,7 @@ function renderOrderInsight() {
   const orderDetail = dataStore.orderDetail || [];
   const otherOrders = dataStore.otherOrders || [];
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
+  const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
   const months = ['2026-05', '2026-06', '2026-07'];
   const monthLabels = ['5月', '6月', '7月'];
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
@@ -2429,6 +2430,72 @@ function renderOrderInsight() {
   if (transShipRdcs.length === 0) transShipRdcs.push(...RDC_LIST);
   const diffByRdc = {};
   transShipRdcs.forEach(rdc => { diffByRdc[rdc] = (transByRdc[rdc] || 0) - (shipByRdc[rdc] || 0); });
+  // ====== SKU 级差异明细（转储 vs 出货 + 期初库存/未来需求 + 根因）======
+  // 期初库存基准：7月视图→cov6（6月末），6月视图→cov5（5月末），5月/全部→无基准
+  const covBase = (compareMonth === '2026-07') ? cov6 : (compareMonth === '2026-06' ? cov5 : null);
+  const invMap = {};
+  (covBase || []).forEach(d => {
+    if (!d.sku || !d.rdc) return;
+    const s = window._oiByBox ? specOf(d.sku) : 1;
+    const k = d.rdc + '|' + d.sku;
+    if (invMap[k]) return;
+    const fut = (d.cov07 || 0) + (d.cov08 || 0) + (d.cov09 || 0) + (d.cov10 || 0) + (d.cov11 || 0) + (d.cov12 || 0);
+    invMap[k] = { avail: (d.availQtyPlan || 0) / s, fut: fut / s };
+  });
+  // SKU×RDC 聚合：出货/订单需求（来自订单明细），转储入库（来自转储）
+  const skuAgg = {};
+  compareRows.forEach(r => {
+    const s = window._oiByBox ? specOf(r.skuCode) : 1;
+    const k = r.rdc + '|' + r.skuCode;
+    if (!skuAgg[k]) skuAgg[k] = { rdc: r.rdc, sku: r.skuCode, skuName: r.skuName || '', ship: 0, order: 0, trans: 0 };
+    skuAgg[k].ship += (r.totalFulfillQty || 0) / s;
+    skuAgg[k].order += (r.orderQty || 0) / s;
+  });
+  compareTrans.forEach(r => {
+    const s = window._oiByBox ? specOf(r.material) : 1;
+    const qty = r.isBox ? (r.inboundQty || 0) : (r.inboundQty || 0) / s;
+    const k = r.rdc + '|' + r.material;
+    if (!skuAgg[k]) skuAgg[k] = { rdc: r.rdc, sku: r.material, skuName: r.materialName || '', ship: 0, order: 0, trans: 0 };
+    skuAgg[k].trans += qty;
+  });
+  // 根因分类：diff = 转储入库 − 实际出货
+  function diagnoseTS(it) {
+    const diff = it.trans - it.ship;
+    const ship = it.ship || 0, order = it.order || 0, trans = it.trans || 0;
+    const avail = it.avail || 0, fut = it.fut || 0;
+    if (avail <= 0 && fut <= 0) { // 无期初库存基准：仅按订单vs出货/转储粗判
+      if (diff < 0 && order > ship * 1.3) return '需求超预期';
+      if (diff > 0 && order < ship * 0.9 && trans > ship) return '低销/需求不足';
+      return '进出相对平衡';
+    }
+    if (diff < 0) { // 出货>转储：库存净减少
+      if (avail > ship * 1.5 && trans < ship * 0.3) return '期初库存充足，消化库存为主';
+      if (order > ship * 1.2 && trans < order * 0.6) return '需求超预期，补货未跟上';
+      return '主动消耗库存';
+    } else { // 转储>出货：库存净增加
+      if (fut > ship * 2 && trans > ship) return '为未来需求备货';
+      if (order > ship * 1.3) return '需求旺盛但出货受限';
+      if (order < ship && fut < ship * 2) return '低销/需求不足';
+      return '常规补货';
+    }
+  }
+  const skuDetailAll = [];
+  Object.keys(skuAgg).forEach(k => {
+    const it = skuAgg[k];
+    const im = invMap[k] || {};
+    const diff = it.trans - it.ship;
+    skuDetailAll.push({
+      rdc: it.rdc, sku: it.sku, skuName: it.skuName,
+      trans: Math.round(it.trans), ship: Math.round(it.ship), order: Math.round(it.order),
+      diff: Math.round(diff),
+      avail: Math.round(im.avail || 0), fut: Math.round(im.fut || 0),
+      rootCause: diagnoseTS({ ship: it.ship, order: it.order, trans: it.trans, avail: im.avail || 0, fut: im.fut || 0 })
+    });
+  });
+  skuDetailAll.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  window._oiSkuDetail = skuDetailAll;
+  window._oiSkuDetailMonth = transShipMonthLabel;
+  function buildSkuTop5(rdc) { return skuDetailAll.filter(x => x.rdc === rdc).slice(0, 5); }
   const transShipMonthLabel = compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无数据';
 
   // ====== 页面 HTML ======
@@ -2546,6 +2613,22 @@ function renderOrderInsight() {
       '<th style="text-align:right;color:#2563EB">普通订单</th><th style="text-align:right;color:#F59E0B">特殊价格订单</th><th style="text-align:right;color:#10B981">免费单</th>' +
       '<th style="text-align:right">订单行数</th>' +
       '</tr></thead><tbody>' + detailRows + '</tbody></table></div>' +
+    '</div>' +
+
+    // ====== SKU 差异明细表（可筛选 / 导出）======
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">📋 转储 vs 出货 SKU 差异明细（' + transShipMonthLabel + '）— 单位：' + u + '</span>' +
+      '<div style="margin-left:auto;display:flex;gap:8px;align-items:center">' +
+        '<select id="oi-sku-rdc" onchange="renderOiSkuDetailTable()" style="font-size:11px;padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+          '<option value="all">全部RDC</option>' +
+          transShipRdcs.map(r => '<option value="' + r + '">' + r + '</option>').join('') +
+        '</select>' +
+        '<input id="oi-sku-search" oninput="renderOiSkuDetailTable()" placeholder="SKU/名称搜索" style="font-size:11px;padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;width:130px">' +
+        '<button class="btn-export" onclick="exportOiSkuDetail()" style="font-size:11px;padding:4px 10px">⬇ 导出CSV</button>' +
+      '</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">期初可用库存取' + (covBase ? '覆盖表月末库存（' + (compareMonth === '2026-07' ? '6月末' : '5月末') + '）' : '"—"（当前月份无期初库存基准）') + '；未来需求 = 覆盖表未来6个月分仓需求合计。按差异绝对值降序排列。</div>' +
+      '<div class="table-wrap" id="oi-sku-detail-table" style="max-height:520px;overflow:auto"></div>' +
     '</div>';
 
   // ====== 图表 ======
@@ -2654,11 +2737,26 @@ function renderOrderInsight() {
     const c6 = initChart('oi-chart-trans-ship');
     c6.setOption({
       tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
-        const r = params[0].axisValue;
-        let h = '<strong>' + r + '</strong>';
-        params.forEach(p => {
-          h += '<br/>' + p.marker + p.seriesName + '：' + (p.value || 0).toLocaleString() + ' ' + u;
-        });
+        const rdc = params[0].axisValue;
+        const trans = params[0].value || 0;
+        const ship = params[1].value || 0;
+        const diff = params[2].value || 0;
+        let h = '<strong>' + rdc + ' — ' + transShipMonthLabel + '</strong><br/>';
+        h += '转储入库：' + fmtN(Math.round(trans)) + ' ' + u + '<br/>';
+        h += '实际出货：' + fmtN(Math.round(ship)) + ' ' + u + '<br/>';
+        h += '差异（库存增减）：' + fmtN(Math.round(diff)) + ' ' + u + '<br/>';
+        const top = buildSkuTop5(rdc);
+        if (top.length) {
+          h += '<div style="margin-top:4px;font-weight:600">差异最大 TOP5 SKU</div>';
+          h += '<table style="border-collapse:collapse;font-size:10px;margin-top:2px">' +
+            '<tr style="color:#94a3b8"><td style="padding:1px 5px">SKU</td><td style="padding:1px 5px">差异</td><td style="padding:1px 5px">转储</td><td style="padding:1px 5px">出货</td><td style="padding:1px 5px">订单</td><td style="padding:1px 5px">根因</td></tr>';
+          top.forEach(it => {
+            h += '<tr><td style="padding:1px 5px">' + it.sku + '</td><td style="padding:1px 5px">' + fmtN(it.diff) + '</td><td style="padding:1px 5px">' + fmtN(it.trans) + '</td><td style="padding:1px 5px">' + fmtN(it.ship) + '</td><td style="padding:1px 5px">' + fmtN(it.order) + '</td><td style="padding:1px 5px">' + it.rootCause + '</td></tr>';
+          });
+          h += '</table><div style="font-size:9px;color:#94a3b8;margin-top:3px">↳ 下方明细表可查看全部并导出</div>';
+        } else {
+          h += '<div style="color:#94a3b8;margin-top:4px">该RDC无SKU级明细</div>';
+        }
         return h;
       }},
       legend: { data: ['转储入库', '实际出货', '差异（库存增减）'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
@@ -2675,6 +2773,55 @@ function renderOrderInsight() {
       ]
     });
   }
+  renderOiSkuDetailTable();
+}
+
+// ====== 转储vs出货 SKU 明细表渲染 / 导出 ======
+function renderOiSkuDetailTable() {
+  const box = document.getElementById('oi-sku-detail-table');
+  if (!box) return;
+  const rdcSel = document.getElementById('oi-sku-rdc');
+  const search = document.getElementById('oi-sku-search');
+  const rdc = rdcSel ? rdcSel.value : 'all';
+  const kw = search ? (search.value || '').trim().toLowerCase() : '';
+  let rows = window._oiSkuDetail || [];
+  if (rdc !== 'all') rows = rows.filter(r => r.rdc === rdc);
+  if (kw) rows = rows.filter(r => (r.sku || '').indexOf(kw) >= 0 || (r.skuName || '').toLowerCase().indexOf(kw) >= 0);
+  const maxRows = 800;
+  const shown = rows.slice(0, maxRows);
+  const fmt = n => (n || 0).toLocaleString('zh-CN');
+  box.innerHTML = '<table class="data-table"><thead><tr>' +
+    '<th style="text-align:left">RDC</th><th style="text-align:left">SKU</th><th style="text-align:left">名称</th>' +
+    '<th style="text-align:right">转储入库</th><th style="text-align:right">实际出货</th><th style="text-align:right">订单需求</th>' +
+    '<th style="text-align:right">差异</th><th style="text-align:right">期初可用库存</th><th style="text-align:right">未来6月需求</th>' +
+    '<th style="text-align:left">根因</th>' +
+    '</tr></thead><tbody>' +
+    shown.map(r => {
+      const diffColor = r.diff < 0 ? 'var(--color-red)' : (r.diff > 0 ? 'var(--color-green)' : '');
+      return '<tr><td style="text-align:left">' + r.rdc + '</td><td style="text-align:left">' + r.sku + '</td><td style="text-align:left">' + (r.skuName || '') + '</td>' +
+        '<td style="text-align:right">' + fmt(r.trans) + '</td><td style="text-align:right">' + fmt(r.ship) + '</td><td style="text-align:right">' + fmt(r.order) + '</td>' +
+        '<td style="text-align:right;font-weight:600;color:' + diffColor + '">' + fmt(r.diff) + '</td>' +
+        '<td style="text-align:right">' + (r.avail > 0 ? fmt(r.avail) : '—') + '</td>' +
+        '<td style="text-align:right">' + (r.fut > 0 ? fmt(r.fut) : '—') + '</td>' +
+        '<td style="text-align:left">' + r.rootCause + '</td></tr>';
+    }).join('') +
+    '</tbody></table>' +
+    '<div style="padding:6px 8px;font-size:11px;color:var(--text-secondary)">共 ' + rows.length + ' 条' + (rows.length > maxRows ? '（仅显示前 ' + maxRows + ' 条，导出含全部）' : '') + '</div>';
+}
+
+function exportOiSkuDetail() {
+  const rdcSel = document.getElementById('oi-sku-rdc');
+  const search = document.getElementById('oi-sku-search');
+  const rdc = rdcSel ? rdcSel.value : 'all';
+  const kw = search ? (search.value || '').trim().toLowerCase() : '';
+  let rows = window._oiSkuDetail || [];
+  if (rdc !== 'all') rows = rows.filter(r => r.rdc === rdc);
+  if (kw) rows = rows.filter(r => (r.sku || '').indexOf(kw) >= 0 || (r.skuName || '').toLowerCase().indexOf(kw) >= 0);
+  let csv = '﻿RDC,SKU,名称,转储入库,实际出货,订单需求,差异,期初可用库存,未来6月需求,根因\n';
+  rows.forEach(r => {
+    csv += [r.rdc, r.sku, '"' + (r.skuName || '').replace(/"/g, '""') + '"', r.trans, r.ship, r.order, r.diff, (r.avail > 0 ? r.avail : ''), (r.fut > 0 ? r.fut : ''), '"' + r.rootCause + '"'].join(',') + '\n';
+  });
+  downloadFile('转储vs出货SKU明细_' + (window._oiSkuDetailMonth || '') + '.csv', csv);
 }
 
 // ============ SHORTAGE PAGE ============
@@ -6056,9 +6203,9 @@ function renderInventoryTurnover() {
   const prevIdx = months.length - 2;   // 5月
 
   // Helper
-  function getVal(arr, idx) { return (arr && arr.length > idx) ? arr[idx] : 0; }
+  function getVal(arr, idx) { return (arr && arr.length > idx) ? arr[idx] : null; }
   function fmtPctChange(newVal, oldVal) {
-    if (!oldVal) return '';
+    if (newVal == null || oldVal == null || oldVal === 0) return '';
     const chg = ((newVal - oldVal) / oldVal * 100).toFixed(1);
     const arrow = newVal > oldVal ? '↑' : '↓';
     const color = newVal > oldVal ? '#EF4444' : '#10B981';
@@ -6165,10 +6312,10 @@ function renderInventoryTurnover() {
   page.innerHTML = tabBar +
     // KPI cards
     '<div class="kpi-row">' +
-    '<div class="kpi-card blue"><div class="kpi-label">RDC 6月全库位周转</div><div class="kpi-value">' + totalAllTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalAllTurnover, totalAllTurnoverPrev) + '</div></div>' +
-    '<div class="kpi-card green"><div class="kpi-label">RDC 6月共享库周转</div><div class="kpi-value">' + totalShared + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalShared, totalSharedPrev) + '</div></div>' +
-    '<div class="kpi-card red"><div class="kpi-label">RDC 6月总库存(千元)</div><div class="kpi-value">' + fmtNum(rdcTotalInventory) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">' + fmtPctChange(rdcTotalInventory, rdcTotalInventoryPrev) + '</div></div>' +
-    '<div class="kpi-card orange"><div class="kpi-label">RDC 6月总出货成本(千元)</div><div class="kpi-value">' + fmtNum(rdcTotalShipment) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">' + fmtPctChange(rdcTotalShipment, rdcTotalShipmentPrev) + '</div></div>' +
+    '<div class="kpi-card blue"><div class="kpi-label">RDC ' + months[latestIdx] + '全库位周转</div><div class="kpi-value">' + totalAllTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalAllTurnover, totalAllTurnoverPrev) + '</div></div>' +
+    '<div class="kpi-card green"><div class="kpi-label">RDC ' + months[latestIdx] + '共享库周转</div><div class="kpi-value">' + totalShared + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalShared, totalSharedPrev) + '</div></div>' +
+    '<div class="kpi-card red"><div class="kpi-label">RDC ' + months[latestIdx] + '总库存(千元)</div><div class="kpi-value">' + fmtNum(rdcTotalInventory) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">' + fmtPctChange(rdcTotalInventory, rdcTotalInventoryPrev) + '</div></div>' +
+    '<div class="kpi-card orange"><div class="kpi-label">RDC ' + months[latestIdx] + '总出货成本(千元)</div><div class="kpi-value">' + fmtNum(rdcTotalShipment) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">' + fmtPctChange(rdcTotalShipment, rdcTotalShipmentPrev) + '</div></div>' +
     '<div class="kpi-card purple"><div class="kpi-label">最快/慢RDC</div><div class="kpi-value">' + minTurn + '/' + maxTurn + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + (minRdc ? '最快' + minRdc + '<br/>最慢' + maxRdc : '') + '</div></div>' +
     '<div class="kpi-card teal"><div class="kpi-label">总仓周转</div><div class="kpi-value">' + hqTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(hqTurnover, hqTurnoverPrev) + '</div></div>' +
     '</div>' +
@@ -6189,7 +6336,7 @@ function renderInventoryTurnover() {
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">库存与出货成本明细（单位：千元）</span></div><div class="table-wrap" id="table-inv-detail"></div></div>' +
     '<div class="card" style="background:#FFF7ED;border-color:#FED7AA"><div class="card-header"><span class="card-title">📐 周转天数公式</span></div><div style="font-size:13px;font-weight:500;color:#92400E;margin-bottom:4px">' + (inv.formula || '周转天数 = 月末存货金额 / YTD销售成本 × YTD天数（每月按30天计）') + '</div>' +
     '<div style="font-size:11px;color:#9A3412">每月按30天计算 · YTD天数 = 累计月份数 × 30 · 数据来源于库存周转Sheet</div>' +
-    '<div style="margin-top:6px;padding:6px 10px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#92400E">例（6月）：总仓周转 ' + hqTurnover + '天 = 月末存货金额' + fmtNum(hqInventory) + ' / YTD销售成本' + fmtNum(hqYtdShipment) + ' × ' + ytdDays + '天</div></div>';
+    '<div style="margin-top:6px;padding:6px 10px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#92400E">例（' + months[latestIdx] + '）：总仓周转 ' + hqTurnover + '天 = 月末存货金额' + fmtNum(hqInventory) + ' / YTD销售成本' + fmtNum(hqYtdShipment) + ' × ' + ytdDays + '天</div></div>';
 
   // ---- Chart 1: Dual-axis (Inventory bar + Shipment line) ----
   // Sum inventory/shipment across selected RDCs (exclude 总仓/总部)
@@ -6300,27 +6447,27 @@ function renderInventoryTurnover() {
   });
 
   // ---- Table 1: Turnover days ----
-  var table1Html = '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right;color:#10B981">共享库6月</th></tr></thead><tbody>';
+  var table1Html = '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right;color:#10B981">共享库' + months[latestIdx] + '</th></tr></thead><tbody>';
   selectedRdcs.forEach(function(rdc) {
     var rdcName = rdc;
     var allV = inv.allLocation[rdcName] || [];
     var subV = inv.subLocation[rdcName] || [];
     table1Html += '<tr><td>' + rdcName + '</td>';
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < months.length; i++) {
       table1Html += '<td class="num">' + fmtNum(allV[i]) + '</td>';
     }
     table1Html += '<td class="num" style="color:#10B981;font-weight:500">' + fmtNum(subV[latestIdx]) + '</td></tr>';
   });
   // HQ row
   table1Html += '<tr style="background:#F1F5F9;font-weight:500"><td>总仓</td>';
-  for (var i = 0; i < 6; i++) {
+  for (var i = 0; i < months.length; i++) {
     table1Html += '<td class="num">' + fmtNum(getVal(inv.headquarters, i)) + '</td>';
   }
   table1Html += '<td class="num"></td></tr></tbody></table>';
   document.getElementById('table-inv-turnover').innerHTML = table1Html;
 
   // ---- Table 2: Inventory & Shipment detail ----
-  var table2Html = '<table class="data-table"><thead><tr><th>项目</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right">6月库占比</th></tr></thead><tbody>';
+  var table2Html = '<table class="data-table"><thead><tr><th>项目</th>' + months.map(function(m) { return '<th style="text-align:right">' + m + '</th>'; }).join('') + '<th style="text-align:right">' + months[latestIdx] + '库占比</th></tr></thead><tbody>';
 
   // Find 6月 inventory proportion (selected RDCs + 总仓) - 库存金额跟随海南花露水筛选
   var total6mInv = 0;
@@ -6334,7 +6481,7 @@ function renderInventoryTurnover() {
     var baseArr = _findInvBaseArr(rdc);
     if (baseArr) {
       table2Html += '<tr><td>' + rdc + '</td>';
-      for (var i = 0; i < 6; i++) table2Html += '<td class="num">' + fmtNum(_invAt(rdc, i)) + '</td>';
+      for (var i = 0; i < months.length; i++) table2Html += '<td class="num">' + fmtNum(_invAt(rdc, i)) + '</td>';
       var pct = total6mInv > 0 ? (_invAt(rdc, latestIdx) / total6mInv * 100).toFixed(1) : '0.0';
       table2Html += '<td class="num">' + pct + '%</td></tr>';
     }
@@ -6346,7 +6493,7 @@ function renderInventoryTurnover() {
       var vals = inv.inventoryByRdc[invRdcKeys[k]];
       if (vals) {
         table2Html += '<tr><td>共享库</td>';
-        for (var i = 0; i < 6; i++) table2Html += '<td class="num">' + fmtNum(vals[i]) + '</td>';
+        for (var i = 0; i < months.length; i++) table2Html += '<td class="num">' + fmtNum(vals[i]) + '</td>';
         var pct = total6mInv > 0 ? (getVal(vals, latestIdx) / total6mInv * 100).toFixed(1) : '0.0';
         table2Html += '<td class="num">' + pct + '%</td></tr>';
       }
@@ -6358,7 +6505,7 @@ function renderInventoryTurnover() {
   var hqInvVals = inv.inventoryByRdc['总仓'];
   if (hqInvVals) {
     table2Html += '<tr style="background:#EEF2FF;font-weight:500"><td style="color:#1D4ED8">总库存</td>';
-    for (var i = 0; i < 6; i++) table2Html += '<td class="num" style="color:#1D4ED8">' + fmtNum(hqInvVals[i]) + '</td>';
+    for (var i = 0; i < months.length; i++) table2Html += '<td class="num" style="color:#1D4ED8">' + fmtNum(hqInvVals[i]) + '</td>';
     var hqPct = total6mInv > 0 ? (getVal(hqInvVals, latestIdx) / total6mInv * 100).toFixed(1) : '0.0';
     table2Html += '<td class="num" style="color:#1D4ED8">' + hqPct + '%</td></tr>';
   }
@@ -6367,13 +6514,13 @@ function renderInventoryTurnover() {
   var hqShipVals = inv.shipmentCost['总部'];
   if (hqShipVals) {
     table2Html += '<tr style="background:#FFF7ED;font-weight:500"><td style="color:#D97706">总出货成本</td>';
-    for (var i = 0; i < 6; i++) table2Html += '<td class="num" style="color:#D97706">' + fmtNum(hqShipVals[i]) + '</td>';
+    for (var i = 0; i < months.length; i++) table2Html += '<td class="num" style="color:#D97706">' + fmtNum(hqShipVals[i]) + '</td>';
     table2Html += '<td class="num">-</td></tr>';
   }
 
   // Turnover days row
   table2Html += '<tr style="background:#F0FDF4;font-weight:500"><td style="color:#065F46">总仓周转天数</td>';
-  for (var i = 0; i < 6; i++) table2Html += '<td class="num" style="color:#065F46">' + fmtNum(getVal(inv.headquarters, i)) + '</td>';
+  for (var i = 0; i < months.length; i++) table2Html += '<td class="num" style="color:#065F46">' + fmtNum(getVal(inv.headquarters, i)) + '</td>';
   table2Html += '<td class="num">-</td></tr></tbody></table>';
   document.getElementById('table-inv-detail').innerHTML = table2Html;
 
@@ -6502,7 +6649,7 @@ function renderInventoryForecast(page, tabBar) {
     });
     // 逐月扣减，模拟库存消化进度
     let remaining = invQty, coveredMonths = 0;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < months.length; i++) {
       if (remaining <= 0) break;
       if (monthDemands[i] <= 0) { coveredMonths += 1; continue; } // 该月无需求，按整月计
       if (remaining >= monthDemands[i]) { remaining -= monthDemands[i]; coveredMonths += 1; }
@@ -7147,19 +7294,19 @@ function renderInventoryTurnoverHistoryCharts() {
   }
 
   const amt25 = months12.map((_, i) => sumSelectedHainan('2025', i));
-  const amt26 = months12.map((_, i) => (i < 6 ? sumSelectedHainan('2026', i) : null));
+  const amt26 = months12.map((_, i) => (i < months.length ? sumSelectedHainan('2026', i) : null));
   // 出货成本图不跟随海南花露水筛选（出货成本无海南花露水维度数据，按库存占比估算意义不大）
   const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
-  const ship26 = months12.map((_, i) => (i < 6 ? sumSelected(INV['2026'].shipmentCost, i) : null));
+  const ship26 = months12.map((_, i) => (i < months.length ? sumSelected(INV['2026'].shipmentCost, i) : null));
 
   // 上半年合计对比
-  let h1_26 = 0; for (let i = 0; i < 6; i++) h1_26 += (ship26[i] || 0);
-  let h1_25 = 0; for (let i = 0; i < 6; i++) h1_25 += (ship25[i] || 0);
+  let h1_26 = 0; for (let i = 0; i < months.length; i++) h1_26 += (ship26[i] || 0);
+  let h1_25 = 0; for (let i = 0; i < months.length; i++) h1_25 += (ship25[i] || 0);
   const shipYoY = h1_25 > 0 ? (h1_26 - h1_25) / h1_25 : 0;
 
   // 上半年月均库存金额对比
   let sumAmt25 = 0, cntAmt25 = 0, sumAmt26 = 0, cntAmt26 = 0;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < months.length; i++) {
     if (amt25[i] != null) { sumAmt25 += amt25[i]; cntAmt25++; }
     if (amt26[i] != null) { sumAmt26 += amt26[i]; cntAmt26++; }
   }
