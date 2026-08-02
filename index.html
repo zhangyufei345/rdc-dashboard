@@ -2271,6 +2271,10 @@ function renderOrderInsight() {
   const otherOrders = dataStore.otherOrders || [];
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
   const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
+  // SKU 名称补全表：转储数据 materialName 常为空，优先从订单明细/otherOrders 取名称
+  const skuNameMap = {};
+  orderDetail.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
+  otherOrders.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
   const months = ['2026-05', '2026-06', '2026-07'];
   const monthLabels = ['5月', '6月', '7月'];
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
@@ -2409,9 +2413,10 @@ function renderOrderInsight() {
     compareMonth = arr.filter(m => m <= compareMonth).pop() || arr[arr.length - 1] || '';
   }
   const compareRows = compareMonth ? selRows.filter(r => r.month === compareMonth) : [];
+  const compareRowsNoFree = compareRows.filter(r => r.type !== '免费单'); // 转储vs出货模块排除免费单出货/需求
   const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth)) : [];
   const shipByRdc = {}, transByRdc = {};
-  compareRows.forEach(r => {
+  compareRowsNoFree.forEach(r => {
     if (!r.rdc) return;
     const s = window._oiByBox ? specOf(r.skuCode) : 1;
     shipByRdc[r.rdc] = (shipByRdc[r.rdc] || 0) + (r.totalFulfillQty || 0) / s;
@@ -2443,9 +2448,9 @@ function renderOrderInsight() {
     const fut = (d.cov07 || 0) + (d.cov08 || 0) + (d.cov09 || 0) + (d.cov10 || 0) + (d.cov11 || 0) + (d.cov12 || 0);
     invMap[k] = { avail: (d.availQtyPlan || 0) / s, fut: fut / s };
   });
-  // SKU×RDC 聚合：出货/订单需求（来自订单明细），转储入库（来自转储）
+  // SKU×RDC 聚合：出货/订单需求（来自订单明细，排除免费单），转储入库（来自转储）
   const skuAgg = {};
-  compareRows.forEach(r => {
+  compareRowsNoFree.forEach(r => {
     const s = window._oiByBox ? specOf(r.skuCode) : 1;
     const k = r.rdc + '|' + r.skuCode;
     if (!skuAgg[k]) skuAgg[k] = { rdc: r.rdc, sku: r.skuCode, skuName: r.skuName || '', ship: 0, order: 0, trans: 0 };
@@ -2456,7 +2461,7 @@ function renderOrderInsight() {
     const s = window._oiByBox ? specOf(r.material) : 1;
     const qty = r.isBox ? (r.inboundQty || 0) : (r.inboundQty || 0) / s;
     const k = r.rdc + '|' + r.material;
-    if (!skuAgg[k]) skuAgg[k] = { rdc: r.rdc, sku: r.material, skuName: r.materialName || '', ship: 0, order: 0, trans: 0 };
+    if (!skuAgg[k]) skuAgg[k] = { rdc: r.rdc, sku: r.material, skuName: skuNameMap[r.material] || r.materialName || '', ship: 0, order: 0, trans: 0 };
     skuAgg[k].trans += qty;
   });
   // 根因分类：diff = 转储入库 − 实际出货
@@ -2787,6 +2792,12 @@ function renderOiSkuDetailTable() {
   let rows = window._oiSkuDetail || [];
   if (rdc !== 'all') rows = rows.filter(r => r.rdc === rdc);
   if (kw) rows = rows.filter(r => (r.sku || '').indexOf(kw) >= 0 || (r.skuName || '').toLowerCase().indexOf(kw) >= 0);
+  // 默认全 RDC 视图：每个 RDC 仅展示 |差异| Top20，避免表格过长
+  if (rdc === 'all' && !kw) {
+    const byRdc = {};
+    rows.forEach(r => { (byRdc[r.rdc] = byRdc[r.rdc] || []).push(r); });
+    rows = Object.keys(byRdc).sort().flatMap(k => byRdc[k].slice(0, 20));
+  }
   const maxRows = 800;
   const shown = rows.slice(0, maxRows);
   const fmt = n => (n || 0).toLocaleString('zh-CN');
@@ -2806,7 +2817,7 @@ function renderOiSkuDetailTable() {
         '<td style="text-align:left">' + r.rootCause + '</td></tr>';
     }).join('') +
     '</tbody></table>' +
-    '<div style="padding:6px 8px;font-size:11px;color:var(--text-secondary)">共 ' + rows.length + ' 条' + (rows.length > maxRows ? '（仅显示前 ' + maxRows + ' 条，导出含全部）' : '') + '</div>';
+    '<div style="padding:6px 8px;font-size:11px;color:var(--text-secondary)">默认展示每个 RDC 差异绝对值 Top20；筛选/搜索后显示匹配全部；导出含全部 ' + (window._oiSkuDetail || []).length + ' 条</div>';
 }
 
 function exportOiSkuDetail() {
