@@ -1178,6 +1178,11 @@ function toggleMenuGroup(headerEl) {
 
 // Router
 function navigateTo(page) {
+  // 兼容旧 hash #customer：跳转到缺货分析「客户维度缺货分析」tab
+  if (page === 'customer') {
+    window._shortageTab = 'customer-dim';
+    page = 'shortage';
+  }
   currentPage = page;
   window.location.hash = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -2911,6 +2916,12 @@ function renderShortage() {
   // Tab默认激活订单缺货明细分析
   if (typeof window._shortageTab === 'undefined') window._shortageTab = 'order-detail';
 
+  // Tab切换：客户维度缺货分析（原独立「客户维度」tab，已并入缺货分析）
+  if (window._shortageTab === 'customer-dim') {
+    renderCustomerToShortage();
+    return;
+  }
+
   // Tab切换：订单缺货明细分析
   if (window._shortageTab === 'order-detail') {
     renderShortageOrderDetail();
@@ -2974,10 +2985,10 @@ function renderShortage() {
       <label>搜索：</label><input type="text" id="filter-shortage-search" placeholder="物料号/名称/品牌" value="${filters.search}" oninput="filters.search=this.value;renderShortage()">
       <button class="btn-export" onclick="exportShortageCSV()">导出CSV</button>
     </div>
-    <!-- Tab切换：订单缺货明细分析 / 缺货汇总 -->
+    <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析（缺货汇总已移除；客户维度从侧边栏并入） -->
     <div style="display:flex;gap:4px;margin-bottom:12px">
       <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab!=='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='shortage';renderShortage()">缺货汇总</button>
+      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='customer-dim'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='customer-dim';renderShortage()">客户维度缺货分析</button>
     </div>
     <div class="row-3" style="margin-bottom:12px">
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-red)">${formatNum(filteredCount)}</div><div style="font-size:11px;color:var(--text-secondary)">筛选结果 / 共${totalCount}条</div></div>
@@ -3245,10 +3256,10 @@ function renderShortageOrderDetail() {
       <span style="font-size:12px;color:var(--text-secondary)">基于${monthLabel}订单明细（${filtered.length}条记录）</span>
       <button class="btn-export" onclick="exportShortageOrderDetailCSV()" style="margin-left:auto">导出CSV</button>
     </div>
-    <!-- Tab切换 -->
+    <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析 -->
     <div style="display:flex;gap:4px;margin-bottom:12px">
       <button class="btn-export" style="font-size:12px;padding:5px 16px;background:var(--color-blue);color:#fff" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px" onclick="window._shortageTab='shortage';renderShortage()">缺货汇总</button>
+      <button class="btn-export" style="font-size:12px;padding:5px 16px" onclick="window._shortageTab='customer-dim';renderShortage()">客户维度缺货分析</button>
     </div>
 
     <!-- 日订单满足矩阵 -->
@@ -3842,13 +3853,21 @@ function renderBrandChannel() {
 }
 
 // ============ CUSTOMER PAGE ============
-function renderCustomer() {
-  setTitle('客户维度分析');
-  const page = document.getElementById('page-customer');
+// 支持双容器：page-customer（向后兼容，但侧边栏已无入口）+ page-shortage（缺货分析「客户维度缺货分析」tab）
+function renderCustomer(targetId) {
+  setTitle('客户维度缺货分析');
+  const page = document.getElementById(targetId || 'page-customer');
   if (!page) return;
 
   if (!window.customerSortMode) window.customerSortMode = 'rate';
   if (!window.drillCustomer) window.drillCustomer = null;
+  return renderCustomerImpl(page);
+}
+// 从缺货分析「客户维度缺货分析」tab 调用，固定写入 page-shortage
+function renderCustomerToShortage() {
+  return renderCustomer('page-shortage');
+}
+function renderCustomerImpl(page) {
 
   let cData = getFilteredCustomers();
   const cgMap = {};
@@ -7450,19 +7469,21 @@ function init() {
           <div class="menu-item" data-page="fulfillment" onclick="navigateTo('fulfillment')"><span class="icon">◈</span>订单满足率</div>
           <div class="menu-item" data-page="order-insight" onclick="navigateTo('order-insight')"><span class="icon">🔎</span>订单数据洞察</div>
           <div class="menu-item" data-page="shortage" onclick="navigateTo('shortage')"><span class="icon">⚠</span>缺货分析</div>
-          <div class="menu-item" data-page="customer" onclick="navigateTo('customer')"><span class="icon">◎</span>客户维度</div>
           <div class="menu-item" data-page="weekend-sim" onclick="navigateTo('weekend-sim')"><span class="icon">📅</span>周末模拟</div>
           <div class="menu-item" data-page="transship" onclick="navigateTo('transship')"><span class="icon">📦</span>转储数据</div>
           <div class="menu-item" data-page="shortage-compare" onclick="navigateTo('shortage-compare')"><span class="icon">⚖</span>缺货差异维护</div>
-          <div class="menu-item" data-page="replenishment" onclick="navigateTo('replenishment')"><span class="icon">🎯</span>补货建议</div>
-          <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>需求满足分析</div>
-          <div class="menu-item menu-sub" data-page="biz-demand-dacr" onclick="navigateTo('biz-demand-dacr')"><span class="icon">📊</span>业务需求可信度</div>
           </div>
           <div class="menu-group-header" onclick="toggleMenuGroup(this)"><span class="arrow">▼</span>📋 库存分析</div>
           <div class="menu-group-body" data-group="inventory">
           <div class="menu-item active" data-page="inventory-structure" onclick="navigateTo('inventory-structure')"><span class="icon">📊</span>库存结构分析</div>
           <div class="menu-item" data-page="inventory" onclick="navigateTo('inventory')"><span class="icon">📋</span>库存周转</div>
           <div class="menu-item" data-page="slow-moving" onclick="navigateTo('slow-moving')"><span class="icon">🐢</span>慢动品分析</div>
+          </div>
+          <div class="menu-group-header" onclick="toggleMenuGroup(this)"><span class="arrow">▼</span>🎯 预测补货建议</div>
+          <div class="menu-group-body" data-group="forecast">
+          <div class="menu-item" data-page="replenishment" onclick="navigateTo('replenishment')"><span class="icon">🎯</span>补货建议</div>
+          <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>需求满足分析</div>
+          <div class="menu-item menu-sub" data-page="biz-demand-dacr" onclick="navigateTo('biz-demand-dacr')"><span class="icon">📊</span>业务需求可信度</div>
           </div>
           <div class="menu-section-title">⚙ 管理</div>
           <div class="menu-item" data-page="data" onclick="navigateTo('data')"><span class="icon">☰</span>数据管理</div>
