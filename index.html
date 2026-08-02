@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 15; // v15: 库存周转Sheet扩展至7个月（1-7月），解析/渲染支持动态月份，空白单元格按 null 处理（显示"–"）
+const DB_VERSION = 16; // v16: 1-5月订单数据导入（data-2026-{01..05}.json）；订单明细解析按名称查找sheet以兼容sheetNames顺序变化
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -980,26 +980,29 @@ function parseExcel(rawData, mode, options) {
       });
     }
 
-    // Sheet5: 订单明细
-    const sh5 = sheetToArray(wb.Sheets[sheetNames[4]]);
-    for (let i = 1; i < sh5.length; i++) {
-      const r = sh5[i];
-      if (!r || r.length < 14) continue;
-      const d = normalizeDate(r[0]);
-      if (!d) continue;
-      const orderKey = fmtDate(d) + '|' + getSafeStr(r,1) + '|' + getSafeStr(r,4);
-      if (existingOrderKeys.has(orderKey)) continue;
-      existingOrderKeys.add(orderKey);
-      dataStore.orderDetail.push({
-        date: d, dateStr: fmtDate(d),
-        orderNo: getSafeStr(r,1), channel: getSafeStr(r,2),
-        brand: normalizeBrandName(getSafeStr(r,3)), skuCode: getSafeStr(r,4),
-        skuName: getSafeStr(r,5), rejectReason: getSafeStr(r,6),
-        customerGroup: getSafeStr(r,7), warehouse: getSafeStr(r,8),
-        orderQty: getSafeNum(r,9), firstDayQty: getSafeNum(r,10),
-        totalFulfillQty: getSafeNum(r,11), firstDayShort: getSafeNum(r,12),
-        totalGap: getSafeNum(r,13)
-      });
+    // Sheet5: 订单明细（按名称查找，兼容 sheetNames 顺序变化）
+    const orderIdx = sheetNames.findIndex(n => n.includes('订单明细'));
+    if (orderIdx >= 0) {
+      const sh5 = sheetToArray(wb.Sheets[sheetNames[orderIdx]]);
+      for (let i = 1; i < sh5.length; i++) {
+        const r = sh5[i];
+        if (!r || r.length < 14) continue;
+        const d = normalizeDate(r[0]);
+        if (!d) continue;
+        const orderKey = fmtDate(d) + '|' + getSafeStr(r,1) + '|' + getSafeStr(r,4);
+        if (existingOrderKeys.has(orderKey)) continue;
+        existingOrderKeys.add(orderKey);
+        dataStore.orderDetail.push({
+          date: d, dateStr: fmtDate(d),
+          orderNo: getSafeStr(r,1), channel: getSafeStr(r,2),
+          brand: normalizeBrandName(getSafeStr(r,3)), skuCode: getSafeStr(r,4),
+          skuName: getSafeStr(r,5), rejectReason: getSafeStr(r,6),
+          customerGroup: getSafeStr(r,7), warehouse: getSafeStr(r,8),
+          orderQty: getSafeNum(r,9), firstDayQty: getSafeNum(r,10),
+          totalFulfillQty: getSafeNum(r,11), firstDayShort: getSafeNum(r,12),
+          totalGap: getSafeNum(r,13)
+        });
+      }
     }
 
     // Sheet: 其他订单（按名称查找；7月起新增，存放 免费单/特殊价格订单，含 5/6/7 三个月数据）
