@@ -2274,25 +2274,32 @@ function renderOrderInsight() {
   const otherOrders = dataStore.otherOrders || [];
   const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
   const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
-  // SKU 名称补全表：转储数据 materialName 常为空，从多源补全（订单 → 库存覆盖 → 周转 sheet）
+  // SKU 名称补全表：从多源补全（订单明细 → 库存覆盖 → 周转 sheet → 转储数据 → 海南花露水历史 → 基础数据）
   const skuNameMap = {};
   orderDetail.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
   otherOrders.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
   cov6.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
   cov5.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
-  const _invT = dataStore.inventoryTurnover;
-  if (_invT) {
-    Object.keys(_invT).forEach(k => {
-      if (k === 'rdcOrder' || k === 'months' || k === 'formula') return;
-      const m = _invT[k];
-      if (m && typeof m === 'object' && !Array.isArray(m)) {
-        Object.keys(m).forEach(r => {
-          const arr = m[r];
-          if (Array.isArray(arr)) {
-            // 周转 sheet 子项暂不存 skuName，仅 productMaster 之外补充inventoryTurnover.productMaster
-          }
-        });
-      }
+  // 数据源 4：转储数据 materialName（idb 缓存可能为空，每次都补一次以防万一）
+  (dataStore.transship || []).forEach(d => { if (d.material && d.materialName && !skuNameMap[d.material]) skuNameMap[d.material] = d.materialName; });
+  // 数据源 5：海南花露水历史数据（含 SKU 名称 + 编码，第 5/4 列）
+  const _hainanSheet = (dataStore.inventory && dataStore.inventory._rawSheets && dataStore.inventory._rawSheets['海南花露水历史数据']) || null;
+  if (_hainanSheet) {
+    _hainanSheet.forEach(r => {
+      if (!r || r.length < 5) return;
+      const code = String(r[4] || '').trim();
+      const name = String(r[3] || '').trim();
+      if (code && name && !skuNameMap[code]) skuNameMap[code] = name;
+    });
+  }
+  // 数据源 6：基础数据 sheet（产品编码 → 产品名称）
+  const _baseSheet = (dataStore.inventory && dataStore.inventory._rawSheets && dataStore.inventory._rawSheets['基础数据']) || null;
+  if (_baseSheet) {
+    _baseSheet.forEach(r => {
+      if (!r || r.length < 2) return;
+      const code = String(r[0] || '').trim();
+      const name = String(r[1] || '').trim();
+      if (code && name && !skuNameMap[code]) skuNameMap[code] = name;
     });
   }
   const _pm2 = (dataStore.inventory && dataStore.inventory.productMaster) || {};
@@ -2512,8 +2519,12 @@ function renderOrderInsight() {
     const it = skuAgg[k];
     const im = invMap[k] || {};
     const diff = it.trans - it.ship;
+    // 海南花露水双保险：com层已过滤，这里再过滤一次，防止纯转储的海南花露水 SKU 漏入
+    if (skuIsHainan[it.sku]) return;
+    // 强制 SKU 名称补全：skuNameMap 优先 → it.skuName
+    const finalName = (skuNameMap[it.sku] || it.skuName || '').trim();
     skuDetailAll.push({
-      rdc: it.rdc, sku: it.sku, skuName: it.skuName,
+      rdc: it.rdc, sku: it.sku, skuName: finalName,
       trans: Math.round(it.trans), ship: Math.round(it.ship), order: Math.round(it.order),
       diff: Math.round(diff),
       avail: Math.round(im.avail || 0), fut: Math.round(im.fut || 0),
