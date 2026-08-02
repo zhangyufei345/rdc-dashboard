@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 16; // v16: 1-5月订单数据导入（data-2026-{01..05}.json）；订单明细解析按名称查找sheet以兼容sheetNames顺序变化
+const DB_VERSION = 17; // v17: 折线图海南花露水筛选生效(用 selRows 而非 rows)；其他订单解析兼容 KB-寄售补充/ZKF3(三公司免费)归入免费单
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1030,9 +1030,12 @@ function parseExcel(rawData, mode, options) {
         const d = normalizeDate(r[O_DATE]);
         if (!d) continue;
         const typeRaw = String(r[O_TYPE] || '').trim();
-        let orderType = '特殊价格订单';
-        if (typeRaw.indexOf('免费') >= 0 || typeRaw.indexOf('ZKFD') >= 0) orderType = '免费单';
+        // 1-5月 xlsx 的「其他订单」sheet 列 C7=订单类型，1-7月源已用本字段；
+        // 1-5月源中含 ZKFD(免费) / KB-寄售补充 / ZKF3(三公司免费) 多种类型
+        let orderType = '';
+        if (typeRaw.indexOf('免费') >= 0 || typeRaw.indexOf('ZKFD') >= 0 || typeRaw.indexOf('ZKF3') >= 0) orderType = '免费单';
         else if (typeRaw.indexOf('特殊') >= 0 || typeRaw.indexOf('ZDTA') >= 0) orderType = '特殊价格订单';
+        else if (typeRaw.indexOf('KB') >= 0 || typeRaw.indexOf('寄售') >= 0) orderType = '免费单'; // 寄售补充归入免费单
         else continue; // 无法识别的订单类型跳过
         const oKey = fmtDate(d) + '|' + getSafeStr(r, O_NO) + '|' + getSafeStr(r, O_SKU) + '|' + orderType;
         if (existingOtherKeys.has(oKey)) continue;
@@ -2685,9 +2688,9 @@ function renderOrderInsight() {
     }]
   });
 
-  // 图2：1-7月趋势（三类折线）
+  // 图2：1-7月趋势（三类折线；用 selRows 同步应用海南花露水筛选）
   const c2 = initChart('oi-chart-trend');
-  const trendByMonthType = sumBy(rows, r => r.month + '|' + r.type);
+  const trendByMonthType = sumBy(selRows, r => r.month + '|' + r.type);
   c2.setOption({
     tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
       const m = params[0].axisValue;
