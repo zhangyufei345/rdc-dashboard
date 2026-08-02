@@ -2316,7 +2316,7 @@ function renderOrderInsight() {
   const monthLabels = ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
 
-  if (typeof window._oiMonth === 'undefined') window._oiMonth = 'all';
+  if (typeof window._oiMonth === 'undefined') window._oiMonth = '2026-07';
   if (typeof window._oiHainan === 'undefined') window._oiHainan = 'all';
   if (typeof window._oiByBox === 'undefined') window._oiByBox = false;
   const u = window._oiByBox ? '箱' : '支';
@@ -2576,8 +2576,7 @@ function renderOrderInsight() {
   // ====== 页面 HTML ======
   const monthSelect = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">统计月份：</label>' +
     '<select onchange="window._oiMonth=this.value;renderOrderInsight()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
-      '<option value="all" ' + (window._oiMonth === 'all' ? 'selected' : '') + '>全部（1-7月）</option>' +
-      months.map((m, i) => '<option value="' + m + '"' + (window._oiMonth === m ? ' selected' : '') + '>' + monthLabels[i] + '</option>').join('') +
+      months.slice().reverse().map((m, i) => '<option value="' + m + '"' + (window._oiMonth === m ? ' selected' : '') + '>' + monthLabels[months.length - 1 - i] + '</option>').join('') +
     '</select>';
   const hainanSelect = '<label style="font-size:12px;color:var(--text-secondary);margin-left:8px;margin-right:6px">是否海南花露水：</label>' +
     '<select onchange="window._oiHainan=this.value;renderOrderInsight()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
@@ -2592,7 +2591,7 @@ function renderOrderInsight() {
   // KPI 卡片
   const mom7 = mom('2026-07', '2026-06', sumBy(rows, r => r.month));
   const kpiHtml = '<div class="kpi-row" style="padding:0 8px 8px">' +
-    '<div class="kpi-card blue"><div class="kpi-label">' + (window._oiMonth === 'all' ? '1-7月合计订单量' : monthLabels[months.indexOf(window._oiMonth)] + '订单量') + '</div><div class="kpi-value">' + fmtN(totalQty) + '<span class="kpi-unit">' + u + '</span></div>' +
+    '<div class="kpi-card blue"><div class="kpi-label">' + monthLabels[months.indexOf(window._oiMonth)] + '订单量</div><div class="kpi-value">' + fmtN(totalQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px;color:#64748B">' + selRows.length.toLocaleString() + ' 行订单</div></div>' +
     '<div class="kpi-card blue"><div class="kpi-label">普通订单</div><div class="kpi-value">' + fmtN(typeArr[0].orderQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px">占 <b>' + (totalQty > 0 ? (typeArr[0].orderQty / totalQty * 100).toFixed(1) : 0) + '%</b> · 环比 <span style="color:' + (momType['普通订单'] ? ppColor(momType['普通订单'].pct) : '#64748B') + '">' + (momType['普通订单'] ? (momType['普通订单'].pct >= 0 ? '+' : '') + (momType['普通订单'].pct * 100).toFixed(1) + '%' : '—') + '</span></div></div>' +
@@ -2617,7 +2616,7 @@ function renderOrderInsight() {
 
   const invWarnHtml = invWarn.length > 0
     ? '<div style="margin-top:8px;font-size:12px;line-height:1.8">' +
-        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + (window._oiMonth === 'all' ? '1-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '订单 ' + fmtN(w.orderQty) + ' ' + u + ' &gt; 6月末库存 ' + fmtN(w.inv) + ' ' + u + '（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
+        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + monthLabels[months.indexOf(window._oiMonth)] + '订单 ' + fmtN(w.orderQty) + ' ' + u + ' &gt; 6月末库存 ' + fmtN(w.inv) + ' ' + u + '（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
       '</div>'
     : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; 6月末库存」的预警</div>';
 
@@ -2644,7 +2643,7 @@ function renderOrderInsight() {
 
     // 图3：品牌×类型
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">品牌 × 订单类型</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">' + (window._oiMonth === 'all' ? '1-7月合计' : monthLabels[months.indexOf(window._oiMonth)] + '数据') + '</span></div>' +
+      '<div class="card-header"><span class="card-title">品牌 × 订单类型</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">' + monthLabels[months.indexOf(window._oiMonth)] + '数据</span></div>' +
       '<div class="chart-container" style="height:280px" id="oi-chart-brand"></div>' +
     '</div>' +
 
@@ -2682,7 +2681,7 @@ function renderOrderInsight() {
 
     // 明细表
     '<div class="card">' +
-      '<div class="card-header"><span class="card-title">品牌订单量明细（' + (window._oiMonth === 'all' ? '5-7月' : monthLabels[months.indexOf(window._oiMonth)]) + '）— 单位：' + u + '</span></div>' +
+      '<div class="card-header"><span class="card-title">品牌订单量明细（' + monthLabels[months.indexOf(window._oiMonth)] + '）— 单位：' + u + '</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr>' +
       '<th style="text-align:left">品牌</th><th style="text-align:right">合计</th>' +
       '<th style="text-align:right;color:#2563EB">普通订单</th><th style="text-align:right;color:#F59E0B">特殊价格订单</th><th style="text-align:right;color:#10B981">免费单</th>' +
@@ -2710,7 +2709,7 @@ function renderOrderInsight() {
   // 图1：类型构成（环形图）
   const c1 = initChart('oi-chart-type');
   c1.setOption({
-    title: { text: (window._oiMonth === 'all' ? '1-7月' : monthLabels[months.indexOf(window._oiMonth)]) + ' 三类订单占比', left: 'center', top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
+    title: { text: monthLabels[months.indexOf(window._oiMonth)] + ' 三类订单占比', left: 'center', top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
     tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + ' ' + u + '（' + p.percent.toFixed(1) + '%）' },
     legend: { bottom: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
     series: [{
@@ -2722,9 +2721,11 @@ function renderOrderInsight() {
     }]
   });
 
-  // 图2：1-7月趋势（三类折线；用 selRows 同步应用海南花露水筛选）
+  // ====== 月趋势图专用数据：仅按海南花露水筛选，不受月份筛选影响（始终展示 1-7月全量） ======
+  const trendRows = (window._oiHainan === 'all') ? rows : rows.filter(r => window._oiHainan === 'yes' ? r.isHainan : !r.isHainan);
+  // 图2：1-7月趋势（三类折线；trendRows 同步应用海南花露水筛选，但不应用月份筛选）
   const c2 = initChart('oi-chart-trend');
-  const trendByMonthType = sumBy(selRows, r => r.month + '|' + r.type);
+  const trendByMonthType = sumBy(trendRows, r => r.month + '|' + r.type);
   c2.setOption({
     tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
       const m = params[0].axisValue;
