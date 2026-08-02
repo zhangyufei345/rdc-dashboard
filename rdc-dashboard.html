@@ -2316,7 +2316,7 @@ function renderOrderInsight() {
   const monthLabels = ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
 
-  if (typeof window._oiMonth === 'undefined') window._oiMonth = '2026-07';
+  if (typeof window._oiMonth === 'undefined') window._oiMonth = 'all';
   if (typeof window._oiHainan === 'undefined') window._oiHainan = 'all';
   if (typeof window._oiByBox === 'undefined') window._oiByBox = false;
   const u = window._oiByBox ? '箱' : '支';
