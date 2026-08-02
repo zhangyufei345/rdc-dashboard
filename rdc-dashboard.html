@@ -2316,11 +2316,40 @@ function renderOrderInsight() {
   if (typeof window._oiByBox === 'undefined') window._oiByBox = false;
   const u = window._oiByBox ? '箱' : '支';
 
-  // ====== SKU → 是否海南花露水 映射（从 cov5/cov6 isHainan 字段聚合） ======
+  // ====== SKU → 是否海南花露水 映射 =====
+  // 数据源（按优先级）：
+  //   1. 库存覆盖数据 cov5/cov6 的 isHainan 字段（如有）
+  //   2. 【权威】「海南花露水历史数据」sheet 里的产品编码 + 第 9 列「海南花露水」='是'
+  // 早期实现只用了 1，cov5/cov6 sheet 实际不带 isHainan 列，导致 skuIsHainan 集合空，
+  // 海南花露水筛选在所有页（含转储vs出货弹框）都失效。
   const skuIsHainan = {};
   [...((dataStore.inventory && dataStore.inventory.cov6) || []), ...((dataStore.inventory && dataStore.inventory.cov5) || [])].forEach(d => {
     if (d.sku && d.isHainan) skuIsHainan[d.sku] = true;
   });
+  const _hainanSheet2 = (dataStore.inventory && dataStore.inventory._rawSheets && dataStore.inventory._rawSheets['海南花露水历史数据']) || null;
+  if (_hainanSheet2 && _hainanSheet2.length > 1) {
+    const hhdr = _hainanSheet2[0] || [];
+    function hCol2(n) {
+      for (let i = 0; i < hhdr.length; i++) {
+        if (String(hhdr[i] || '').trim() === n) return i;
+      }
+      return -1;
+    }
+    const H_SKU = hCol2('产品编码');
+    const H_FLAG = hCol2('海南花露水');
+    if (H_SKU >= 0) {
+      for (let i = 1; i < _hainanSheet2.length; i++) {
+        const r = _hainanSheet2[i];
+        if (!r) continue;
+        const sku = String(r[H_SKU] || '').trim();
+        if (!sku) continue;
+        if (H_FLAG < 0) { skuIsHainan[sku] = true; continue; }
+        const flag = String(r[H_FLAG] || '').trim();
+        if (flag === '是') skuIsHainan[sku] = true;
+      }
+    }
+  }
+  console.log('[HainanFilter] 海南花露水 SKU 集合大小:', Object.keys(skuIsHainan).length, '当前筛选:', window._oiHainan);
 
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
   function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
