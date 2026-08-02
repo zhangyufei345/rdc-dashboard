@@ -2430,6 +2430,7 @@ function renderOrderInsight() {
   if (transShipRdcs.length === 0) transShipRdcs.push(...RDC_LIST);
   const diffByRdc = {};
   transShipRdcs.forEach(rdc => { diffByRdc[rdc] = (transByRdc[rdc] || 0) - (shipByRdc[rdc] || 0); });
+  const transShipMonthLabel = compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无数据';
   // ====== SKU 级差异明细（转储 vs 出货 + 期初库存/未来需求 + 根因）======
   // 期初库存基准：7月视图→cov6（6月末），6月视图→cov5（5月末），5月/全部→无基准
   const covBase = (compareMonth === '2026-07') ? cov6 : (compareMonth === '2026-06' ? cov5 : null);
@@ -2496,7 +2497,6 @@ function renderOrderInsight() {
   window._oiSkuDetail = skuDetailAll;
   window._oiSkuDetailMonth = transShipMonthLabel;
   function buildSkuTop5(rdc) { return skuDetailAll.filter(x => x.rdc === rdc).slice(0, 5); }
-  const transShipMonthLabel = compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无数据';
 
   // ====== 页面 HTML ======
   const monthSelect = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">统计月份：</label>' +
