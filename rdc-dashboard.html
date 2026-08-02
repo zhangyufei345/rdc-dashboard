@@ -2433,7 +2433,7 @@ function renderOrderInsight() {
   }
   const compareRows = compareMonth ? selRows.filter(r => r.month === compareMonth) : [];
   const compareRowsNoFree = compareRows.filter(r => r.type !== '免费单'); // 转储vs出货模块排除免费单出货/需求
-  const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth)) : [];
+  const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth) && !skuIsHainan[r.material]) : [];
   const shipByRdc = {}, transByRdc = {};
   compareRowsNoFree.forEach(r => {
     if (!r.rdc) return;
