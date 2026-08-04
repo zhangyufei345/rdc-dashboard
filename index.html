@@ -143,10 +143,10 @@ a { color: var(--color-blue); text-decoration: none; }
 
 /* 品牌×RDC 矩阵：单列屏显示 */
 .brand-rdc-matrix { table-layout: fixed; width: 100%; }
-.brand-rdc-matrix th, .brand-rdc-matrix td { padding: 4px 3px; font-size: 10px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand-rdc-matrix th:first-child, .brand-rdc-matrix td:first-child { width: 56px; text-align: left; }
-.brand-rdc-matrix th:nth-child(n+2):nth-child(-n+7), .brand-rdc-matrix td:nth-child(n+2):nth-child(-n+7) { width: calc((100% - 120px) / 6); }
-.brand-rdc-matrix th:last-child, .brand-rdc-matrix td:last-child { width: 64px; }
+.brand-rdc-matrix th, .brand-rdc-matrix td { padding: 4px 3px; font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-rdc-matrix th:first-child, .brand-rdc-matrix td:first-child { width: 50px; text-align: left; }
+.brand-rdc-matrix th:nth-child(n+2):nth-child(-n+7), .brand-rdc-matrix td:nth-child(n+2):nth-child(-n+7) { width: calc((100% - 100px) / 6); }
+.brand-rdc-matrix th:last-child, .brand-rdc-matrix td:last-child { width: 50px; }
 
 /* Filters */
 .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
@@ -9076,7 +9076,7 @@ function renderSlowMoving() {
 
   html += '<div class="kpi-row"><div class="kpi-card red"><div class="kpi-label">慢动SKU数</div><div class="kpi-value">'+kpi.skuCount+'</div></div><div class="kpi-card orange"><div class="kpi-label">较上月新增</div><div class="kpi-value">'+kpi.newCount+'</div></div><div class="kpi-card purple"><div class="kpi-label">计划可用库存金额</div><div class="kpi-value">'+fmtK(kpi.totalAmt)+'<span class="kpi-unit">千元</span></div></div><div class="kpi-card blue"><div class="kpi-label">计划可用库存数量</div><div class="kpi-value">'+fmtK(kpi.totalQty)+'<span class="kpi-unit">支</span></div></div><button onclick="navigateTo(\'slow-moving-logic\')" style="margin-left:auto;align-self:center;padding:8px 16px;border:2px solid var(--color-blue);color:var(--color-blue);background:transparent;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;font-weight:600;">📖 慢动品根因分析逻辑</button></div>';
 
-  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend" style="height:220px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc" style="height:220px"></div></div></div><div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level"></div></div></div>';
+  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend" style="height:220px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc" style="height:220px"></div></div></div><div class="row-2" style="grid-template-columns:1fr 1fr;gap:8px"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand" style="height:240px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level" style="height:240px"></div></div></div>';
 
   // 跨RDC高占比品牌根因分析（左半：矩阵+表格｜右半：图例说明）
   var crossHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">';
@@ -9156,17 +9156,17 @@ function renderSlowMoving() {
 
     var rdcChart = echarts.init(document.getElementById('chart-slow-rdc'));
     var rdcPieData = Object.keys(rdcAmt).map(function(r) { return { name: r, value: rdcAmt[r] / 1000 }; }).sort(function(a,b){return b.value-a.value;});
-    rdcChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'scroll', bottom: 0 }, series: [{ type: 'pie', radius: ['40%','70%'], data: rdcPieData, label: { fontSize: 10 } }] });
+    rdcChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 6, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 10 } }, series: [{ type: 'pie', radius: ['38%','65%'], center: ['50%','45%'], data: rdcPieData, label: { fontSize: 10 } }] });
 
     var brandChart = echarts.init(document.getElementById('chart-slow-brand'));
     var brandPieData = Object.keys(brandAmt).map(function(b) { return { name: b, value: brandAmt[b] / 1000 }; }).sort(function(a,b){return b.value-a.value;});
-    brandChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'scroll', bottom: 0 }, series: [{ type: 'pie', radius: ['40%','70%'], data: brandPieData, label: { fontSize: 10 } }] });
+    brandChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 4, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: ['35%','60%'], center: ['50%','40%'], data: brandPieData, label: { fontSize: 9 } }] });
 
     var levelData = {};
     detailRows.forEach(function(d) { levelData[d.coverageLevel] = (levelData[d.coverageLevel] || 0) + (d.inventoryAmt || 0) / 1000; });
     var levelChart = echarts.init(document.getElementById('chart-slow-level'));
     var levelPieData = Object.keys(levelData).map(function(k) { return { name: k, value: levelData[k] }; }).sort(function(a,b){return b.value-a.value;});
-    levelChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'scroll', bottom: 0 }, series: [{ type: 'pie', radius: ['40%','70%'], data: levelPieData, label: { fontSize: 10 } }] });
+    levelChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 4, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: ['35%','60%'], center: ['50%','40%'], data: levelPieData, label: { fontSize: 9 } }] });
 
     // 跨RDC品牌慢动占比热力图
     var heatChart = echarts.init(document.getElementById('chart-slow-cross-heat'));
