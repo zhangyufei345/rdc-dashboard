@@ -143,10 +143,10 @@ a { color: var(--color-blue); text-decoration: none; }
 
 /* 品牌×RDC 矩阵：单列屏显示 */
 .brand-rdc-matrix { table-layout: fixed; width: 100%; }
-.brand-rdc-matrix th, .brand-rdc-matrix td { padding: 6px 4px; font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand-rdc-matrix th:first-child, .brand-rdc-matrix td:first-child { width: 70px; text-align: left; }
-.brand-rdc-matrix th:nth-child(n+2):nth-child(-n+7), .brand-rdc-matrix td:nth-child(n+2):nth-child(-n+7) { width: calc((100% - 150px) / 6); }
-.brand-rdc-matrix th:last-child, .brand-rdc-matrix td:last-child { width: 80px; }
+.brand-rdc-matrix th, .brand-rdc-matrix td { padding: 4px 3px; font-size: 10px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-rdc-matrix th:first-child, .brand-rdc-matrix td:first-child { width: 56px; text-align: left; }
+.brand-rdc-matrix th:nth-child(n+2):nth-child(-n+7), .brand-rdc-matrix td:nth-child(n+2):nth-child(-n+7) { width: calc((100% - 120px) / 6); }
+.brand-rdc-matrix th:last-child, .brand-rdc-matrix td:last-child { width: 64px; }
 
 /* Filters */
 .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
@@ -8389,7 +8389,7 @@ function renderInventoryStructure() {
         <option value="yes" ${hainanFilter==='yes'?'selected':''}>是</option>
         <option value="no" ${hainanFilter==='no'?'selected':''}>否</option>
       </select>
-      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当前：${filterCondition}</span>
+      <span style="font-size:11px;color:var(--text-secondary);margin-left:auto;flex:1;min-width:0;white-space:normal;line-height:1.45">当前：${filterCondition}</span>
     </div>
     <div class="kpi-row">
       <div class="kpi-card blue"><div class="kpi-label">${kpiRdcLabel}库存（${curMonth}）</div><div class="kpi-value">${fmtK(totalInv)}<span class="kpi-unit">千元</span></div>${fmtChangeHtml(totalInv, totalInvPrev)}</div>
@@ -9072,11 +9072,11 @@ function renderSlowMoving() {
   window._slowPage = p;
   var pageData = detailRows.slice((p-1)*pageLen, p*pageLen);
 
-  var html = '<div class="filter-bar"><label>RDC：</label><select onchange="window._slowFilters.rdc=this.value;renderSlowMoving()" style="min-width:120px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select><label style="margin-left:12px">海南花露水：</label><select onchange="window._slowFilters.hainan=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(hainanFilter==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainanFilter==='yes'?' selected':'')+'>是</option><option value="no"'+(hainanFilter==='no'?' selected':'')+'>否</option></select><label style="margin-left:12px">是否淘汰：</label><select onchange="window._slowFilters.obsolete=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(obsoleteFilter==='all'?' selected':'')+'>全部</option><option value="no"'+(obsoleteFilter==='no'?' selected':'')+'>仅非淘汰品</option><option value="yes"'+(obsoleteFilter==='yes'?' selected':'')+'>仅淘汰品</option></select><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当前：'+rdcLabel+'，'+hainanLabel+'，'+(obsoleteFilter==='all'?'含淘汰品':obsoleteFilter==='yes'?'仅淘汰品':'仅非淘汰品')+'｜已排除非卖品/促销装/新品期 '+excludedCount+' 个SKU（不计入慢动品）</span></div>';
+  var html = '<div class="filter-bar"><label>RDC：</label><select onchange="window._slowFilters.rdc=this.value;renderSlowMoving()" style="min-width:120px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select><label style="margin-left:12px">海南花露水：</label><select onchange="window._slowFilters.hainan=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(hainanFilter==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainanFilter==='yes'?' selected':'')+'>是</option><option value="no"'+(hainanFilter==='no'?' selected':'')+'>否</option></select><label style="margin-left:12px">是否淘汰：</label><select onchange="window._slowFilters.obsolete=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(obsoleteFilter==='all'?' selected':'')+'>全部</option><option value="no"'+(obsoleteFilter==='no'?' selected':'')+'>仅非淘汰品</option><option value="yes"'+(obsoleteFilter==='yes'?' selected':'')+'>仅淘汰品</option></select><span style="font-size:11px;color:var(--text-secondary);margin-left:auto;flex:1;min-width:0;white-space:normal;line-height:1.45">当前：'+rdcLabel+'，'+hainanLabel+'，'+(obsoleteFilter==='all'?'含淘汰品':obsoleteFilter==='yes'?'仅淘汰品':'仅非淘汰品')+'｜已排除非卖品/促销装/新品期 '+excludedCount+' 个SKU（不计入慢动品）</span></div>';
 
   html += '<div class="kpi-row"><div class="kpi-card red"><div class="kpi-label">慢动SKU数</div><div class="kpi-value">'+kpi.skuCount+'</div></div><div class="kpi-card orange"><div class="kpi-label">较上月新增</div><div class="kpi-value">'+kpi.newCount+'</div></div><div class="kpi-card purple"><div class="kpi-label">计划可用库存金额</div><div class="kpi-value">'+fmtK(kpi.totalAmt)+'<span class="kpi-unit">千元</span></div></div><div class="kpi-card blue"><div class="kpi-label">计划可用库存数量</div><div class="kpi-value">'+fmtK(kpi.totalQty)+'<span class="kpi-unit">支</span></div></div><button onclick="navigateTo(\'slow-moving-logic\')" style="margin-left:auto;align-self:center;padding:8px 16px;border:2px solid var(--color-blue);color:var(--color-blue);background:transparent;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;font-weight:600;">📖 慢动品根因分析逻辑</button></div>';
 
-  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc"></div></div></div><div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level"></div></div></div>';
+  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend" style="height:220px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc" style="height:220px"></div></div></div><div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level"></div></div></div>';
 
   // 跨RDC高占比品牌根因分析（左半：矩阵+表格｜右半：图例说明）
   var crossHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">';
