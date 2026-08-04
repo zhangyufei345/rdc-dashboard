@@ -6422,16 +6422,17 @@ function renderInventoryTurnover() {
     '<div class="kpi-card teal"><div class="kpi-label">总仓周转</div><div class="kpi-value">' + hqTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(hqTurnover, hqTurnoverPrev) + '</div></div>' +
     '</div>' +
     rdcCheckboxHtml() +
+    // 周转天数趋势 + 全库位 vs 共享库对比（移到库存金额趋势图之上）
+    '<div class="row-2" style="margin-bottom:16px">' +
+    '<div class="card"><div class="card-header"><span class="card-title">📈 全库位周转天数趋势</span></div><div class="chart-container" id="chart-inv-turnover-trend"></div></div>' +
+    '<div class="card"><div class="card-header"><span class="card-title">📊 全库位 vs 共享库对比</span></div><div class="chart-container" id="chart-inv-compare"></div></div>' +
+    '</div>' +
     (renderInventoryTurnoverHistory() || '') +
     // Chart 1: Inventory & Shipment dual-axis
     '<div class="card" style="margin-bottom:16px">' +
     '<div class="card-header"><span class="card-title">🔗 库存与出货联动趋势（双轴图）</span></div>' +
     '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">柱状图=各RDC库存金额 · 折线图=出货成本 · 左轴=库存 · 右轴=出货 · 不含总仓</div>' +
     '<div class="chart-container" style="height:280px" id="chart-inv-dual"></div>' +
-    '</div>' +
-    '<div class="row-2" style="margin-bottom:16px">' +
-    '<div class="card"><div class="card-header"><span class="card-title">📈 全库位周转天数趋势</span></div><div class="chart-container" id="chart-inv-turnover-trend"></div></div>' +
-    '<div class="card"><div class="card-header"><span class="card-title">📊 全库位 vs 共享库对比</span></div><div class="chart-container" id="chart-inv-compare"></div></div>' +
     '</div>' +
     // Detail tables
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">各RDC全库位周转天数（天）</span></div><div class="table-wrap" id="table-inv-turnover"></div></div>' +
