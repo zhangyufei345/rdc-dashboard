@@ -6247,8 +6247,9 @@ function getInvRdcSelection() {
   if (!inv || !inv.rdcOrder) return { isAll: true, selected: [] };
   const raw = window._invRdc || [];
   const selected = raw.filter(function(x){ return inv.rdcOrder.indexOf(x) >= 0; });
-  const isAll = selected.length === 0 || selected.length === inv.rdcOrder.length;
-  return { isAll: isAll, selected: isAll ? inv.rdcOrder.slice() : selected };
+  // 空数组=未做选择：数据兜底视为全选，但 UI 上「全部RDC」复选框不勾
+  const isAll = selected.length === inv.rdcOrder.length;
+  return { isAll: isAll, selected: selected.length === 0 ? inv.rdcOrder.slice() : selected };
 }
 function toggleInvRdc(rdc, checked) {
   const inv = dataStore.inventoryTurnover;
@@ -6256,7 +6257,8 @@ function toggleInvRdc(rdc, checked) {
   var arr = (window._invRdc || []).filter(function(x){ return inv.rdcOrder.indexOf(x) >= 0; });
   if (checked) { if (arr.indexOf(rdc) < 0) arr.push(rdc); }
   else arr = arr.filter(function(x){ return x !== rdc; });
-  if (arr.length === 0) arr = inv.rdcOrder.slice(); // 取消最后一个时恢复全选，避免空白
+  // 取消最后一个时保持空数组（不自动恢复全选），UI 上"全部RDC"复选框自动不勾
+  //   getInvRdcSelection() 内部兜底：空数组 → 数据视为全选，但 isAll=false
   window._invRdc = arr;
   renderInventoryTurnover();
 }
@@ -6383,14 +6385,17 @@ function renderInventoryTurnover() {
 
   // Build checkbox HTML for RDC multi-select
   function rdcCheckboxHtml() {
-    var allChecked = isAllSelected ? 'checked' : '';
+    // 空数组（未做选择）时，UI 上「全部RDC」不勾，specific RDC 也都不勾；
+    //   数据层面 getInvRdcSelection() 内部已兜底为全选
+    var uiAllChecked = isAllSelected && selectedRdcs.length > 0;
+    var allChecked = uiAllChecked ? 'checked' : '';
     var html = '<div class="filter-bar" style="margin-bottom:12px;align-items:flex-start">' +
       '<label style="margin-top:4px;font-size:12px;color:var(--text-secondary)">RDC：</label>' +
       '<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">' +
       '<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">' +
       '<input type="checkbox" value="allRDC" onchange="toggleInvRdcAll(this.checked)" ' + allChecked + '> 全部RDC</label>';
     inv.rdcOrder.forEach(function(r) {
-      var checked = (isAllSelected || selectedRdcs.indexOf(r) >= 0) ? 'checked' : '';
+      var checked = (uiAllChecked || selectedRdcs.indexOf(r) >= 0) ? 'checked' : '';
       html += '<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">' +
         '<input type="checkbox" value="' + r + '" onchange="toggleInvRdc(\'' + r + '\', this.checked)" ' + checked + '> ' + r + '</label>';
     });
