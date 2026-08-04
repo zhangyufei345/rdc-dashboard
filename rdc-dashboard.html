@@ -9076,7 +9076,7 @@ function renderSlowMoving() {
 
   html += '<div class="kpi-row"><div class="kpi-card red"><div class="kpi-label">慢动SKU数</div><div class="kpi-value">'+kpi.skuCount+'</div></div><div class="kpi-card orange"><div class="kpi-label">较上月新增</div><div class="kpi-value">'+kpi.newCount+'</div></div><div class="kpi-card purple"><div class="kpi-label">计划可用库存金额</div><div class="kpi-value">'+fmtK(kpi.totalAmt)+'<span class="kpi-unit">千元</span></div></div><div class="kpi-card blue"><div class="kpi-label">计划可用库存数量</div><div class="kpi-value">'+fmtK(kpi.totalQty)+'<span class="kpi-unit">支</span></div></div><button onclick="navigateTo(\'slow-moving-logic\')" style="margin-left:auto;align-self:center;padding:8px 16px;border:2px solid var(--color-blue);color:var(--color-blue);background:transparent;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;font-weight:600;">📖 慢动品根因分析逻辑</button></div>';
 
-  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend" style="height:220px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc" style="height:220px"></div></div></div><div class="row-2" style="grid-template-columns:1fr 1fr;gap:8px"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand" style="height:240px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level" style="height:240px"></div></div></div>';
+  html += '<div class="row-2"><div class="card"><div class="card-header"><span class="card-title">慢动品库存数量趋势</span></div><div class="chart-container" id="chart-slow-trend" style="height:220px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品RDC分布（金额）</span></div><div class="chart-container" id="chart-slow-rdc" style="height:220px"></div></div></div><div class="row-2" style="grid-template-columns:1fr 1fr;gap:0"><div class="card"><div class="card-header"><span class="card-title">慢动品品牌分布（金额）</span></div><div class="chart-container" id="chart-slow-brand" style="height:240px"></div></div><div class="card"><div class="card-header"><span class="card-title">慢动品覆盖等级分布</span></div><div class="chart-container" id="chart-slow-level" style="height:240px"></div></div></div>';
 
   // 跨RDC高占比品牌根因分析（左半：矩阵+表格｜右半：图例说明）
   var crossHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">';
@@ -9160,13 +9160,13 @@ function renderSlowMoving() {
 
     var brandChart = echarts.init(document.getElementById('chart-slow-brand'));
     var brandPieData = Object.keys(brandAmt).map(function(b) { return { name: b, value: brandAmt[b] / 1000 }; }).sort(function(a,b){return b.value-a.value;});
-    brandChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 4, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: ['35%','60%'], center: ['50%','40%'], data: brandPieData, label: { fontSize: 9 } }] });
+    brandChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 3, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: ['38%','68%'], center: ['50%','38%'], data: brandPieData, label: { fontSize: 9 } }] });
 
     var levelData = {};
     detailRows.forEach(function(d) { levelData[d.coverageLevel] = (levelData[d.coverageLevel] || 0) + (d.inventoryAmt || 0) / 1000; });
     var levelChart = echarts.init(document.getElementById('chart-slow-level'));
     var levelPieData = Object.keys(levelData).map(function(k) { return { name: k, value: levelData[k] }; }).sort(function(a,b){return b.value-a.value;});
-    levelChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 4, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: ['35%','60%'], center: ['50%','40%'], data: levelPieData, label: { fontSize: 9 } }] });
+    levelChart.setOption({ tooltip: { formatter: '{b}: {c}千元 ({d}%)' }, legend: { type: 'plain', bottom: 0, left: 'center', itemGap: 3, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 9 } }, series: [{ type: 'pie', radius: ['38%','68%'], center: ['50%','38%'], data: levelPieData, label: { fontSize: 9 } }] });
 
     // 跨RDC品牌慢动占比热力图
     var heatChart = echarts.init(document.getElementById('chart-slow-cross-heat'));
