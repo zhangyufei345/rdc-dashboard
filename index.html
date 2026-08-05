@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v0.4.5 (deploy-2026-08-05) 修复订单数据洞察/订单满足率同比对比月份硬编码(7月→动态取最新月) -->
+<!-- RDC运营数据看板 v0.4.6 (deploy-2026-08-05) 修复订单数据洞察趋势图为MTD 1月-当前月连续展示 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2325,6 +2325,14 @@ function renderOrderInsight() {
     const mm = parseInt(m.split('-')[1], 10);
     return mm + '月';
   });
+  // MTD 趋势图：连续 1月-当前月
+  const latestMonth = window._latestMonth || (months.length ? months[months.length - 1] : '2026-08');
+  const [latestY, latestMNum] = latestMonth.split('-').map(Number);
+  const trendMonths = [];
+  for (let mm = 1; mm <= latestMNum; mm++) {
+    trendMonths.push(latestY + '-' + String(mm).padStart(2, '0'));
+  }
+  const trendMonthLabels = trendMonths.map(m => parseInt(m.split('-')[1], 10) + '月');
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
 
   if (typeof window._oiMonth === 'undefined') {
@@ -2677,7 +2685,7 @@ function renderOrderInsight() {
         '<div class="chart-container" style="height:250px" id="oi-chart-type"></div>' +
       '</div>' +
       '<div class="card" style="flex:1;min-width:380px">' +
-        '<div class="card-header"><span class="card-title">1-7月 订单量趋势（环比）</span></div>' +
+        '<div class="card-header"><span class="card-title">' + latestY + '年1-' + latestMNum + '月 订单量MTD趋势</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当前月=截至数据最新日期累计</span></div>' +
         '<div class="chart-container" style="height:250px" id="oi-chart-trend"></div>' +
       '</div>' +
     '</div>' +
@@ -2762,25 +2770,25 @@ function renderOrderInsight() {
     }]
   });
 
-  // ====== 月趋势图专用数据：仅按海南花露水筛选，不受月份筛选影响（始终展示 1-7月全量） ======
+  // ====== 月趋势图专用数据：MTD 1月-当前月（连续月份，不受月份筛选影响） ======
   const trendRows = (window._oiHainan === 'all') ? rows : rows.filter(r => window._oiHainan === 'yes' ? r.isHainan : !r.isHainan);
-  // 图2：1-7月趋势（三类折线；trendRows 同步应用海南花露水筛选，但不应用月份筛选）
+  // 图2：1-当前月 MTD趋势（三类折线；trendRows 同步应用海南花露水筛选，但不应用月份筛选）
   const c2 = initChart('oi-chart-trend');
   const trendByMonthType = sumBy(trendRows, r => r.month + '|' + r.type);
   c2.setOption({
     tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
       const m = params[0].axisValue;
-      let h = '<strong>' + m.replace('2026-', '') + '月</strong>';
+      let h = '<strong>' + m + ' MTD</strong>';
       params.forEach(p => h += '<br/>' + p.marker + p.seriesName + '：' + (p.value != null ? p.value.toLocaleString() + ' ' + u : '—'));
       return h;
     }},
     legend: { data: ['普通订单', '特殊价格订单', '免费单'], top: 0, left: 'center', textStyle: { fontSize: 10 } },
     grid: { left: 60, right: 20, top: 35, bottom: 30 },
-    xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 10 } },
+    xAxis: { type: 'category', data: trendMonthLabels, axisLabel: { fontSize: 10 } },
     yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
       name: t, type: 'line', smooth: false, symbol: 'circle', symbolSize: 6,
-      data: months.map(m => { const e = trendByMonthType[m + '|' + t]; return e ? e.orderQty : null; }),
+      data: trendMonths.map(m => { const e = trendByMonthType[m + '|' + t]; return e ? e.orderQty : 0; }),
       lineStyle: { width: 2 }, color: TYPE_COLORS[t],
       label: { show: true, position: 'top', fontSize: 9, formatter: p => p.value != null ? p.value.toLocaleString() : '' },
       connectNulls: true
