@@ -4889,6 +4889,24 @@ function renderDcSupplySimTab(page, tabBar) {
   const impactedSkuSet = {};
   skuList.forEach(s => { impactedSkuSet[s.sku] = s; });
 
+  // 当前订单整体（用于满足率计算）— 必须在 rdcImpact 循环之前声明
+  const monthRows = (dataStore.orderDetail || []).filter(d => {
+    if (!rangeMonths.length) return true;
+    return d.dateStr && rangeMonths.some(m => d.dateStr.startsWith(m));
+  });
+  // 仅取非免费单（保持与原周末模拟一致口径），并按用户勾选的RDC过滤
+  const paidRowsAll = monthRows.filter(r => (r.type || r.orderType) !== '免费单');
+  const paidRows = paidRowsAll.filter(r => !r.rdc || selectedSimRdcs.indexOf(r.rdc) >= 0);
+  const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
+  const totalFirstDay = paidRows.reduce((s, d) => s + (d.firstDayQty || 0), 0);
+  const currentRate = totalOrder > 0 ? totalFirstDay / totalOrder : 0; // 日订单满足率
+  // SKU×订单支数累计（用于显示影响范围 + CSV 导出）
+  const skuOrderQty = {};
+  paidRows.forEach(d => {
+    if (!d.skuCode) return;
+    skuOrderQty[d.skuCode] = (skuOrderQty[d.skuCode] || 0) + (d.orderQty || 0);
+  });
+
   // ========== 关键修正：模拟可消化 = 订单维度首日缺货支数累计（同一订单只算一次）==========
   // 口径：在用户选定的月份 + RDC 范围内，对受影响 SKU 的订单求 firstDayShort 累计
   // firstDayShort = orderQty - firstDayQty，即"该订单首日未满足的支数"
@@ -4919,24 +4937,6 @@ function renderDcSupplySimTab(page, tabBar) {
     s.firstDayShort = info ? info.total : 0;
     s.shortOrderCount = info ? info.count : 0;
     s.rdcFirstShort = info ? info.rdc : {};
-  });
-
-  // 当前订单整体（用于满足率计算）
-  const monthRows = (dataStore.orderDetail || []).filter(d => {
-    if (!rangeMonths.length) return true;
-    return d.dateStr && rangeMonths.some(m => d.dateStr.startsWith(m));
-  });
-  // 仅取非免费单（保持与原周末模拟一致口径），并按用户勾选的RDC过滤
-  const paidRowsAll = monthRows.filter(r => (r.type || r.orderType) !== '免费单');
-  const paidRows = paidRowsAll.filter(r => !r.rdc || selectedSimRdcs.indexOf(r.rdc) >= 0);
-  const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
-  const totalFirstDay = paidRows.reduce((s, d) => s + (d.firstDayQty || 0), 0);
-  const currentRate = totalOrder > 0 ? totalFirstDay / totalOrder : 0; // 日订单满足率
-  // SKU×订单支数累计（用于显示影响范围 + CSV 导出）
-  const skuOrderQty = {};
-  paidRows.forEach(d => {
-    if (!d.skuCode) return;
-    skuOrderQty[d.skuCode] = (skuOrderQty[d.skuCode] || 0) + (d.orderQty || 0);
   });
 
   // 过滤掉 0 影响的 RDC（避免噪声），并应用用户 RDC 筛选
