@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v0.4.6 (deploy-2026-08-05) 修复订单数据洞察趋势图为MTD 1月-当前月连续展示 -->
+<!-- RDC运营数据看板 v0.4.7 (deploy-2026-08-05) 趋势图缺数月份由0改null断开连线 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2788,7 +2788,7 @@ function renderOrderInsight() {
     yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
     series: ['普通订单', '特殊价格订单', '免费单'].map(t => ({
       name: t, type: 'line', smooth: false, symbol: 'circle', symbolSize: 6,
-      data: trendMonths.map(m => { const e = trendByMonthType[m + '|' + t]; return e ? e.orderQty : 0; }),
+      data: trendMonths.map(m => { const e = trendByMonthType[m + '|' + t]; return e ? e.orderQty : null; }),
       lineStyle: { width: 2 }, color: TYPE_COLORS[t],
       label: { show: true, position: 'top', fontSize: 9, formatter: p => p.value != null ? p.value.toLocaleString() : '' },
       connectNulls: true
