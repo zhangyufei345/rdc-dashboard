@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v0.4.4 (deploy-2026-07-27) -->
+<!-- RDC运营数据看板 v0.4.5 (deploy-2026-08-05) 修复订单数据洞察/订单满足率同比对比月份硬编码(7月→动态取最新月) -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2095,8 +2095,8 @@ function renderFulfillmentHistory() {
   const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
     RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
   return '' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 日订单满足率同比对比（1-7月，2025 vs 2026）</span>' +
-      '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，1 位小数百分比，2026年7月按订单数据实时聚合</span>' +
+    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 日订单满足率同比对比（2025 vs 2026）</span>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，1 位小数百分比，2026年当月按订单数据实时聚合</span>' +
     '</div><div id="chart-fulfill-history-grid"></div></div>' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
       '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
@@ -2109,8 +2109,8 @@ function renderFulfillmentHistoryCharts() {
   const H = dataStore.history.fulfillment;
   const rdc = window._fulHtyRdc || 'all';
 
-  // ========== 当月（2026年7月）实时聚合：从 orderDetail 按 RDC×月聚合 首日已满足/订单总量 ==========
-  // 历史值优先（来自 history.fulfillment），当月实时计算（用户要求后续根据订单数据实时更新）
+  // ========== 当月实时聚合：从 orderDetail 按 RDC×月聚合 首日已满足/订单总量 ==========
+  // 历史值优先（来自 history.fulfillment），当年各月实时计算（用户要求后续根据订单数据实时更新）
   function liveMonthlyFulfillment(rdcName, ym) {
     let sFirst = 0, sOrder = 0;
     (dataStore.orderDetail || []).forEach(function(d) {
@@ -2126,9 +2126,10 @@ function renderFulfillmentHistoryCharts() {
     const yrMap = H[year] && H[year].daily;
     const hist = yrMap && yrMap[rdcName] ? yrMap[rdcName][monthIdx0] : null;
     if (hist != null) return hist;
-    // 当月（2026年7月，monthIdx0=6）实时聚合
-    if (year === '2026' && monthIdx0 === 6) {
-      return liveMonthlyFulfillment(rdcName, '2026-07');
+    // 当年各月（含最新月）实时聚合
+    if (year === '2026') {
+      const ym = '2026-' + String(monthIdx0 + 1).padStart(2, '0');
+      return liveMonthlyFulfillment(rdcName, ym);
     }
     return null;
   }
@@ -2141,10 +2142,14 @@ function renderFulfillmentHistoryCharts() {
       window._fulHtyChartInstances.forEach(function(c) { try { c.dispose(); } catch (e) {} });
     }
     window._fulHtyChartInstances = [];
-    // 7 月：1-6月来自 history；2026年7月来自 orderDetail 实时聚合
-    const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
+    // 动态月份：1-6月来自 history；2026年当月来自 orderDetail 实时聚合
+    const months = (window._availableMonths && window._availableMonths.length > 0)
+      ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; }).map(function(m) { return parseInt(m.split('-')[1], 10) + '月'; })
+      : ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
+    const latestIdx = months.length - 1;
+    const latestMonthLabel = months[latestIdx] || '';
     let gridHtml = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px">' +
-      '<div style="grid-column:span 3;display:flex;align-items:center;gap:16px;padding:4px 8px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#94a3b8"></span>2025 上半年</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#2563EB"></span>2026 1-7月</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;border:2px solid #2563EB;border-radius:50%;background:#FFF"></span>2026 7月（实时聚合）</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#10B981;border-radius:50%"></span>同比改善</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%"></span>同比下滑</span></div>';
+      '<div style="grid-column:span 3;display:flex;align-items:center;gap:16px;padding:4px 8px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#94a3b8"></span>2025 1-' + latestMonthLabel + '</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#2563EB"></span>2026 1-' + latestMonthLabel + '</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;border:2px solid #2563EB;border-radius:50%;background:#FFF"></span>2026 ' + latestMonthLabel + '（实时聚合）</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#10B981;border-radius:50%"></span>同比改善</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%"></span>同比下滑</span></div>';
     RDC_LIST.forEach(function(r) {
       var id = 'chart-fulHty-' + r;
       gridHtml += '<div style="background:#fafbfc;border:1px solid var(--border-card);border-radius:6px;padding:8px"><div style="font-size:12px;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">' +
@@ -2205,11 +2210,11 @@ function renderFulfillmentHistoryCharts() {
         xAxis: { type: 'category', data: months, axisLabel: { fontSize: 9, interval: 0 }, axisLine: { show: false }, axisTick: { show: false } },
         yAxis: { type: 'value', min: yMin, max: yMax, axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 9 }, splitLine: { lineStyle: { type: 'dashed', color: '#e5e7eb' } } },
         series: [
-          { name: '2025', type: 'line', data: v25Arr, smooth: false, symbol: 'circle', symbolSize: function(v, p) { return p.dataIndex === 6 ? 8 : 5; }, itemStyle: { color: function(p) { return p.dataIndex === 6 ? '#64748b' : '#94a3b8'; } }, lineStyle: { color: '#94a3b8', width: 1.5, type: 'dashed' }, connectNulls: true },
+          { name: '2025', type: 'line', data: v25Arr, smooth: false, symbol: 'circle', symbolSize: function(v, p) { return p.dataIndex === latestIdx ? 8 : 5; }, itemStyle: { color: function(p) { return p.dataIndex === latestIdx ? '#64748b' : '#94a3b8'; } }, lineStyle: { color: '#94a3b8', width: 1.5, type: 'dashed' }, connectNulls: true },
           { name: '2026', type: 'line', data: v26Arr, smooth: false,
-            symbol: function(v, p) { return p.dataIndex === 6 && v != null ? 'emptyCircle' : 'circle'; },
-            symbolSize: function(v, p) { return p.dataIndex === 6 && v != null ? 12 : 6; },
-            itemStyle: { color: function(p) { return ptColors[p.dataIndex] || '#2563EB'; }, borderColor: '#2563EB', borderWidth: function(p) { return p.dataIndex === 6 && v26Arr[p.dataIndex] != null ? 2 : 0; } },
+            symbol: function(v, p) { return p.dataIndex === latestIdx && v != null ? 'emptyCircle' : 'circle'; },
+            symbolSize: function(v, p) { return p.dataIndex === latestIdx && v != null ? 12 : 6; },
+            itemStyle: { color: function(p) { return ptColors[p.dataIndex] || '#2563EB'; }, borderColor: '#2563EB', borderWidth: function(p) { return p.dataIndex === latestIdx && v26Arr[p.dataIndex] != null ? 2 : 0; } },
             lineStyle: { color: '#2563EB', width: 2 },
             label: { show: true, position: 'top', distance: 10, fontSize: 9, color: '#1E40AF', formatter: labelFormatter },
             connectNulls: true,
@@ -2312,11 +2317,23 @@ function renderOrderInsight() {
   }
   const _pm2 = (dataStore.inventory && dataStore.inventory.productMaster) || {};
   Object.keys(_pm2).forEach(k => { if (_pm2[k] && _pm2[k].skuName && !skuNameMap[k]) skuNameMap[k] = _pm2[k].skuName; });
-  const months = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07'];
-  const monthLabels = ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
+  // 动态月份：优先从全局可用月份取，确保新月份（如8月）自动出现
+  const months = (window._availableMonths && window._availableMonths.length > 0)
+    ? window._availableMonths.slice()
+    : ['2026-07'];
+  const monthLabels = months.map(m => {
+    const mm = parseInt(m.split('-')[1], 10);
+    return mm + '月';
+  });
   const TYPE_COLORS = { '普通订单': '#2563EB', '特殊价格订单': '#F59E0B', '免费单': '#10B981' };
 
-  if (typeof window._oiMonth === 'undefined') window._oiMonth = '2026-07';
+  if (typeof window._oiMonth === 'undefined') {
+    window._oiMonth = window._latestMonth || (months.length > 0 ? months[months.length - 1] : '2026-07');
+  }
+  // 若缓存中的旧选中月已不在列表，回退到最新月
+  if (months.indexOf(window._oiMonth) < 0) {
+    window._oiMonth = window._latestMonth || (months.length > 0 ? months[months.length - 1] : '2026-07');
+  }
   if (typeof window._oiHainan === 'undefined') window._oiHainan = 'all';
   if (typeof window._oiByBox === 'undefined') window._oiByBox = false;
   const u = window._oiByBox ? '箱' : '支';
@@ -2424,14 +2441,20 @@ function renderOrderInsight() {
   function fmtPct(v) { return (v * 100).toFixed(1) + '%'; }
   function ppColor(v) { return v >= 0 ? 'var(--color-green)' : 'var(--color-red)'; }
 
-  // 环比（7 vs 6）
+  // 环比（当前选中月 vs 上月）
+  function getPrevMonth(cur) {
+    const [y, m] = cur.split('-').map(Number);
+    if (m === 1) return (y - 1) + '-12';
+    return y + '-' + String(m - 1).padStart(2, '0');
+  }
   function mom(curKey, prevKey, map) {
     const c = map[curKey], p = map[prevKey];
     if (!c || !p || !p.orderQty) return null;
     return { d: c.orderQty - p.orderQty, pct: (c.orderQty - p.orderQty) / p.orderQty, lines: c.lines - p.lines };
   }
   const momType = {};
-  ['普通订单', '特殊价格订单', '免费单'].forEach(t => { momType[t] = mom(t + '|2026-07', t + '|2026-06', sumBy(rows, r => r.type + '|' + r.month)); });
+  const prevMonth = getPrevMonth(window._oiMonth);
+  ['普通订单', '特殊价格订单', '免费单'].forEach(t => { momType[t] = mom(t + '|' + window._oiMonth, t + '|' + prevMonth, sumBy(rows, r => r.type + '|' + r.month)); });
 
   // 最新月（7月）类型构成
   const typeArr = ['普通订单', '特殊价格订单', '免费单'].map(t => byType[t] || { orderQty: 0, lines: 0 });
@@ -2448,9 +2471,27 @@ function renderOrderInsight() {
   // ====== 交叉洞察：满足率对比 ======
   const rateRows = typeArr.map((o, i) => ({ type: ['普通订单', '特殊价格订单', '免费单'][i], qty: o.orderQty, rate: rateOf(o) }));
 
-  // ====== 交叉洞察：库存覆盖联动（品牌 7月订单 vs 6月末库存） ======
+  // ====== 交叉洞察：库存覆盖联动（品牌当月订单 vs 最近可用期末库存） ======
+  function getCovBaseForMonth(targetMonth) {
+    const available = [];
+    if (cov5 && cov5.length) available.push({ month: '2026-06', data: cov5 });
+    if (cov6 && cov6.length) available.push({ month: '2026-07', data: cov6 });
+    if (!available.length) return null;
+    const prev = getPrevMonth(targetMonth);
+    const match = available.filter(x => x.month <= prev).pop();
+    return match ? match.data : available[available.length - 1].data;
+  }
+  function getCovBaseMonthLabel(targetMonth) {
+    const base = getCovBaseForMonth(targetMonth);
+    if (!base) return '';
+    if (base === cov6) return '6月末';
+    if (base === cov5) return '5月末';
+    return '';
+  }
+  const invBaseLabel = getCovBaseMonthLabel(window._oiMonth);
   const brandInv = {};
-  cov6.forEach(d => {
+  const invCovBase = getCovBaseForMonth(window._oiMonth);
+  (invCovBase || []).forEach(d => {
     if (!d.brand) return;
     const q = d.availableQty || 0;
     const s = window._oiByBox ? specOf(d.sku) : 1;
@@ -2503,8 +2544,8 @@ function renderOrderInsight() {
   transShipRdcs.forEach(rdc => { diffByRdc[rdc] = (transByRdc[rdc] || 0) - (shipByRdc[rdc] || 0); });
   const transShipMonthLabel = compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无数据';
   // ====== SKU 级差异明细（转储 vs 出货 + 期初库存/未来需求 + 根因）======
-  // 期初库存基准：7月视图→cov6（6月末），6月视图→cov5（5月末），5月/全部→无基准
-  const covBase = (compareMonth === '2026-07') ? cov6 : (compareMonth === '2026-06' ? cov5 : null);
+  // 期初库存基准：取 targetMonth 上月最近可用的覆盖数据（当前 inventory 仅含 5/6 月，8月会回退到6月末）
+  const covBase = getCovBaseForMonth(compareMonth);
   const invMap = {};
   (covBase || []).forEach(d => {
     if (!d.sku || !d.rdc) return;
@@ -2589,7 +2630,7 @@ function renderOrderInsight() {
     '</label>';
 
   // KPI 卡片
-  const mom7 = mom('2026-07', '2026-06', sumBy(rows, r => r.month));
+  const momSel = mom(window._oiMonth, prevMonth, sumBy(rows, r => r.month));
   const kpiHtml = '<div class="kpi-row" style="padding:0 8px 8px">' +
     '<div class="kpi-card blue"><div class="kpi-label">' + monthLabels[months.indexOf(window._oiMonth)] + '订单量</div><div class="kpi-value">' + fmtN(totalQty) + '<span class="kpi-unit">' + u + '</span></div>' +
       '<div style="font-size:11px;color:#64748B">' + selRows.length.toLocaleString() + ' 行订单</div></div>' +
@@ -2616,9 +2657,9 @@ function renderOrderInsight() {
 
   const invWarnHtml = invWarn.length > 0
     ? '<div style="margin-top:8px;font-size:12px;line-height:1.8">' +
-        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + monthLabels[months.indexOf(window._oiMonth)] + '订单 ' + fmtN(w.orderQty) + ' ' + u + ' &gt; 6月末库存 ' + fmtN(w.inv) + ' ' + u + '（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
+        invWarn.map(w => '<div>⚠️ <b>' + w.brand + '</b>：' + monthLabels[months.indexOf(window._oiMonth)] + '订单 ' + fmtN(w.orderQty) + ' ' + u + ' &gt; ' + invBaseLabel + '库存 ' + fmtN(w.inv) + ' ' + u + '（' + (w.ratio).toFixed(1) + '倍）— <span style="color:#EF4444">库存不足以覆盖订单，建议核查补货</span></div>').join('') +
       '</div>'
-    : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; 6月末库存」的预警</div>';
+    : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; ' + invBaseLabel + '库存」的预警</div>';
 
   page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + hainanSelect + byBoxCheckbox + '</div>' +
     '<div class="card" style="margin-bottom:16px">' +
@@ -2671,7 +2712,7 @@ function renderOrderInsight() {
       '<div class="kpi-row" style="padding:0 8px 8px">' +
         rateRows.map(r => '<div class="kpi-card" style="background:' + TYPE_COLORS[r.type] + '11"><div class="kpi-label">' + r.type + ' 首日满足率</div><div class="kpi-value">' + fmtPct(r.rate) + '</div><div style="font-size:11px;color:#64748B">订单 ' + fmtN(r.qty) + ' ' + u + '</div></div>').join('') +
       '</div>' +
-      '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px"><span class="card-title" style="font-size:13px">📦 库存覆盖预警（订单 vs 6月末库存）</span></div>' +
+      '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px"><span class="card-title" style="font-size:13px">📦 库存覆盖预警（订单 vs ' + invBaseLabel + '库存）</span></div>' +
       invWarnHtml +
       '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px;margin-top:12px"><span class="card-title" style="font-size:13px">🚚 转储入库 vs 实际出货（按RDC）— ' + transShipMonthLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">差异 = 转储入库 − 实际出货</span></div>' +
       (compareMonth
@@ -2701,7 +2742,7 @@ function renderOrderInsight() {
         '<button class="btn-export" onclick="exportOiSkuDetail()" style="font-size:11px;padding:4px 10px">⬇ 导出CSV</button>' +
       '</div>' +
       '</div>' +
-      '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">期初可用库存取' + (covBase ? '覆盖表月末库存（' + (compareMonth === '2026-07' ? '6月末' : '5月末') + '）' : '"—"（当前月份无期初库存基准）') + '；未来需求 = 覆盖表未来6个月分仓需求合计。按差异绝对值降序排列。</div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">期初可用库存取' + (covBase ? '覆盖表月末库存（' + getCovBaseMonthLabel(compareMonth) + '）' : '"—"（当前月份无期初库存基准）') + '；未来需求 = 覆盖表未来6个月分仓需求合计。按差异绝对值降序排列。</div>' +
       '<div class="table-wrap" id="oi-sku-detail-table" style="max-height:520px;overflow:auto"></div>' +
     '</div>';
 
