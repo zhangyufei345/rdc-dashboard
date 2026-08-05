@@ -4657,18 +4657,33 @@ function runWeekendSimulation(monthStr) {
 }
 
 function renderWeekendSim() {
-  setTitle('周末排单模拟分析');
+  setTitle('场景模拟');
   const page = document.getElementById('page-weekend-sim');
   if (!page) return;
 
   if (!dataStore.loaded || dataStore.orderDetail.length === 0) {
-    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📅</div><div style="font-size:var(--font-size-lg)">请先导入数据</div><div style="font-size:12px;margin-top:8px">前往 <a href="javascript:navigateTo(\'data\')" style="color:var(--color-blue)">数据管理</a> 页面导入Excel文件</div></div>';
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🎯</div><div style="font-size:var(--font-size-lg)">请先导入数据</div><div style="font-size:12px;margin-top:8px">前往 <a href="javascript:navigateTo(\'data\')" style="color:var(--color-blue)">数据管理</a> 页面导入Excel文件</div></div>';
     return;
   }
 
+  // TAB 切换：周末排单模拟 / 总仓供应模拟
+  if (typeof window._simTab === 'undefined') window._simTab = 'weekend';
+  const _tab = window._simTab;
+  const tabStyle = (k) => k === _tab ? 'background:var(--color-blue);color:#fff;' : '';
+  const tabBar = '<div style="display:flex;gap:8px;margin-bottom:16px">' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + tabStyle('weekend') + '" onclick="window._simTab=\'weekend\';renderWeekendSim()">📅 周末排单模拟</button>' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + tabStyle('dcSupply') + '" onclick="window._simTab=\'dcSupply\';renderWeekendSim()">🏬 总仓供应模拟</button>' +
+    '</div>';
+
+  if (_tab === 'dcSupply') {
+    renderDcSupplySimTab(page, tabBar);
+    return;
+  }
+
+  // ============ 周末排单模拟（原内容）============
   const sim = runWeekendSimulation(filters.dataMonth);
   if (!sim) {
-    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📅</div><div>模拟计算失败，请检查数据</div></div>';
+    page.innerHTML = tabBar + '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📅</div><div>模拟计算失败，请检查数据</div></div>';
     return;
   }
 
@@ -4679,7 +4694,7 @@ function renderWeekendSim() {
 
   const dayChange = ((sim.simulatedDayRate - sim.originalDayRate) * 100).toFixed(2);
 
-  page.innerHTML = `
+  page.innerHTML = tabBar + `
     <div style="margin-bottom:16px">
       <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${monthLabel}RDC周末订单排单模拟分析</div>
       <div style="font-size:12px;color:var(--text-secondary)">数据范围: ${rangeStart} 至 ${rangeEnd} | 模拟逻辑: 周末放行订单 → 按对应周一RDC+SKU满足率推算</div>
@@ -4780,6 +4795,355 @@ function renderWeekendSim() {
       </div>
     </div>
   `;
+}
+
+// ============ 总仓供应模拟 ============
+// 缺货报告「总仓供应情况」字段值：含「缺货」→ 整体缺货；含「紧张」→ 供应紧张；其他→正常
+// 模拟逻辑：假设选中的 SKU 在总仓供应充足（即不是整体缺货 / 供应紧张），
+//           这些 SKU 在各 RDC 的缺货量可被总仓调拨消化，从而提升订单满足率。
+// 字段映射：缺货汇总 sheet 中每个 SKU 有 6 个 RDC 的「缺货箱数」+「在途箱数」列
+//           huabeiShort/huabeiTransit / xinanShort / dongbeiShort / huazhongShort / huananShort / huadongShort / xibeiShort
+const DC_SUPPLY_RDC_KEYS = [
+  { name: '华北RDC', shortKey: 'huabei', short: '华北' },
+  { name: '西南RDC', shortKey: 'xinan', short: '西南' },
+  { name: '东北RDC', shortKey: 'dongbei', short: '东北' },
+  { name: '华中RDC', shortKey: 'huazhong', short: '华中' },
+  { name: '华南RDC', shortKey: 'huanan', short: '华南' },
+  { name: '华东RDC', shortKey: 'huadong', short: '华东' },
+  { name: '西北RDC', shortKey: 'xibei', short: '西北' }
+];
+function renderDcSupplySimTab(page, tabBar) {
+  // 模拟场景开关：用户可独立勾选「解除整体缺货」「解除供应紧张」
+  if (typeof window._simDcUnblock === 'undefined') {
+    window._simDcUnblock = { shortage: true, tight: true };
+  }
+  if (typeof window._simDcOnlyShortage === 'undefined') window._simDcOnlyShortage = false;
+  // SKU 维度筛选
+  if (typeof window._simDcBrand === 'undefined') window._simDcBrand = 'all';
+  if (typeof window._simDcRdcFocus === 'undefined') window._simDcRdcFocus = 'all';
+  if (typeof window._simDcSort === 'undefined') window._simDcSort = 'impact';
+
+  const unblockShortage = !!window._simDcUnblock.shortage;
+  const unblockTight = !!window._simDcUnblock.tight;
+  const onlyShortage = !!window._simDcOnlyShortage;
+
+  const monthLabel = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth.split('-')[1] + '月' : '全月';
+  const rangeMonths = (filters.dataMonth && filters.dataMonth !== 'all') ? [filters.dataMonth] : (window._latestMonth ? [window._latestMonth] : []);
+
+  // 取缺货报告原始数据
+  const allShortage = (dataStore.shortage || []).filter(d => {
+    if (!rangeMonths.length) return true;
+    return d.dateStr && rangeMonths.some(m => d.dateStr.startsWith(m));
+  });
+  // productMaster 取箱规
+  const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
+  function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+
+  // 选取「总仓供应情况」含目标关键字的 SKU
+  const selectedRows = allShortage.filter(d => {
+    const s = (d.dcSupply || '').toString();
+    const isShortage = s.indexOf('缺货') >= 0;
+    const isTight = s.indexOf('紧张') >= 0;
+    if (onlyShortage && !isShortage) return false;
+    return (unblockShortage && isShortage) || (unblockTight && isTight);
+  });
+
+  // 按 SKU 聚合（同一 SKU 可能在多天出现多行）
+  const skuMap = {};
+  selectedRows.forEach(d => {
+    const key = d.materialCode;
+    if (!key) return;
+    if (!skuMap[key]) {
+      skuMap[key] = {
+        sku: d.materialCode, name: d.materialName, brand: d.brand,
+        dcSupply: d.dcSupply, rdcShort: {}, rdcTransit: {},
+        rdcCount: 0, totalShortBoxes: 0
+      };
+      DC_SUPPLY_RDC_KEYS.forEach(rdc => { skuMap[key].rdcShort[rdc.name] = 0; skuMap[key].rdcTransit[rdc.name] = 0; });
+    }
+    const it = skuMap[key];
+    DC_SUPPLY_RDC_KEYS.forEach(rdc => {
+      it.rdcShort[rdc.name] += (d[rdc.shortKey + 'Short'] || 0);
+      it.rdcTransit[rdc.name] += (d[rdc.shortKey + 'Transit'] || 0);
+    });
+    it.rdcCount = DC_SUPPLY_RDC_KEYS.filter(r => (it.rdcShort[r.name] || 0) > 0).length;
+    it.totalShortBoxes = DC_SUPPLY_RDC_KEYS.reduce((s, r) => s + (it.rdcShort[r.name] || 0), 0);
+  });
+  const skuList = Object.values(skuMap);
+
+  // 当前订单整体（用于满足率计算）
+  const monthRows = (dataStore.orderDetail || []).filter(d => {
+    if (!rangeMonths.length) return true;
+    return d.dateStr && rangeMonths.some(m => d.dateStr.startsWith(m));
+  });
+  // 仅取非免费单（保持与原周末模拟一致口径）
+  const paidRows = monthRows.filter(r => (r.type || r.orderType) !== '免费单');
+  const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
+  const totalFulfill = paidRows.reduce((s, d) => s + (d.totalFulfillQty || 0), 0);
+  const currentRate = totalOrder > 0 ? totalFulfill / totalOrder : 0;
+
+  // 按 SKU 把「受影响缺货箱数」按箱规换算为「受影响订单支数」（用该 SKU 关联订单的订单支数作上限）
+  // 取 SKU×月份首次出现 orderQty 累计（近似该 SKU 当月总订单支数）
+  const skuOrderQty = {};
+  paidRows.forEach(d => {
+    if (!d.skuCode) return;
+    skuOrderQty[d.skuCode] = (skuOrderQty[d.skuCode] || 0) + (d.orderQty || 0);
+  });
+
+  // 按 RDC 聚合受影响情况
+  const rdcImpact = {};
+  DC_SUPPLY_RDC_KEYS.forEach(r => {
+    rdcImpact[r.name] = { skuSet: new Set(), shortBoxes: 0, transitBoxes: 0, simulatedUnits: 0 };
+  });
+  skuList.forEach(s => {
+    DC_SUPPLY_RDC_KEYS.forEach(r => {
+      const boxes = s.rdcShort[r.name] || 0;
+      if (boxes > 0) {
+        rdcImpact[r.name].skuSet.add(s.sku);
+        rdcImpact[r.name].shortBoxes += boxes;
+        rdcImpact[r.name].transitBoxes += (s.rdcTransit[r.name] || 0);
+        rdcImpact[r.name].simulatedUnits += Math.round(boxes * specOf(s.sku));
+      }
+    });
+  });
+  // 过滤掉 0 影响的 RDC（避免噪声），但保留华东（即使停运也展示，便于核对）
+  const rdcRows = DC_SUPPLY_RDC_KEYS.map(r => ({
+    rdc: r.name, skuCount: rdcImpact[r.name].skuSet.size,
+    shortBoxes: rdcImpact[r.name].shortBoxes, transitBoxes: rdcImpact[r.name].transitBoxes,
+    simulatedUnits: rdcImpact[r.name].simulatedUnits
+  })).filter(x => x.shortBoxes > 0);
+
+  // 汇总受影响（用于顶部 KPI）
+  const impactSkuCount = skuList.length;
+  const impactShortBoxes = skuList.reduce((s, x) => s + x.totalShortBoxes, 0);
+  const impactSimulatedUnits = rdcRows.reduce((s, x) => s + x.simulatedUnits, 0);
+  // 模拟后满足率 = (实际满足量 + 模拟可消化量) / 总订单量（按 SKU 维度，受影响 SKU 订单量上限）
+  // 用更保守的口径：取 SKU 的 orderQty 总和作为分母（避免重复跨 SKU 累计）
+  const impactOrderUnitsCap = skuList.reduce((s, x) => s + (skuOrderQty[x.sku] || 0), 0);
+  const simulatedFulfill = Math.min(totalFulfill + impactSimulatedUnits, totalOrder);
+  const simulatedRate = totalOrder > 0 ? simulatedFulfill / totalOrder : 0;
+  const rateDelta = ((simulatedRate - currentRate) * 100);
+
+  // SKU 明细筛选：品牌/RDC
+  const brandOpts = Array.from(new Set(skuList.map(s => s.brand || '其他'))).sort();
+  const rdcFocusOpts = DC_SUPPLY_RDC_KEYS.map(r => r.name);
+  const filteredSkuList = skuList.filter(s => {
+    if (window._simDcBrand !== 'all' && s.brand !== window._simDcBrand) return false;
+    if (window._simDcRdcFocus !== 'all' && !(s.rdcShort[window._simDcRdcFocus] > 0)) return false;
+    return true;
+  });
+  // 排序
+  const sortSku = (a, b) => {
+    if (window._simDcSort === 'impact') return b.totalShortBoxes - a.totalShortBoxes;
+    if (window._simDcSort === 'rdcCount') return b.rdcCount - a.rdcCount;
+    if (window._simDcSort === 'supply') {
+      const rank = v => ((v || '').indexOf('缺货') >= 0 ? 0 : (v || '').indexOf('紧张') >= 0 ? 1 : 2);
+      return rank(a.dcSupply) - rank(b.dcSupply);
+    }
+    return 0;
+  };
+  filteredSkuList.sort(sortSku);
+
+  // 一键切换
+  function toggleSimDcFlag(key) {
+    window._simDcUnblock[key] = !window._simDcUnblock[key];
+    renderWeekendSim();
+  }
+  function setSimDcOnly(v) { window._simDcOnlyShortage = !!v; renderWeekendSim(); }
+  function setSimDcBrand(v) { window._simDcBrand = v; renderWeekendSim(); }
+  function setSimDcRdcFocus(v) { window._simDcRdcFocus = v; renderWeekendSim(); }
+  function setSimDcSort(v) { window._simDcSort = v; renderWeekendSim(); }
+
+  // ====== 渲染 ======
+  const html = tabBar + `
+    <div style="margin-bottom:16px">
+      <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${monthLabel} 总仓供应情况对订单满足率影响模拟</div>
+      <div style="font-size:12px;color:var(--text-secondary)">假设：选中的 SKU 在总仓供应充足（不再"整体缺货"或"供应紧张"），其在 RDC 的缺货可被总仓调拨消化，对全月订单满足率的影响估算。</div>
+    </div>
+
+    <!-- 模拟场景控制区 -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">🎛️ 模拟场景</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;padding:4px 0">
+        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" ${unblockShortage ? 'checked' : ''} onchange="window._simDcUnblock.shortage=this.checked;renderWeekendSim()" style="cursor:pointer">
+          <span><b style="color:#B91C1C">解除整体缺货</b>（<span class="badge" style="background:#FEE2E2;color:#B91C1C">整体缺货</span>）</span>
+        </label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" ${unblockTight ? 'checked' : ''} onchange="window._simDcUnblock.tight=this.checked;renderWeekendSim()" style="cursor:pointer">
+          <span><b style="color:#92400E">解除供应紧张</b>（<span class="badge" style="background:#FEF3C7;color:#92400E">供应紧张</span>）</span>
+        </label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:8px">
+          <input type="checkbox" ${onlyShortage ? 'checked' : ''} onchange="window._simDcOnlyShortage=this.checked;renderWeekendSim()" style="cursor:pointer">
+          <span style="color:var(--text-secondary)">仅查看"整体缺货"（排除"供应紧张"）</span>
+        </label>
+        <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">受影响 SKU：<b style="color:#B91C1C">${impactSkuCount}</b> 个 · 涉及缺货箱数：<b style="color:#B91C1C">${formatNum(impactShortBoxes)}</b> 箱 · 模拟可消化：<b style="color:#10B981">${formatNum(impactSimulatedUnits)}</b> 支</span>
+      </div>
+    </div>
+
+    <!-- 整体满足率对比卡 -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">📊 整体满足率对比（${monthLabel}）</span></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th style="width:24%">指标</th><th style="width:18%">调整前</th><th style="width:18%">调整后（模拟）</th><th style="width:14%">变化</th><th style="width:26%">说明</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>全月订单满足率</td>
+              <td class="num">${(currentRate*100).toFixed(2)}%</td>
+              <td class="num"><b style="color:#10B981">${(simulatedRate*100).toFixed(2)}%</b></td>
+              <td class="num"><b style="color:#10B981">+${rateDelta.toFixed(2)}pct</b></td>
+              <td>${impactSkuCount > 0 ? '若解除总仓供应紧张，全月满足率可从 ' + (currentRate*100).toFixed(2) + '% 提升至 ' + (simulatedRate*100).toFixed(2) + '%' : '当前无受影响 SKU，无需模拟'}</td>
+            </tr>
+            <tr>
+              <td>受影响 SKU 订单支数（上限）</td>
+              <td class="num">${formatNum(impactOrderUnitsCap)}</td>
+              <td class="num">-</td>
+              <td class="num">-</td>
+              <td>受影响 SKU 在当月产生的全部订单支数（覆盖多RDC）</td>
+            </tr>
+            <tr>
+              <td>模拟可消化订单支数</td>
+              <td class="num">-</td>
+              <td class="num"><b style="color:#10B981">${formatNum(impactSimulatedUnits)}</b></td>
+              <td class="num"><b style="color:#10B981">+${formatNum(impactSimulatedUnits)}</b></td>
+              <td>受影响缺货箱数 × 各 SKU 箱规 = 可被总仓调拨消化的支数</td>
+            </tr>
+            <tr>
+              <td>受影响缺货箱数（按 SKU 汇总）</td>
+              <td class="num">${formatNum(impactShortBoxes)}</td>
+              <td class="num">0</td>
+              <td class="num"><b style="color:#10B981">-${formatNum(impactShortBoxes)}</b></td>
+              <td>假设这些 SKU 在所有 RDC 的缺货都被总仓调拨补齐</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 各RDC影响明细 -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">🏬 各 RDC 受影响情况</span></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>RDC</th><th class="num">受影响SKU数</th><th class="num">受影响缺货箱数</th><th class="num">在途箱数</th><th class="num">模拟可消化（支）</th><th>占 RDC 整体缺货比例</th></tr>
+          </thead>
+          <tbody>
+            ${rdcRows.length === 0 ? '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-secondary)">当前场景下无受影响 RDC</td></tr>' : rdcRows.map(r => {
+              const rdcAllShort = allShortage.reduce((s, d) => s + (d[r.rdc === '华北RDC' ? 'huabeiShort' : r.rdc === '西南RDC' ? 'xinanShort' : r.rdc === '东北RDC' ? 'dongbeiShort' : r.rdc === '华中RDC' ? 'huazhongShort' : r.rdc === '华南RDC' ? 'huananShort' : r.rdc === '华东RDC' ? 'huadongShort' : 'xibeiShort'] || 0), 0);
+              const pct = rdcAllShort > 0 ? (r.shortBoxes / rdcAllShort * 100).toFixed(1) : '0.0';
+              return '<tr>' +
+                '<td><strong>' + r.rdc + '</strong></td>' +
+                '<td class="num">' + r.skuCount + '</td>' +
+                '<td class="num">' + formatNum(r.shortBoxes) + '</td>' +
+                '<td class="num">' + formatNum(r.transitBoxes) + '</td>' +
+                '<td class="num"><b style="color:#10B981">+' + formatNum(r.simulatedUnits) + '</b></td>' +
+                '<td>' + pct + '%</td>' +
+                '</tr>';
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:6px 4px;font-size:11px;color:var(--text-secondary)">注：仅显示至少 1 个受影响 SKU 的 RDC；占 RDC 整体缺货比例的分母为该 RDC 在当月所有缺货 SKU 的总缺货箱数。</div>
+    </div>
+
+    <!-- 关键SKU明细 -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">🔍 关键 SKU 明细（受总仓供应影响）</span>
+        <span style="font-size:11px;color:var(--text-secondary)">点击列头排序，筛选品牌/RDC 后可导出CSV</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:12px;color:var(--text-secondary)">品牌：</span>
+        <select style="padding:4px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px" onchange="setSimDcBrand(this.value)">
+          <option value="all" ${window._simDcBrand==='all'?'selected':''}>全部品牌</option>
+          ${brandOpts.map(b => '<option value="' + b + '"' + (window._simDcBrand===b?' selected':'') + '>' + b + '</option>').join('')}
+        </select>
+        <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">RDC：</span>
+        <select style="padding:4px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px" onchange="setSimDcRdcFocus(this.value)">
+          <option value="all" ${window._simDcRdcFocus==='all'?'selected':''}>全部RDC</option>
+          ${rdcFocusOpts.map(r => '<option value="' + r + '"' + (window._simDcRdcFocus===r?' selected':'') + '>' + r + '</option>').join('')}
+        </select>
+        <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">排序：</span>
+        <select style="padding:4px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px" onchange="setSimDcSort(this.value)">
+          <option value="impact" ${window._simDcSort==='impact'?'selected':''}>按受影响缺货箱数</option>
+          <option value="rdcCount" ${window._simDcSort==='rdcCount'?'selected':''}>按涉及RDC数</option>
+          <option value="supply" ${window._simDcSort==='supply'?'selected':''}>按供应严重度</option>
+        </select>
+        <button class="btn-export" style="margin-left:auto" onclick="exportDcSupplySim()">导出CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>SKU</th><th>名称</th><th>品牌</th><th>大仓原状态</th>
+              <th class="num">涉及RDC数</th>
+              <th class="num">受影响缺货箱数</th>
+              <th class="num">模拟可消化（支）</th>
+              <th>涉及RDC</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredSkuList.length === 0 ? '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无 SKU</td></tr>' : filteredSkuList.map(s => {
+              const involvedRdc = DC_SUPPLY_RDC_KEYS.filter(r => s.rdcShort[r.name] > 0).map(r => r.short + '（' + s.rdcShort[r.name] + '箱）').join('、');
+              const simulated = Math.round(s.totalShortBoxes * specOf(s.sku));
+              const supplyBadge = (s.dcSupply || '').indexOf('缺货') >= 0
+                ? '<span class="badge" style="background:#FEE2E2;color:#B91C1C">整体缺货</span>'
+                : (s.dcSupply || '').indexOf('紧张') >= 0
+                ? '<span class="badge" style="background:#FEF3C7;color:#92400E">供应紧张</span>'
+                : (s.dcSupply || '—');
+              return '<tr>' +
+                '<td>' + s.sku + '</td>' +
+                '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (s.name||'') + '">' + (s.name||'') + '</td>' +
+                '<td>' + (s.brand||'') + '</td>' +
+                '<td>' + supplyBadge + '</td>' +
+                '<td class="num">' + s.rdcCount + '</td>' +
+                '<td class="num">' + formatNum(s.totalShortBoxes) + '</td>' +
+                '<td class="num"><b style="color:#10B981">+' + formatNum(simulated) + '</b></td>' +
+                '<td style="font-size:11px">' + involvedRdc + '</td>' +
+                '</tr>';
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:6px 4px;font-size:11px;color:var(--text-secondary)">共 ${filteredSkuList.length} 个 SKU${filteredSkuList.length !== skuList.length ? '（已筛选，原 ' + skuList.length + ' 个）' : ''}</div>
+    </div>
+
+    <!-- 结论卡 -->
+    ${impactSkuCount > 0 ? '<div class="card" style="background:#F0FDF4;border-color:#86EFAC">' +
+      '<div class="card-header" style="color:#166534"><span class="card-title">✅ 模拟结论</span></div>' +
+      '<div style="padding:6px 0;font-size:13px;line-height:1.8;color:#166534">' +
+        '<b>如果总仓解除这些 SKU 的「整体缺货 / 供应紧张」状态</b>，' + monthLabel + '订单满足率可从 <b style="color:#1E40AF">' + (currentRate*100).toFixed(2) + '%</b> 提升至 <b style="color:#10B981">' + (simulatedRate*100).toFixed(2) + '%</b>（+<b>' + rateDelta.toFixed(2) + 'pct</b>），' +
+        '相当于多消化 <b>' + formatNum(impactSimulatedUnits) + '</b> 支订单，' +
+        '主要受益 RDC：' + rdcRows.slice().sort((a,b) => b.simulatedUnits - a.simulatedUnits).slice(0, 3).map(r => r.rdc + '（+' + formatNum(r.simulatedUnits) + '支）').join('、') + '。' +
+      '</div></div>' : ''}
+  `;
+
+  page.innerHTML = html;
+
+  // 暴露明细给 CSV 导出
+  window._dcSimSkuList = filteredSkuList;
+}
+
+function exportDcSupplySim() {
+  const rows = window._dcSimSkuList || [];
+  if (rows.length === 0) { showToast('暂无数据可导出', true); return; }
+  const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
+  function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+  const rdcNames = DC_SUPPLY_RDC_KEYS.map(r => r.name);
+  const header = ['SKU','名称','品牌','大仓原状态','涉及RDC数','总缺货箱数','模拟可消化(支)','箱规'].concat(rdcNames.map(n => n + '缺货箱数'));
+  const csv = '\uFEFF' + header.join(',') + '\n';
+  rows.forEach(s => {
+    const simulated = Math.round(s.totalShortBoxes * specOf(s.sku));
+    const line = [
+      s.sku, s.name, s.brand, s.dcSupply, s.rdcCount, s.totalShortBoxes, simulated, specOf(s.sku)
+    ].concat(rdcNames.map(n => s.rdcShort[n] || 0));
+    csv += line.map(x => /[,"\n]/.test(String(x)) ? '"' + String(x).replace(/"/g, '""') + '"' : String(x)).join(',') + '\n';
+  });
+  downloadFile('总仓供应模拟_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
 
 // ============ TRANSSHIP DATA PAGE ============
@@ -7545,7 +7909,7 @@ function init() {
           <div class="menu-item" data-page="fulfillment" onclick="navigateTo('fulfillment')"><span class="icon">◈</span>订单满足率</div>
           <div class="menu-item" data-page="order-insight" onclick="navigateTo('order-insight')"><span class="icon">🔎</span>订单数据洞察</div>
           <div class="menu-item" data-page="shortage" onclick="navigateTo('shortage')"><span class="icon">⚠</span>缺货分析</div>
-          <div class="menu-item" data-page="weekend-sim" onclick="navigateTo('weekend-sim')"><span class="icon">📅</span>周末模拟</div>
+          <div class="menu-item" data-page="weekend-sim" onclick="navigateTo('weekend-sim')"><span class="icon">🎯</span>场景模拟</div>
           <div class="menu-item" data-page="transship" onclick="navigateTo('transship')"><span class="icon">📦</span>转储数据</div>
           </div>
           <div class="menu-group-header collapsed" onclick="toggleMenuGroup(this)"><span class="arrow">▼</span>🎯 预测补货优化</div>
