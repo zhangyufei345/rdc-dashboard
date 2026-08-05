@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v0.4.7 (deploy-2026-08-05) 趋势图缺数月份由0改null断开连线 -->
+<!-- RDC运营数据看板 v0.4.8 (deploy-2026-08-05) 修复转储vs出货缓存混合；新增独立transship.json数据源（上半年转储1-6月） -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -7624,9 +7624,22 @@ function init() {
       if (f.indexOf('data-') === 0) return 1;
       if (f === 'inventory.json') return 2;
       if (f === 'history.json') return 2.5;
+      if (f === 'transship.json') return 2.8;
       return 3;
     }
     function applyPreparsed(filename, j) {
+      if (filename === 'transship.json') {
+        // 转储独立数据源：追加到 dataStore.transship，按 date|material|location|inbound 去重
+        const existingTransKeys = new Set(dataStore.transship.map(d => d.dateStr + '|' + d.material + '|' + d.location + '|' + (d.inboundQty || 0)));
+        (j.transship || []).forEach(function(r) {
+          if (!r || !r.dateStr || !r.material) return;
+          const key = r.dateStr + '|' + r.material + '|' + r.location + '|' + (r.inboundQty || 0);
+          if (existingTransKeys.has(key)) return;
+          existingTransKeys.add(key);
+          dataStore.transship.push(r);
+        });
+        return;
+      }
       const wb = { __preparsed: true, SheetNames: j.sheetNames, Sheets: j.sheets };
       if (filename === 'inventory.json') parseInventoryExcel(wb);
       else if (filename === 'data.json') { window._boxSpec = (j && j.boxSpecMap) || {}; parseExcel(wb, 'replace'); }
@@ -7634,7 +7647,27 @@ function init() {
       else if (filename === 'history.json') { dataStore.history = j; }
     }
     async function bootLoad() {
-      // 1) IndexedDB 恢复（秒开首屏）
+      // 1) 先获取 manifest，以部署时间戳为版本锚点
+      let manifest = null;
+      try {
+        const mres = await fetch('./manifest.json', { cache: 'no-cache' });
+        if (mres.ok) manifest = await mres.json();
+      } catch (e) { manifest = null; }
+
+      // 自动检测新版本：清除本地旧缓存，避免新旧数据源混合导致"转储有数但出货为0"等异常
+      try {
+        if (manifest && manifest.generatedAt) {
+          const flag = sessionStorage.getItem('rdc_deploy_flag');
+          if (flag !== manifest.generatedAt) {
+            sessionStorage.setItem('rdc_deploy_flag', manifest.generatedAt);
+            try { localStorage.removeItem('rdc_manifest_hashes'); } catch (e) {}
+            await clearIDB();
+            console.log('[bootLoad] 新版本部署，已清除本地旧缓存:', manifest.generatedAt);
+          }
+        }
+      } catch (e) {}
+
+      // 2) IndexedDB 恢复（秒开首屏）
       const restored = await loadFromIDB();
       // 自动选中最新月份（在首次渲染前生效，避免先渲染"全部月份"再闪烁切换）
       if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
@@ -7650,26 +7683,7 @@ function init() {
         }
       }
 
-      // 2) manifest 变更检测：仅拉取哈希变化的文件
-      let manifest = null;
-      try {
-        const mres = await fetch('./manifest.json', { cache: 'no-cache' });
-        if (mres.ok) manifest = await mres.json();
-      } catch (e) { manifest = null; }
-
-      // 自动检测新版本并强制刷新（根治浏览器陈旧缓存：品牌归并"还是没变"、出货成本显示0等）
-      try {
-        if (manifest && manifest.generatedAt) {
-          const flag = sessionStorage.getItem('rdc_deploy_flag');
-          if (flag !== manifest.generatedAt) {
-            sessionStorage.setItem('rdc_deploy_flag', manifest.generatedAt);
-            try { localStorage.removeItem('rdc_manifest_hashes'); } catch (e) {}
-            location.search = '?v=' + encodeURIComponent(manifest.generatedAt);
-            return;
-          }
-        }
-      } catch (e) {}
-
+      // 3) manifest 变更检测：仅拉取哈希变化的文件
       if (manifest && manifest.files) {
         const stored = getStoredHashes() || {};
         let changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
@@ -7708,7 +7722,7 @@ function init() {
         }
       }
 
-      // 3) 回退：原始 xlsx 流程（全量重新解析）
+      // 4) 回退：原始 xlsx 流程（全量重新解析）
       const loaded = await autoLoadData();
       detectAllMonths();
       if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;

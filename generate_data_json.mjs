@@ -24,7 +24,7 @@ function findSources() {
   const files = fs.readdirSync(ROOT).filter(f => {
     const lower = f.toLowerCase();
     if (lower.includes('backup')) return false;
-    return /^data.*\.xlsx$/i.test(f) || /^inventory\.xlsx$/i.test(f);
+    return /^data.*\.xlsx$/i.test(f) || /^inventory\.xlsx$/i.test(f) || /^transship\.xlsx$/i.test(f);
   });
   return files.sort();
 }
@@ -57,10 +57,112 @@ function buildBoxSpecMap() {
   return map;
 }
 
+// 解析转储数据源（上半年转储.XLSX），输出与网页 dataStore.transship 同构的数组
+function parseTransship(srcPath) {
+  function normDate(v) {
+    if (!v) return null;
+    if (typeof v === 'number') {
+      const d = new Date((v - 25569) * 86400 * 1000);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (v instanceof Date) return v;
+    if (typeof v === 'string') {
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+  }
+  function fmtDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function getSafeStr(r, i) { return String((r && r[i]) || '').trim(); }
+  function getSafeNum(r, i) { const v = (r && r[i]); const n = Number(v); return isNaN(n) ? 0 : n; }
+  function rdcOf(loc) {
+    if (loc.startsWith('20')) return '东北RDC';
+    if (loc.startsWith('40')) return '华南RDC';
+    if (loc.startsWith('60')) return '西北RDC';
+    if (loc.startsWith('70')) return '华中RDC';
+    if (loc.startsWith('80')) return '西南RDC';
+    if (loc.startsWith('90')) return '华北RDC';
+    return '未知';
+  }
+  function typeOf(loc) {
+    if (loc.endsWith('23') || loc.endsWith('06')) return '免费单转储';
+    if (loc.endsWith('03')) return 'KA常规转储';
+    return '常规转储';
+  }
+
+  const wb = XLSX.read(fs.readFileSync(srcPath), { type: 'array' });
+  const list = [];
+  const seen = new Set();
+
+  // Sheet1 表头：公司/创建日期/创建者/收货库位/收货工厂/物料/短文本/PO数量/OUn/OUn/计划数量/OUn/确认数量/OUn/发货单数量/OUn/发货工厂/发货RDC/采购凭证/null/删除标记/入库数量/OUn/发货过账数量/OUn
+  const sh1 = XLSX.utils.sheet_to_json(wb.Sheets['Sheet1'], SHEET_OPTS);
+  for (let i = 1; i < sh1.length; i++) {
+    const r = sh1[i];
+    if (!r) continue;
+    const d = normDate(r[1]);
+    if (!d) continue;
+    const loc = getSafeStr(r, 3);
+    if (!loc || loc.startsWith('30')) continue;
+    const material = getSafeStr(r, 5);
+    if (!material) continue;
+    const dateStr = fmtDate(d);
+    const key = dateStr + '|' + material + '|' + loc + '|' + getSafeNum(r, 7) + '|' + getSafeNum(r, 21) + '|' + getSafeNum(r, 23);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push({
+      date: dateStr, dateStr,
+      location: loc, rdc: rdcOf(loc), factory: getSafeStr(r, 4),
+      material, materialName: getSafeStr(r, 6),
+      poQty: getSafeNum(r, 7), planQty: getSafeNum(r, 10),
+      confirmQty: getSafeNum(r, 12), invoiceQty: getSafeNum(r, 14),
+      unit: getSafeStr(r, 22), isBox: getSafeStr(r, 22) === '箱',
+      transType: typeOf(loc),
+      shipFactory: getSafeStr(r, 16),
+      inboundQty: getSafeNum(r, 21),
+      deliveryQty: getSafeNum(r, 23)
+    });
+  }
+
+  // Sheet3 表头：创建日期/创建者/收货库位/收货仓/物料/短文本/PO数量/OUn/OUn/计划数量/OUn/确认数量/OUn/发货单数量/OUn/发货工厂/发货RDC/采购凭证/删除标记/入库数量/OUn/发货过账数量/OUn
+  if (wb.SheetNames.includes('Sheet3')) {
+    const sh3 = XLSX.utils.sheet_to_json(wb.Sheets['Sheet3'], SHEET_OPTS);
+    for (let i = 1; i < sh3.length; i++) {
+      const r = sh3[i];
+      if (!r) continue;
+      const d = normDate(r[0]);
+      if (!d) continue;
+      const loc = getSafeStr(r, 2);
+      if (!loc || loc.startsWith('30')) continue;
+      const material = getSafeStr(r, 4);
+      if (!material) continue;
+      const dateStr = fmtDate(d);
+      const key = dateStr + '|' + material + '|' + loc + '|' + getSafeNum(r, 6) + '|' + getSafeNum(r, 19) + '|' + getSafeNum(r, 21);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({
+        date: dateStr, dateStr,
+        location: loc, rdc: rdcOf(loc), factory: getSafeStr(r, 3),
+        material, materialName: getSafeStr(r, 5),
+        poQty: getSafeNum(r, 6), planQty: getSafeNum(r, 9),
+        confirmQty: getSafeNum(r, 11), invoiceQty: getSafeNum(r, 13),
+        unit: getSafeStr(r, 20), isBox: getSafeStr(r, 20) === '箱',
+        transType: typeOf(loc),
+        shipFactory: getSafeStr(r, 15),
+        inboundQty: getSafeNum(r, 19),
+        deliveryQty: getSafeNum(r, 21)
+      });
+    }
+  }
+
+  return { transship: list, generatedAt: new Date().toISOString() };
+}
+
 function main() {
   const sources = findSources();
   if (sources.length === 0) {
-    console.error('未找到 data*.xlsx / inventory.xlsx，请在项目根目录运行。');
+    console.error('未找到 data*.xlsx / inventory.xlsx / transship.xlsx，请在项目根目录运行。');
     process.exit(1);
   }
 
@@ -73,6 +175,15 @@ function main() {
     const outJson = base + '.json';
 
     console.log(`→ 转换 ${src} ...`);
+
+    if (base === 'transship') {
+      const payload = parseTransship(srcPath);
+      fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
+      manifest.files[outJson] = sha256File(srcPath);
+      console.log(`   ${outJson}   rows=${payload.transship.length}`);
+      continue;
+    }
+
     const wb = XLSX.read(fs.readFileSync(srcPath), { type: 'array' });
     const sheets = {};
     wb.SheetNames.forEach(name => {
