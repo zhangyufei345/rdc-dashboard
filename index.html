@@ -4863,7 +4863,7 @@ function renderDcSupplySimTab(page, tabBar) {
     return (unblockShortage && isShortage) || (unblockTight && isTight);
   });
 
-  // 按 SKU 聚合（同一 SKU 可能在多天出现多行）
+  // 按 SKU 聚合（用于 SKU 明细表展示，保留 dcSupply 标签和按 SKU 的箱规信息）
   const skuMap = {};
   selectedRows.forEach(d => {
     const key = d.materialCode;
@@ -4885,6 +4885,41 @@ function renderDcSupplySimTab(page, tabBar) {
     it.totalShortBoxes = DC_SUPPLY_RDC_KEYS.reduce((s, r) => s + (it.rdcShort[r.name] || 0), 0);
   });
   const skuList = Object.values(skuMap);
+  // 受影响 SKU 集合（按 materialCode 汇总，与 orderDetail.skuCode 匹配）
+  const impactedSkuSet = {};
+  skuList.forEach(s => { impactedSkuSet[s.sku] = s; });
+
+  // ========== 关键修正：模拟可消化 = 订单维度首日缺货支数累计（同一订单只算一次）==========
+  // 口径：在用户选定的月份 + RDC 范围内，对受影响 SKU 的订单求 firstDayShort 累计
+  // firstDayShort = orderQty - firstDayQty，即"该订单首日未满足的支数"
+  // 如果这些 SKU 在总仓供应充足（不再是紧张/缺货），这部分首日缺货可被消化
+  const rdcImpact = {};
+  DC_SUPPLY_RDC_KEYS.forEach(r => {
+    rdcImpact[r.name] = { skuSet: new Set(), shortOrderCount: 0, firstDayShort: 0 };
+  });
+  // SKU×RDC 维度的订单首日缺货累计（用于 SKU 明细表）
+  const skuRdcFirstShort = {}; // key=sku -> { rdc -> firstDayShort合计, total }
+  paidRows.forEach(r => {
+    if (!r.skuCode || !impactedSkuSet[r.skuCode]) return;
+    if (!r.rdc || !rdcImpact[r.rdc]) return;
+    const short = (r.orderQty || 0) - (r.firstDayQty || 0);
+    if (short > 0) {
+      rdcImpact[r.rdc].skuSet.add(r.skuCode);
+      rdcImpact[r.rdc].shortOrderCount += 1;
+      rdcImpact[r.rdc].firstDayShort += short;
+      if (!skuRdcFirstShort[r.skuCode]) skuRdcFirstShort[r.skuCode] = { rdc: {}, total: 0, count: 0 };
+      skuRdcFirstShort[r.skuCode].rdc[r.rdc] = (skuRdcFirstShort[r.skuCode].rdc[r.rdc] || 0) + short;
+      skuRdcFirstShort[r.skuCode].total += short;
+      skuRdcFirstShort[r.skuCode].count += 1;
+    }
+  });
+  // 将订单维度的 firstDayShort 回写到 skuList（用于 SKU 明细表显示）
+  skuList.forEach(s => {
+    const info = skuRdcFirstShort[s.sku];
+    s.firstDayShort = info ? info.total : 0;
+    s.shortOrderCount = info ? info.count : 0;
+    s.rdcFirstShort = info ? info.rdc : {};
+  });
 
   // 当前订单整体（用于满足率计算）
   const monthRows = (dataStore.orderDetail || []).filter(d => {
@@ -4897,53 +4932,57 @@ function renderDcSupplySimTab(page, tabBar) {
   const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
   const totalFirstDay = paidRows.reduce((s, d) => s + (d.firstDayQty || 0), 0);
   const currentRate = totalOrder > 0 ? totalFirstDay / totalOrder : 0; // 日订单满足率
-
-  // 按 SKU 把「受影响缺货箱数」按箱规换算为「受影响订单支数」（用该 SKU 关联 orderQty 累计）
+  // SKU×订单支数累计（用于显示影响范围 + CSV 导出）
   const skuOrderQty = {};
   paidRows.forEach(d => {
     if (!d.skuCode) return;
     skuOrderQty[d.skuCode] = (skuOrderQty[d.skuCode] || 0) + (d.orderQty || 0);
   });
 
-  // 按 RDC 聚合受影响情况
+  // ========== 关键修正：模拟可消化 = 订单维度首日缺货支数累计（同一订单只算一次）==========
+  // 口径：在用户选定的月份 + RDC 范围内，对受影响 SKU 的订单求 firstDayShort 累计
+  // firstDayShort = orderQty - firstDayQty，即"该订单首日未满足的支数"
+  // 如果这些 SKU 在总仓供应充足（不再是紧张/缺货），这部分首日缺货可被消化
   const rdcImpact = {};
   DC_SUPPLY_RDC_KEYS.forEach(r => {
-    rdcImpact[r.name] = { skuSet: new Set(), shortBoxes: 0, transitBoxes: 0, simulatedUnits: 0 };
+    rdcImpact[r.name] = { skuSet: new Set(), shortOrderCount: 0, firstDayShort: 0 };
   });
-  skuList.forEach(s => {
-    DC_SUPPLY_RDC_KEYS.forEach(r => {
-      const boxes = s.rdcShort[r.name] || 0;
-      if (boxes > 0) {
-        rdcImpact[r.name].skuSet.add(s.sku);
-        rdcImpact[r.name].shortBoxes += boxes;
-        rdcImpact[r.name].transitBoxes += (s.rdcTransit[r.name] || 0);
-        rdcImpact[r.name].simulatedUnits += Math.round(boxes * specOf(s.sku));
-      }
-    });
+  paidRows.forEach(r => {
+    if (!r.skuCode || !impactedSkuSet[r.skuCode]) return;
+    if (!r.rdc || !rdcImpact[r.rdc]) return;
+    const short = (r.orderQty || 0) - (r.firstDayQty || 0);
+    if (short > 0) {
+      rdcImpact[r.rdc].skuSet.add(r.skuCode);
+      rdcImpact[r.rdc].shortOrderCount += 1;
+      rdcImpact[r.rdc].firstDayShort += short;
+    }
   });
   // 过滤掉 0 影响的 RDC（避免噪声），并应用用户 RDC 筛选
   const rdcRows = DC_SUPPLY_RDC_KEYS.map(r => ({
     rdc: r.name, skuCount: rdcImpact[r.name].skuSet.size,
-    shortBoxes: rdcImpact[r.name].shortBoxes, transitBoxes: rdcImpact[r.name].transitBoxes,
-    simulatedUnits: rdcImpact[r.name].simulatedUnits
-  })).filter(x => x.shortBoxes > 0 && selectedSimRdcs.indexOf(x.rdc) >= 0);
+    shortOrderCount: rdcImpact[r.name].shortOrderCount, firstDayShort: rdcImpact[r.name].firstDayShort
+  })).filter(x => x.firstDayShort > 0 && selectedSimRdcs.indexOf(x.rdc) >= 0);
 
   // 汇总受影响（用于顶部 KPI）— 仅计入用户勾选RDC的影响
   const impactSkuCount = (function() {
     const set = new Set();
     rdcRows.forEach(r => {
-      skuList.forEach(s => { if ((s.rdcShort[r.rdc] || 0) > 0) set.add(s.sku); });
+      rdcImpact[r.rdc].skuSet.forEach(sku => set.add(sku));
     });
     return set.size;
   })();
-  const impactShortBoxes = rdcRows.reduce((s, x) => s + x.shortBoxes, 0);
-  const impactSimulatedUnits = rdcRows.reduce((s, x) => s + x.simulatedUnits, 0);
+  const impactShortOrders = rdcRows.reduce((s, x) => s + x.shortOrderCount, 0);
+  const impactSimulatedUnits = rdcRows.reduce((s, x) => s + x.firstDayShort, 0);
   // 日订单满足率 + 模拟可消化 = 调整后日满足率（上限不超 100%）
   const simulatedFirstDay = Math.min(totalFirstDay + impactSimulatedUnits, totalOrder);
   const simulatedRate = totalOrder > 0 ? simulatedFirstDay / totalOrder : 0;
   const rateDelta = ((simulatedRate - currentRate) * 100);
   // 受影响 SKU 的订单支数合计（用于显示影响范围百分比）
-  const impactOrderUnitsCap = skuList.reduce((s, x) => s + (skuOrderQty[x.sku] || 0), 0);
+  const impactOrderUnitsCap = (function() {
+    let sum = 0;
+    Object.keys(impactedSkuSet).forEach(sku => { sum += (skuOrderQty[sku] || 0); });
+    return sum;
+  })();
 
   // SKU 明细筛选：品牌/RDC（仅显示当前已勾选RDC）
   const brandOpts = Array.from(new Set(skuList.map(s => s.brand || '其他'))).sort();
@@ -4951,16 +4990,16 @@ function renderDcSupplySimTab(page, tabBar) {
   // 用户之前可能选了已不在 selectedSimRdcs 内的 RDC focus，自动回退到 'all'
   if (window._simDcRdcFocus !== 'all' && rdcFocusOpts.indexOf(window._simDcRdcFocus) < 0) window._simDcRdcFocus = 'all';
   const filteredSkuList = skuList.filter(s => {
-    // 先按 selectedSimRdcs 过滤 SKU：必须至少有 1 个所选 RDC 有缺货
-    const inSelRdc = DC_SUPPLY_RDC_KEYS.some(r => selectedSimRdcs.indexOf(r.name) >= 0 && (s.rdcShort[r.name] || 0) > 0);
+    // 先按 selectedSimRdcs 过滤 SKU：必须至少有 1 个所选 RDC 有订单首日缺货
+    const inSelRdc = DC_SUPPLY_RDC_KEYS.some(r => selectedSimRdcs.indexOf(r.name) >= 0 && s.rdcFirstShort && (s.rdcFirstShort[r.name] || 0) > 0);
     if (!inSelRdc) return false;
     if (window._simDcBrand !== 'all' && s.brand !== window._simDcBrand) return false;
-    if (window._simDcRdcFocus !== 'all' && !(s.rdcShort[window._simDcRdcFocus] > 0)) return false;
+    if (window._simDcRdcFocus !== 'all' && !(s.rdcFirstShort && s.rdcFirstShort[window._simDcRdcFocus] > 0)) return false;
     return true;
   });
   // 排序
   const sortSku = (a, b) => {
-    if (window._simDcSort === 'impact') return b.totalShortBoxes - a.totalShortBoxes;
+    if (window._simDcSort === 'impact') return (b.firstDayShort || 0) - (a.firstDayShort || 0);
     if (window._simDcSort === 'rdcCount') return b.rdcCount - a.rdcCount;
     if (window._simDcSort === 'supply') {
       const rank = v => ((v || '').indexOf('缺货') >= 0 ? 0 : (v || '').indexOf('紧张') >= 0 ? 1 : 2);
@@ -5023,7 +5062,7 @@ function renderDcSupplySimTab(page, tabBar) {
           <input type="checkbox" ${onlyShortage ? 'checked' : ''} onchange="window._simDcOnlyShortage=this.checked;renderWeekendSim()" style="cursor:pointer">
           <span style="color:var(--text-secondary)">仅查看"整体缺货"</span>
         </label>
-        <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">受影响 SKU：<b style="color:#B91C1C">${impactSkuCount}</b> 个 · 缺货箱数：<b style="color:#B91C1C">${formatNum(impactShortBoxes)}</b> 箱 · 模拟可消化：<b style="color:#10B981">${formatNum(impactSimulatedUnits)}</b> 支</span>
+        <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">受影响 SKU：<b style="color:#B91C1C">${impactSkuCount}</b> 个 · 缺货订单：<b style="color:#B91C1C">${formatNum(impactShortOrders)}</b> 单 · 模拟可消化：<b style="color:#10B981">${formatNum(impactSimulatedUnits)}</b> 支</span>
       </div>
     </div>
 
@@ -5046,7 +5085,7 @@ function renderDcSupplySimTab(page, tabBar) {
           <div><span style="color:var(--text-secondary);display:inline-block;width:100px">当前首日满足</span><b style="color:#64748B">${formatNum(totalFirstDay)}</b> 支</div>
           <div style="border-top:1px dashed var(--border-light);margin:6px 0"></div>
           <div><span style="color:var(--text-secondary);display:inline-block;width:100px">受影响 SKU</span><b style="color:#B91C1C">${impactSkuCount}</b> 个（${impactOrderUnitsCap > 0 ? (impactOrderUnitsCap / totalOrder * 100).toFixed(1) : '0'}% 订单量）</div>
-          <div><span style="color:var(--text-secondary);display:inline-block;width:100px">受影响缺货</span><b style="color:#F59E0B">${formatNum(impactShortBoxes)}</b> 箱</div>
+          <div><span style="color:var(--text-secondary);display:inline-block;width:100px">受影响缺货订单</span><b style="color:#F59E0B">${formatNum(impactShortOrders)}</b> 单</div>
           <div><span style="color:var(--text-secondary);display:inline-block;width:100px">模拟可消化</span><b style="color:#10B981">${formatNum(impactSimulatedUnits)}</b> 支</div>
         </div>
       </div>
@@ -5060,18 +5099,18 @@ function renderDcSupplySimTab(page, tabBar) {
         <div class="table-wrap" style="max-height:${Math.max(220, rdcRows.length * 40)}px;overflow-y:auto">
           <table class="data-table" style="font-size:11px">
             <thead>
-              <tr><th>RDC</th><th class="num">SKU</th><th class="num">缺货(箱)</th><th class="num">在途</th><th class="num" style="color:#10B981">可消化(支)</th><th class="num">占比</th></tr>
+              <tr><th>RDC</th><th class="num">受影响SKU</th><th class="num">缺货订单数</th><th class="num" style="color:#10B981">首日缺货(支)</th><th class="num">占该RDC首日缺货比例</th></tr>
             </thead>
             <tbody>
-              ${rdcRows.length === 0 ? '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-secondary)">无受影响 RDC</td></tr>' : rdcRows.map(r => {
-                const rdcAllShort = allShortage.reduce((s, d) => s + (d[r.rdc === '华北RDC' ? 'huabeiShort' : r.rdc === '西南RDC' ? 'xinanShort' : r.rdc === '东北RDC' ? 'dongbeiShort' : r.rdc === '华中RDC' ? 'huazhongShort' : r.rdc === '华南RDC' ? 'huananShort' : r.rdc === '华东RDC' ? 'huadongShort' : 'xibeiShort'] || 0), 0);
-                const pct = rdcAllShort > 0 ? (r.shortBoxes / rdcAllShort * 100).toFixed(1) : '0.0';
+              ${rdcRows.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary)">无受影响 RDC</td></tr>' : rdcRows.map(r => {
+                // 该RDC所有非免费单首日缺货支数（用作占比分母）
+                const rdcAllFirstShort = paidRows.filter(x => x.rdc === r.rdc).reduce((s, x) => s + Math.max(0, (x.orderQty || 0) - (x.firstDayQty || 0)), 0);
+                const pct = rdcAllFirstShort > 0 ? (r.firstDayShort / rdcAllFirstShort * 100).toFixed(1) : '0.0';
                 return '<tr>' +
                   '<td><strong>' + r.rdc + '</strong></td>' +
                   '<td class="num">' + r.skuCount + '</td>' +
-                  '<td class="num">' + formatNum(r.shortBoxes) + '</td>' +
-                  '<td class="num">' + formatNum(r.transitBoxes) + '</td>' +
-                  '<td class="num"><b style="color:#10B981">' + formatNum(r.simulatedUnits) + '</b></td>' +
+                  '<td class="num">' + formatNum(r.shortOrderCount) + '</td>' +
+                  '<td class="num"><b style="color:#10B981">' + formatNum(r.firstDayShort) + '</b></td>' +
                   '<td class="num">' + pct + '%</td>' +
                   '</tr>';
               }).join('')}
@@ -5079,7 +5118,7 @@ function renderDcSupplySimTab(page, tabBar) {
           </table>
         </div>
       </div>
-      <div style="padding:6px 4px;font-size:10px;color:var(--text-secondary)">占比=该 RDC 受影响缺货箱数 / 该 RDC 所有 SKU 缺货箱数</div>
+      <div style="padding:6px 4px;font-size:10px;color:var(--text-secondary)">口径：受影响 SKU 订单的 firstDayShort 累计（同一订单只算一次）· 占比分母=该 RDC 全部非免费单首日缺货支数</div>
     </div>
 
     <!-- 关键SKU明细 -->
@@ -5113,15 +5152,14 @@ function renderDcSupplySimTab(page, tabBar) {
             <tr>
               <th>SKU</th><th>名称</th><th>品牌</th><th>大仓原状态</th>
               <th class="num">涉及RDC数</th>
-              <th class="num">受影响缺货箱数</th>
-              <th class="num">模拟可消化（支）</th>
-              <th>涉及RDC</th>
+              <th class="num">首日缺货订单数</th>
+              <th class="num">首日缺货(支)</th>
+              <th>涉及RDC（首日缺货支数）</th>
             </tr>
           </thead>
           <tbody>
             ${filteredSkuList.length === 0 ? '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无 SKU</td></tr>' : filteredSkuList.map(s => {
-              const involvedRdc = DC_SUPPLY_RDC_KEYS.filter(r => s.rdcShort[r.name] > 0).map(r => r.short + '（' + s.rdcShort[r.name] + '箱）').join('、');
-              const simulated = Math.round(s.totalShortBoxes * specOf(s.sku));
+              const involvedRdc = DC_SUPPLY_RDC_KEYS.filter(r => (s.rdcFirstShort && s.rdcFirstShort[r.name]) > 0).map(r => r.short + '（' + formatNum(s.rdcFirstShort[r.name]) + '支）').join('、') || '-';
               const supplyBadge = (s.dcSupply || '').indexOf('缺货') >= 0
                 ? '<span class="badge" style="background:#FEE2E2;color:#B91C1C">整体缺货</span>'
                 : (s.dcSupply || '').indexOf('紧张') >= 0
@@ -5132,9 +5170,9 @@ function renderDcSupplySimTab(page, tabBar) {
                 '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (s.name||'') + '">' + (s.name||'') + '</td>' +
                 '<td>' + (s.brand||'') + '</td>' +
                 '<td>' + supplyBadge + '</td>' +
-                '<td class="num">' + s.rdcCount + '</td>' +
-                '<td class="num">' + formatNum(s.totalShortBoxes) + '</td>' +
-                '<td class="num"><b style="color:#10B981">+' + formatNum(simulated) + '</b></td>' +
+                '<td class="num">' + (Object.keys(s.rdcFirstShort || {}).filter(k => s.rdcFirstShort[k] > 0).length) + '</td>' +
+                '<td class="num">' + formatNum(s.shortOrderCount || 0) + '</td>' +
+                '<td class="num"><b style="color:#10B981">' + formatNum(s.firstDayShort || 0) + '</b></td>' +
                 '<td style="font-size:11px">' + involvedRdc + '</td>' +
                 '</tr>';
             }).join('')}
@@ -5176,23 +5214,22 @@ function renderDcSupplySimTab(page, tabBar) {
         ]
       });
     }
-    // 2. 各 RDC 影响条形图
+    // 2. 各 RDC 影响条形图（订单首日缺货支数）
     var rdcImpactEl = document.getElementById('chart-dc-rdc-impact');
     var rdcLabels = rdcRows.map(function(r){return r.rdc;});
-    var rdcShortData = rdcRows.map(function(r){return r.shortBoxes;});
+    var rdcShortData = rdcRows.map(function(r){return r.firstDayShort;});
     if (rdcImpactEl && rdcLabels.length > 0) {
       var rdcChart = echarts.init(rdcImpactEl);
-      var maxVals = rdcShortData.length ? Math.max.apply(null, rdcShortData) : 1;
       rdcChart.setOption({
         tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true, textStyle: { fontSize: 11 },
-          formatter: function(params) { return '<strong>' + params[0].name + '</strong><br/>' + params[0].marker + '受影响缺货箱数：' + formatNum(params[0].value); }
+          formatter: function(params) { return '<strong>' + params[0].name + '</strong><br/>' + params[0].marker + '首日缺货（支）：' + formatNum(params[0].value) + '<br/>' + params[0].marker.replace('rgb(245, 158, 11)', '#10B981').replace('#F59E0B', '#10B981') + '模拟可消化（支）：' + formatNum(params[0].value); }
         },
         grid: { left: 70, right: 120, top: 10, bottom: 20 },
         xAxis: { type: 'value', axisLabel: { formatter: function(v) { return formatNum(v); }, fontSize: 9 }, splitLine: { lineStyle: { type: 'dashed' } } },
         yAxis: { type: 'category', data: rdcLabels, axisLabel: { fontSize: 10 }, inverse: true },
         series: [{
-          type: 'bar', barWidth: 16, data: rdcShortData.map(function(v, i) { return { value: v, itemStyle: { color: '#F59E0B', borderRadius: [0, 4, 4, 0] } }; }),
-          label: { show: true, position: 'right', formatter: function(p) { return formatNum(p.value) + '箱'; }, fontSize: 9, color: '#92400E' }
+          type: 'bar', barWidth: 16, data: rdcShortData.map(function(v, i) { return { value: v, itemStyle: { color: '#10B981', borderRadius: [0, 4, 4, 0] } }; }),
+          label: { show: true, position: 'right', formatter: function(p) { return formatNum(p.value) + '支'; }, fontSize: 9, color: '#065F46' }
         }]
       });
     }
