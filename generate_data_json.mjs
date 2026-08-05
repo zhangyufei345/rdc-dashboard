@@ -105,6 +105,7 @@ function parseTransship(srcPath) {
     if (!d) continue;
     const loc = getSafeStr(r, 3);
     if (!loc || loc.startsWith('30')) continue;
+    if (!/^\d/.test(loc) || !(loc.startsWith('20') || loc.startsWith('40') || loc.startsWith('60') || loc.startsWith('70') || loc.startsWith('80') || loc.startsWith('90'))) continue;
     const material = getSafeStr(r, 5);
     if (!material) continue;
     const dateStr = fmtDate(d);
@@ -135,6 +136,7 @@ function parseTransship(srcPath) {
       if (!d) continue;
       const loc = getSafeStr(r, 2);
       if (!loc || loc.startsWith('30')) continue;
+      if (!/^\d/.test(loc) || !(loc.startsWith('20') || loc.startsWith('40') || loc.startsWith('60') || loc.startsWith('70') || loc.startsWith('80') || loc.startsWith('90'))) continue;
       const material = getSafeStr(r, 4);
       if (!material) continue;
       const dateStr = fmtDate(d);
