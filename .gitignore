@@ -27,3 +27,6 @@ nul
 _backup/
 inventory_backup_*.xlsx
 inventory_2026_forecast.html
+
+# 临时分析脚本（不入库）
+_*.mjs

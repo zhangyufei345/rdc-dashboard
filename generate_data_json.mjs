@@ -90,6 +90,17 @@ function main() {
     totalRows = 0; // 仅用于日志，每行文件重置
   }
 
+  // 纳入孤儿预解析 json（如 data-2026-01.json：仅有 .json 而无对应 .xlsx 源的历史月）。
+  // 若不纳入，看板 bootLoad 只按 manifest.files 加载，孤儿历史月数据永不加载，导致趋势图该月空白。
+  const orphanJsonRe = /^data-\d{4}-\d{2}\.json$/;
+  fs.readdirSync(ROOT).forEach(f => {
+    if (!orphanJsonRe.test(f)) return;
+    const base = f.replace(/\.json$/, '');
+    if (fs.existsSync(path.join(ROOT, base + '.xlsx'))) return; // 有 xlsx 源已在上面正常生成
+    manifest.files[f] = sha256File(path.join(ROOT, f));
+    console.log('   孤儿预解析 ' + f + ' 已纳入 manifest（无对应 xlsx 源，确保历史月被加载）');
+  });
+
   // history.json 单独纳入 manifest：看板按 manifest 加载预解析文件，若缺 history.json
   // 则 dataStore.history 恒为 null，导致「库存金额趋势/出货成本趋势(2025 vs 2026)」及
   // 「订单满足率历史趋势」等历史图表全部空白。哈希直接取自 history.json 内容本身。
