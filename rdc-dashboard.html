@@ -4939,24 +4939,6 @@ function renderDcSupplySimTab(page, tabBar) {
     skuOrderQty[d.skuCode] = (skuOrderQty[d.skuCode] || 0) + (d.orderQty || 0);
   });
 
-  // ========== 关键修正：模拟可消化 = 订单维度首日缺货支数累计（同一订单只算一次）==========
-  // 口径：在用户选定的月份 + RDC 范围内，对受影响 SKU 的订单求 firstDayShort 累计
-  // firstDayShort = orderQty - firstDayQty，即"该订单首日未满足的支数"
-  // 如果这些 SKU 在总仓供应充足（不再是紧张/缺货），这部分首日缺货可被消化
-  const rdcImpact = {};
-  DC_SUPPLY_RDC_KEYS.forEach(r => {
-    rdcImpact[r.name] = { skuSet: new Set(), shortOrderCount: 0, firstDayShort: 0 };
-  });
-  paidRows.forEach(r => {
-    if (!r.skuCode || !impactedSkuSet[r.skuCode]) return;
-    if (!r.rdc || !rdcImpact[r.rdc]) return;
-    const short = (r.orderQty || 0) - (r.firstDayQty || 0);
-    if (short > 0) {
-      rdcImpact[r.rdc].skuSet.add(r.skuCode);
-      rdcImpact[r.rdc].shortOrderCount += 1;
-      rdcImpact[r.rdc].firstDayShort += short;
-    }
-  });
   // 过滤掉 0 影响的 RDC（避免噪声），并应用用户 RDC 筛选
   const rdcRows = DC_SUPPLY_RDC_KEYS.map(r => ({
     rdc: r.name, skuCount: rdcImpact[r.name].skuSet.size,
