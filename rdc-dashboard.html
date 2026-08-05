@@ -4911,6 +4911,8 @@ function renderDcSupplySimTab(page, tabBar) {
   });
   // 仅取非免费单（保持与原周末模拟一致口径），并按用户勾选的RDC过滤
   const paidRowsAll = monthRows.filter(r => (r.type || r.orderType) !== '免费单');
+  // 订单明细中 RDC 字段叫 warehouse，归一化给 rdc
+  paidRowsAll.forEach(r => { if (r.warehouse && !r.rdc) r.rdc = r.warehouse; });
   const paidRows = paidRowsAll.filter(r => !r.rdc || selectedSimRdcs.indexOf(r.rdc) >= 0);
   const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
   const totalFirstDay = paidRows.reduce((s, d) => s + (d.firstDayQty || 0), 0);
