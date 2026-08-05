@@ -4834,13 +4834,28 @@ function renderDcSupplySimTab(page, tabBar) {
 
   // 模拟所用月份：'auto' 跟随顶部全局；否则用用户指定
   const _globalMonths = (filters.dataMonth && filters.dataMonth !== 'all') ? [filters.dataMonth] : (window._latestMonth ? [window._latestMonth] : []);
-  // 缺货报告中实际存在的月份列表（按时间顺序）
+  // 缺货报告/订单中实际存在的月份列表（按时间顺序）
   const availableMonths = Array.from(new Set((dataStore.shortage || []).map(d => d.dateStr && d.dateStr.slice(0,7)).filter(Boolean))).sort();
-  // 如果用户选了月份且实际存在，则用它；否则用全局月份
+  // 顶部月选择的实际有数据交集（如果顶部选了 2026-08 但 shortage 没 8 月，则降级）
+  const globalMonthsWithData = _globalMonths.filter(m => availableMonths.indexOf(m) >= 0);
+  // 月份选择（auto / 用户指定 / 顶部选择 / 降级到 shortage 末月）
   const monthChoice = window._simDcMonth;
-  const rangeMonths = (monthChoice !== 'auto' && availableMonths.indexOf(monthChoice) >= 0)
-    ? [monthChoice]
-    : _globalMonths.length ? _globalMonths : (availableMonths.length ? [availableMonths[availableMonths.length - 1]] : []);
+  let rangeMonths;
+  let monthSourceLabel = '';
+  if (monthChoice !== 'auto' && availableMonths.indexOf(monthChoice) >= 0) {
+    rangeMonths = [monthChoice];
+    monthSourceLabel = monthChoice;
+  } else if (globalMonthsWithData.length) {
+    rangeMonths = globalMonthsWithData;
+    monthSourceLabel = '跟随顶部（' + rangeMonths[0] + '）';
+  } else if (_globalMonths.length) {
+    // 顶部选了某月但 shortage 没数据 → 用 shortage 的最新月份
+    rangeMonths = availableMonths.length ? [availableMonths[availableMonths.length - 1]] : [];
+    monthSourceLabel = rangeMonths.length ? ('顶部' + _globalMonths[0] + '无数据·已降级到 ' + rangeMonths[0]) : '';
+  } else {
+    rangeMonths = availableMonths.length ? [availableMonths[availableMonths.length - 1]] : [];
+    monthSourceLabel = rangeMonths.length ? ('缺货数据 ' + rangeMonths[0]) : '';
+  }
   const monthLabel = rangeMonths.length === 1 ? rangeMonths[0].split('-')[1] + '月' : '全月';
   // 用户勾选的 RDC（用于过滤订单和SKU明细的RDC维度）
   const selectedSimRdcs = Array.isArray(window._simDcRdcs) ? window._simDcRdcs : DC_SUPPLY_RDC_KEYS.map(r => r.name);
@@ -5005,7 +5020,7 @@ function renderDcSupplySimTab(page, tabBar) {
   const html = tabBar + `
     <div style="margin-bottom:16px">
       <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${monthLabel} 总仓供应对日订单满足率影响模拟</div>
-      <div style="font-size:12px;color:var(--text-secondary)">假设：选中 SKU 在总仓供应充足，其在各 RDC 的缺货可被总仓调拨消化，估算对<b>日订单满足率</b>的提升效果。</div>
+      <div style="font-size:12px;color:var(--text-secondary)">假设：选中 SKU 在总仓供应充足，其在各 RDC 的缺货可被总仓调拨消化，估算对<b>日订单满足率</b>的提升效果。${monthSourceLabel && monthSourceLabel !== ('跟随顶部（' + rangeMonths[0] + '）') ? '<span style="color:#D97706">（' + monthSourceLabel + '）</span>' : ''}</div>
     </div>
 
     <!-- 模拟场景控制区 -->
