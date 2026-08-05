@@ -2533,13 +2533,20 @@ function renderOrderInsight() {
   const shipByRdc = {}, transByRdc = {};
   compareRowsNoFree.forEach(r => {
     if (!r.rdc) return;
+    // 订单明细的 totalFulfillQty 按支统计。_oiByBox=true 时除以箱规得箱数；false 时直接是支。
     const s = window._oiByBox ? specOf(r.skuCode) : 1;
     shipByRdc[r.rdc] = (shipByRdc[r.rdc] || 0) + (r.totalFulfillQty || 0) / s;
   });
   compareTrans.forEach(r => {
     if (!r.rdc || r.rdc === '未知') return;
-    const s = window._oiByBox ? specOf(r.material) : 1;
-    const qty = r.isBox ? (r.inboundQty || 0) : ((r.inboundQty || 0) / s);
+    // 转储 inboundQty 原始单位由 r.isBox 决定：true=箱，false=支。
+    // 目标单位由 window._oiByBox 决定：true=箱，false=支。同单位直接用，跨单位乘/除箱规。
+    const s = specOf(r.material); // 始终取箱规（支/箱），缺箱规时视为1
+    const qty = (r.isBox === window._oiByBox)
+      ? (r.inboundQty || 0)
+      : (window._oiByBox
+          ? (r.inboundQty || 0) / s   // 源=支 → 目标=箱：除以箱规
+          : (r.inboundQty || 0) * s); // 源=箱 → 目标=支：乘以箱规
     transByRdc[r.rdc] = (transByRdc[r.rdc] || 0) + qty;
   });
   if (window._oiByBox) {
@@ -2573,8 +2580,14 @@ function renderOrderInsight() {
     skuAgg[k].order += (r.orderQty || 0) / s;
   });
   compareTrans.forEach(r => {
-    const s = window._oiByBox ? specOf(r.material) : 1;
-    const qty = r.isBox ? (r.inboundQty || 0) : (r.inboundQty || 0) / s;
+    // 转储 inboundQty 原始单位由 r.isBox 决定：true=箱，false=支。
+    // 目标单位由 window._oiByBox 决定：true=箱，false=支。同单位直接用，跨单位乘/除箱规。
+    const s = specOf(r.material);
+    const qty = (r.isBox === window._oiByBox)
+      ? (r.inboundQty || 0)
+      : (window._oiByBox
+          ? (r.inboundQty || 0) / s   // 源=支 → 目标=箱
+          : (r.inboundQty || 0) * s); // 源=箱 → 目标=支
     const k = r.rdc + '|' + r.material;
     if (!skuAgg[k]) skuAgg[k] = { rdc: r.rdc, sku: r.material, skuName: skuNameMap[r.material] || r.materialName || '', ship: 0, order: 0, trans: 0 };
     skuAgg[k].trans += qty;
