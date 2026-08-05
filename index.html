@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v0.4.8 (deploy-2026-08-05) 修复转储vs出货缓存混合；新增独立transship.json数据源（上半年转储1-6月） -->
+<!-- RDC运营数据看板 v2.6 (deploy-2026-08-05) 场景模拟·总仓供应模拟TAB：诊断计数器 + 明确空态提示 + v2.6-fix 标记可见 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -4813,6 +4813,11 @@ const DC_SUPPLY_RDC_KEYS = [
   { name: '西北RDC', shortKey: 'xibei', short: '西北' }
 ];
 function renderDcSupplySimTab(page, tabBar) {
+  // v2.6-fix：缺货数据为空时直接显示明确提示，避免空表困惑
+  if (!dataStore.shortage || dataStore.shortage.length === 0) {
+    page.innerHTML = tabBar + '<div class="card" style="padding:24px;text-align:center;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:12px">📭</div><div style="font-size:var(--font-size-lg);margin-bottom:8px;color:#1E293B">缺货数据未加载</div><div style="font-size:12px;line-height:1.8">本模块需要<b>缺货汇总</b> sheet 数据（含<b>大仓供应情况</b>字段）。<br/>请前往 <a href="javascript:navigateTo(\'data\')" style="color:var(--color-blue)">数据管理</a> 导入含缺货汇总的 Excel 文件，或确认数据未损坏。</div></div>';
+    return;
+  }
   // 模拟场景开关：用户可独立勾选「解除整体缺货」「解除供应紧张」
   if (typeof window._simDcUnblock === 'undefined') {
     window._simDcUnblock = { shortage: true, tight: true };
@@ -4934,11 +4939,15 @@ function renderDcSupplySimTab(page, tabBar) {
   });
   // SKU×RDC 维度的订单首日缺货累计（用于 SKU 明细表）
   const skuRdcFirstShort = {}; // key=sku -> { rdc -> firstDayShort合计, total }
+  // v2.6-fix：诊断计数器
+  let _matchTotal = 0, _shortTotal = 0;
   paidRows.forEach(r => {
     if (!r.skuCode || !impactedSkuSet[r.skuCode]) return;
+    _matchTotal++;
     if (!r.rdc || !rdcImpact[r.rdc]) return;
     const short = (r.orderQty || 0) - (r.firstDayQty || 0);
     if (short > 0) {
+      _shortTotal++;
       rdcImpact[r.rdc].skuSet.add(r.skuCode);
       rdcImpact[r.rdc].shortOrderCount += 1;
       rdcImpact[r.rdc].firstDayShort += short;
@@ -4948,6 +4957,8 @@ function renderDcSupplySimTab(page, tabBar) {
       skuRdcFirstShort[r.skuCode].count += 1;
     }
   });
+  window._simDcMatchCount = _matchTotal;
+  window._simDcShortCount = _shortTotal;
   // 将订单维度的 firstDayShort 回写到 skuList（用于 SKU 明细表显示）
   skuList.forEach(s => {
     const info = skuRdcFirstShort[s.sku];
@@ -5021,8 +5032,13 @@ function renderDcSupplySimTab(page, tabBar) {
   // ====== 渲染 ======
   const html = tabBar + `
     <div style="margin-bottom:16px">
-      <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${monthLabel} 总仓供应对日订单满足率影响模拟</div>
+      <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${monthLabel} 总仓供应对日订单满足率影响模拟 <span style="font-size:10px;color:#94A3B8;font-weight:400;margin-left:8px">v2.6-fix</span></div>
       <div style="font-size:12px;color:var(--text-secondary)">假设：选中 SKU 在总仓供应充足，其在各 RDC 的缺货可被总仓调拨消化，估算对<b>日订单满足率</b>的提升效果。${monthSourceLabel && monthSourceLabel !== ('跟随顶部（' + rangeMonths[0] + '）') ? '<span style="color:#D97706">（' + monthSourceLabel + '）</span>' : ''}</div>
+    </div>
+
+    <!-- 诊断条 v2.6-fix：显示关键计数，方便定位数据问题 -->
+    <div style="font-size:10px;color:#94A3B8;padding:4px 8px;background:#F8FAFC;border:1px dashed #CBD5E1;border-radius:4px;margin-bottom:12px;line-height:1.6">
+      🛠️ 诊断：<b>${dataStore.shortage.length}</b> 条缺货记录 · 月份 <b>${rangeMonths.join('/') || '无'}</b> · 筛选后 <b>${allShortage.length}</b> 条 · 紧张/缺货 <b>${selectedRows.length}</b> 条 · 影响 SKU <b>${skuList.length}</b> 个 · 关联订单匹配 <b>${window._simDcMatchCount !== undefined ? window._simDcMatchCount : 0}</b> 单（首日缺货 <b>${window._simDcShortCount !== undefined ? window._simDcShortCount : 0}</b> 单）
     </div>
 
     <!-- 模拟场景控制区 -->
@@ -5101,7 +5117,7 @@ function renderDcSupplySimTab(page, tabBar) {
               <tr><th>RDC</th><th class="num">受影响SKU</th><th class="num">缺货订单数</th><th class="num" style="color:#10B981">首日缺货(支)</th><th class="num">占该RDC首日缺货比例</th></tr>
             </thead>
             <tbody>
-              ${rdcRows.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary)">无受影响 RDC</td></tr>' : rdcRows.map(r => {
+              ${rdcRows.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary);line-height:1.8"><div>⚠️ 当前无受影响 RDC</div><div style="font-size:11px;margin-top:6px">' + (selectedRows.length === 0 ? '原因：缺货报告中无"整体缺货"/"供应紧张"的SKU<br/>请确认是否已导入含<b>大仓供应情况</b>字段的缺货数据' : (skuList.length > 0 ? '原因：受影响 SKU 的订单无首日缺货（首日满足=订单需求）<br/>说明这些SKU首日已被完全满足，模拟无可提升空间' : '原因：所选 SKU 在数据中无对应订单明细')) + '</div></td></tr>' : rdcRows.map(r => {
                 // 该RDC所有非免费单首日缺货支数（用作占比分母）
                 const rdcAllFirstShort = paidRows.filter(x => x.rdc === r.rdc).reduce((s, x) => s + Math.max(0, (x.orderQty || 0) - (x.firstDayQty || 0)), 0);
                 const pct = rdcAllFirstShort > 0 ? (r.firstDayShort / rdcAllFirstShort * 100).toFixed(1) : '0.0';
@@ -5157,7 +5173,7 @@ function renderDcSupplySimTab(page, tabBar) {
             </tr>
           </thead>
           <tbody>
-            ${filteredSkuList.length === 0 ? '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无 SKU</td></tr>' : filteredSkuList.map(s => {
+            ${filteredSkuList.length === 0 ? '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-secondary);line-height:1.8"><div>⚠️ 当前筛选条件下无 SKU</div><div style="font-size:11px;margin-top:6px">' + (selectedRows.length === 0 ? '原因：缺货报告中无"整体缺货/供应紧张"SKU' : (skuList.length === 0 ? '原因：所选月份无缺货数据' : '原因：受影响 SKU 在所选 RDC/月份下无首日缺货订单')) + '</div></td></tr>' : filteredSkuList.map(s => {
               const involvedRdc = DC_SUPPLY_RDC_KEYS.filter(r => (s.rdcFirstShort && s.rdcFirstShort[r.name]) > 0).map(r => r.short + '（' + formatNum(s.rdcFirstShort[r.name]) + '支）').join('、') || '-';
               const supplyBadge = (s.dcSupply || '').indexOf('缺货') >= 0
                 ? '<span class="badge" style="background:#FEE2E2;color:#B91C1C">整体缺货</span>'
