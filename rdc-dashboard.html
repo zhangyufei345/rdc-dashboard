@@ -4822,13 +4822,28 @@ function renderDcSupplySimTab(page, tabBar) {
   if (typeof window._simDcBrand === 'undefined') window._simDcBrand = 'all';
   if (typeof window._simDcRdcFocus === 'undefined') window._simDcRdcFocus = 'all';
   if (typeof window._simDcSort === 'undefined') window._simDcSort = 'impact';
+  if (typeof window._simDcMonth === 'undefined') window._simDcMonth = 'auto'; // 'auto'=跟随全局 filters.dataMonth；或具体月份 'YYYY-MM'
+  if (typeof window._simDcRdcs === 'undefined') {
+    // 默认勾选 6 大主RDC（华东已停运，默认不勾）
+    window._simDcRdcs = ['东北RDC','华北RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
+  }
 
   const unblockShortage = !!window._simDcUnblock.shortage;
   const unblockTight = !!window._simDcUnblock.tight;
   const onlyShortage = !!window._simDcOnlyShortage;
 
-  const monthLabel = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth.split('-')[1] + '月' : '全月';
-  const rangeMonths = (filters.dataMonth && filters.dataMonth !== 'all') ? [filters.dataMonth] : (window._latestMonth ? [window._latestMonth] : []);
+  // 模拟所用月份：'auto' 跟随顶部全局；否则用用户指定
+  const _globalMonths = (filters.dataMonth && filters.dataMonth !== 'all') ? [filters.dataMonth] : (window._latestMonth ? [window._latestMonth] : []);
+  // 缺货报告中实际存在的月份列表（按时间顺序）
+  const availableMonths = Array.from(new Set((dataStore.shortage || []).map(d => d.dateStr && d.dateStr.slice(0,7)).filter(Boolean))).sort();
+  // 如果用户选了月份且实际存在，则用它；否则用全局月份
+  const monthChoice = window._simDcMonth;
+  const rangeMonths = (monthChoice !== 'auto' && availableMonths.indexOf(monthChoice) >= 0)
+    ? [monthChoice]
+    : _globalMonths.length ? _globalMonths : (availableMonths.length ? [availableMonths[availableMonths.length - 1]] : []);
+  const monthLabel = rangeMonths.length === 1 ? rangeMonths[0].split('-')[1] + '月' : '全月';
+  // 用户勾选的 RDC（用于过滤订单和SKU明细的RDC维度）
+  const selectedSimRdcs = Array.isArray(window._simDcRdcs) ? window._simDcRdcs : DC_SUPPLY_RDC_KEYS.map(r => r.name);
 
   // 取缺货报告原始数据
   const allShortage = (dataStore.shortage || []).filter(d => {
@@ -4876,8 +4891,9 @@ function renderDcSupplySimTab(page, tabBar) {
     if (!rangeMonths.length) return true;
     return d.dateStr && rangeMonths.some(m => d.dateStr.startsWith(m));
   });
-  // 仅取非免费单（保持与原周末模拟一致口径）
-  const paidRows = monthRows.filter(r => (r.type || r.orderType) !== '免费单');
+  // 仅取非免费单（保持与原周末模拟一致口径），并按用户勾选的RDC过滤
+  const paidRowsAll = monthRows.filter(r => (r.type || r.orderType) !== '免费单');
+  const paidRows = paidRowsAll.filter(r => !r.rdc || selectedSimRdcs.indexOf(r.rdc) >= 0);
   const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
   const totalFirstDay = paidRows.reduce((s, d) => s + (d.firstDayQty || 0), 0);
   const currentRate = totalOrder > 0 ? totalFirstDay / totalOrder : 0; // 日订单满足率
@@ -4905,16 +4921,22 @@ function renderDcSupplySimTab(page, tabBar) {
       }
     });
   });
-  // 过滤掉 0 影响的 RDC（避免噪声），但保留华东（即使停运也展示，便于核对）
+  // 过滤掉 0 影响的 RDC（避免噪声），并应用用户 RDC 筛选
   const rdcRows = DC_SUPPLY_RDC_KEYS.map(r => ({
     rdc: r.name, skuCount: rdcImpact[r.name].skuSet.size,
     shortBoxes: rdcImpact[r.name].shortBoxes, transitBoxes: rdcImpact[r.name].transitBoxes,
     simulatedUnits: rdcImpact[r.name].simulatedUnits
-  })).filter(x => x.shortBoxes > 0);
+  })).filter(x => x.shortBoxes > 0 && selectedSimRdcs.indexOf(x.rdc) >= 0);
 
-  // 汇总受影响（用于顶部 KPI）
-  const impactSkuCount = skuList.length;
-  const impactShortBoxes = skuList.reduce((s, x) => s + x.totalShortBoxes, 0);
+  // 汇总受影响（用于顶部 KPI）— 仅计入用户勾选RDC的影响
+  const impactSkuCount = (function() {
+    const set = new Set();
+    rdcRows.forEach(r => {
+      skuList.forEach(s => { if ((s.rdcShort[r.rdc] || 0) > 0) set.add(s.sku); });
+    });
+    return set.size;
+  })();
+  const impactShortBoxes = rdcRows.reduce((s, x) => s + x.shortBoxes, 0);
   const impactSimulatedUnits = rdcRows.reduce((s, x) => s + x.simulatedUnits, 0);
   // 日订单满足率 + 模拟可消化 = 调整后日满足率（上限不超 100%）
   const simulatedFirstDay = Math.min(totalFirstDay + impactSimulatedUnits, totalOrder);
@@ -4923,10 +4945,15 @@ function renderDcSupplySimTab(page, tabBar) {
   // 受影响 SKU 的订单支数合计（用于显示影响范围百分比）
   const impactOrderUnitsCap = skuList.reduce((s, x) => s + (skuOrderQty[x.sku] || 0), 0);
 
-  // SKU 明细筛选：品牌/RDC
+  // SKU 明细筛选：品牌/RDC（仅显示当前已勾选RDC）
   const brandOpts = Array.from(new Set(skuList.map(s => s.brand || '其他'))).sort();
-  const rdcFocusOpts = DC_SUPPLY_RDC_KEYS.map(r => r.name);
+  const rdcFocusOpts = DC_SUPPLY_RDC_KEYS.filter(r => selectedSimRdcs.indexOf(r.name) >= 0).map(r => r.name);
+  // 用户之前可能选了已不在 selectedSimRdcs 内的 RDC focus，自动回退到 'all'
+  if (window._simDcRdcFocus !== 'all' && rdcFocusOpts.indexOf(window._simDcRdcFocus) < 0) window._simDcRdcFocus = 'all';
   const filteredSkuList = skuList.filter(s => {
+    // 先按 selectedSimRdcs 过滤 SKU：必须至少有 1 个所选 RDC 有缺货
+    const inSelRdc = DC_SUPPLY_RDC_KEYS.some(r => selectedSimRdcs.indexOf(r.name) >= 0 && (s.rdcShort[r.name] || 0) > 0);
+    if (!inSelRdc) return false;
     if (window._simDcBrand !== 'all' && s.brand !== window._simDcBrand) return false;
     if (window._simDcRdcFocus !== 'all' && !(s.rdcShort[window._simDcRdcFocus] > 0)) return false;
     return true;
@@ -4963,6 +4990,26 @@ function renderDcSupplySimTab(page, tabBar) {
     <!-- 模拟场景控制区 -->
     <div class="card" style="margin-bottom:12px">
       <div class="card-header"><span class="card-title">🎛️ 模拟场景</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px 18px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-light);padding-bottom:8px;margin-bottom:8px">
+        <span style="font-size:12px;color:var(--text-secondary)">订单月份：</span>
+        <select style="padding:4px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px" onchange="window._simDcMonth=this.value;renderWeekendSim()">
+          <option value="auto" ${monthChoice==='auto'?'selected':''}>跟随顶部筛选${_globalMonths.length?'（'+_globalMonths[0].split('-')[1]+'月）':''}</option>
+          ${availableMonths.map(m => '<option value="' + m + '"' + (monthChoice===m?' selected':'') + '>' + m + '</option>').join('')}
+        </select>
+        <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">RDC：</span>
+        <span style="font-size:11px;color:var(--text-secondary)">已选 <b style="color:#2563EB">${selectedSimRdcs.length}</b>/${DC_SUPPLY_RDC_KEYS.length}</span>
+        <span style="display:inline-flex;flex-wrap:wrap;gap:4px 10px;align-items:center">
+          ${DC_SUPPLY_RDC_KEYS.map(r => {
+            const checked = selectedSimRdcs.indexOf(r.name) >= 0;
+            const color = getRDCColor(r.name) || '#64748B';
+            return '<label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;white-space:nowrap">' +
+              '<input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="window._simDcRdcs=window._simDcRdcs.filter(function(x){return x!==\'' + r.name + '\'});if(this.checked)window._simDcRdcs.push(\'' + r.name + '\');renderWeekendSim()" style="cursor:pointer">' +
+              '<span style="color:' + color + ';font-weight:500">' + r.name + '</span></label>';
+          }).join('')}
+          <button class="btn-export" style="font-size:10px;padding:2px 8px" onclick="window._simDcRdcs=[];renderWeekendSim()">全不选</button>
+          <button class="btn-export" style="font-size:10px;padding:2px 8px" onclick="window._simDcRdcs=DC_SUPPLY_RDC_KEYS.map(function(r){return r.name});renderWeekendSim()">全选</button>
+        </span>
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;padding:4px 0">
         <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" ${unblockShortage ? 'checked' : ''} onchange="window._simDcUnblock.shortage=this.checked;renderWeekendSim()" style="cursor:pointer">
