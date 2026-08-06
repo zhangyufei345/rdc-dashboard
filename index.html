@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v2.6 (deploy-2026-08-05) 场景模拟·总仓供应模拟TAB：诊断计数器 + 明确空态提示 + v2.6-fix 标记可见 -->
+<!-- RDC运营数据看板 v2.7 (deploy-2026-08-06) 缺货差异维护：修复 clearIDB 后丢失 localStorage 备份的缺货原因（loadFromIDB else 分支增加 localStorage 回退） -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -532,7 +532,16 @@ async function loadFromIDB() {
           dataStore.lastUpdated = req.result.updatedAt || null;
           detectAllMonths();
           resolve(true);
-        } else { resolve(false); }
+        } else {
+          // IDB 整条记录为空（首次访问 / clearIDB 后 / 浏览器清理站点数据），
+          // 从 localStorage 恢复缺货原因（v0.4.8 引入的 clearIDB 会在每次部署后清空 IDB，
+          // 之前仅在 IDB 存在但 shortageReasons 为空时才回退 localStorage，导致部署后用户保存的原因"消失"）
+          try {
+            const lsR = localStorage.getItem('rdc_shortage_reasons');
+            if (lsR) window._shortageReasons = JSON.parse(lsR);
+          } catch(e) {}
+          resolve(false);
+        }
       };
       req.onerror = () => reject(req.error);
     });
