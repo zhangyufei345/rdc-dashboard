@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.4 (deploy-2026-08-06) history.json 不走IDB缓存：saveToIDB移除history字段 + bootLoad每次强制 fetch history.json。彻底避免IDB缓存旧7/8月数据导致KPI偏高的bug -->
+<!-- RDC运营数据看板 v3.0.5 (deploy-2026-08-06) 根因修复：日订单满足率同比板块的索引错位 bug。months 数组索引 ≠ history 数组索引。新增 monthsData 结构（label/monthNum/histIdx）统一两个索引。折线图与 KPI 卡片都用 histIdx 查 history，彻底解决"8月显示 4月数据"问题。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2152,11 +2152,15 @@ function renderFulfillmentHistoryCharts() {
     return null;
   }
 
-  // 动态月份：1-6月来自 history；2026年当月来自 orderDetail 实时聚合（提到函数顶部，KPI 块也要用）
-  const months = (window._availableMonths && window._availableMonths.length > 0)
-    ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; }).map(function(m) { return parseInt(m.split('-')[1], 10) + '月'; })
-    : ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
-  const latestIdx = months.length - 1;
+  // 动态月份：1-N 月（来自 window._availableMonths）
+  // 数据结构：[{label: '5月', monthNum: 5, histIdx: 4}, ...]
+  // 关键修复：getDailyRate 的 monthIdx 必须是"实际月份-1"（history 索引），不是 months 数组索引
+  const monthsData = (window._availableMonths && window._availableMonths.length > 0)
+    ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; })
+        .map(function(m) { const n = parseInt(m.split('-')[1], 10); return { label: n + '月', monthNum: n, histIdx: n - 1 }; })
+    : [{ label: '1月', monthNum: 1, histIdx: 0 }, { label: '2月', monthNum: 2, histIdx: 1 }, { label: '3月', monthNum: 3, histIdx: 2 }, { label: '4月', monthNum: 4, histIdx: 3 }, { label: '5月', monthNum: 5, histIdx: 4 }, { label: '6月', monthNum: 6, histIdx: 5 }];
+  const months = monthsData.map(function(d) { return d.label; });
+  const latestIdx = monthsData.length - 1;
   const latestMonthLabel = months[latestIdx] || '';
 
   // ========== 小倍数折线图：每个 RDC 一张图，2025 vs 2026 双线（日订单满足率口径）==========
@@ -2182,8 +2186,9 @@ function renderFulfillmentHistoryCharts() {
     // 每个 RDC 渲染一张折线图（日订单满足率口径）
     var yMin = 0.7, yMax = 1.0;
     RDC_LIST.forEach(function(r) {
-      var v26Arr = months.map(function(_, i) { return getDailyRate(r, '2026', i); });
-      var v25Arr = months.map(function(_, i) { return getDailyRate(r, '2025', i); });
+      // 关键修复：用 histIdx（实际月份-1）查 history，不用 months 数组索引
+      var v26Arr = monthsData.map(function(d) { return getDailyRate(r, '2026', d.histIdx); });
+      var v25Arr = monthsData.map(function(d) { return getDailyRate(r, '2025', d.histIdx); });
       // 计算同比均值（按有数据月数计算）
       var s26 = 0, c26 = 0, s25 = 0, c25 = 0;
       for (var i = 0; i < months.length; i++) { if (v26Arr[i] != null) { s26 += v26Arr[i]; c26++; } if (v25Arr[i] != null) { s25 += v25Arr[i]; c25++; } }
@@ -2247,7 +2252,8 @@ function renderFulfillmentHistoryCharts() {
 
   // KPI overview (1~最新月 同比)，与折线图 months 保持一致
   const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
-  const monthIdx = months.map(function(_, i) { return i; });
+  // 关键修复：monthIdx 用 histIdx（实际月份-1），不用 months 数组索引
+  const monthIdx = monthsData.map(function(d) { return d.histIdx; });
   const lastIdx = monthIdx[monthIdx.length - 1];
   // latestMonthLabel 已在函数顶部定义，KPI 块复用（用 lastLabel/fullLabel/lastMonthNum 派生）
   function avgOf(type, year, idxs) {
