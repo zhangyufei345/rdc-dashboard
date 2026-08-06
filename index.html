@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.5 (deploy-2026-08-06) 根因修复：日订单满足率同比板块的索引错位 bug。months 数组索引 ≠ history 数组索引。新增 monthsData 结构（label/monthNum/histIdx）统一两个索引。折线图与 KPI 卡片都用 histIdx 查 history，彻底解决"8月显示 4月数据"问题。 -->
+<!-- RDC运营数据看板 v3.0.6 (deploy-2026-08-06) v3.0.5根因修复后优化：折线图y轴下限从0.7改0（便于跨RDC比较）；KPI标题"8月月均"读起来像"月月"，改为"8月份月均"（加"份"字断开） -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2184,7 +2184,8 @@ function renderFulfillmentHistoryCharts() {
     gridContainer.innerHTML = gridHtml;
 
     // 每个 RDC 渲染一张折线图（日订单满足率口径）
-    var yMin = 0.7, yMax = 1.0;
+    // y 轴下限改为 0，让所有折线从 0% 起算，便于跨 RDC 比较
+    var yMin = 0, yMax = 1.0;
     RDC_LIST.forEach(function(r) {
       // 关键修复：用 histIdx（实际月份-1）查 history，不用 months 数组索引
       var v26Arr = monthsData.map(function(d) { return getDailyRate(r, '2026', d.histIdx); });
@@ -2284,7 +2285,8 @@ function renderFulfillmentHistoryCharts() {
   rdcList.forEach(r => monthIdx.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
   const totalCells = rdcList.length * monthIdx.length;
   const fullLabel = '1-' + latestMonthLabel;
-  const lastLabel = latestMonthLabel + '月';
+  // 用"X月份"避免"8月月均"读起来像"月月"的视觉歧义
+  const lastLabel = latestMonthLabel + '份';
   // 对比标题：2025 年同月（用月份号而非索引）
   const lastMonthNum = parseInt(String(latestMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
   // 4 列指标 + 改善/下滑计数（横向平铺，避免右侧换行拥挤）
