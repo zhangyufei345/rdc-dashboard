@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.1 (deploy-2026-08-06) 修复v3.0 ReferenceError: months 在 if(gridContainer)块内未暴露到KPI块作用域。将 months/latestIdx/latestMonthLabel 提到函数顶部 -->
+<!-- RDC运营数据看板 v3.0.2 (deploy-2026-08-06) 修复v3.0.1 ReferenceError: KPI块使用lastMonthLabel未定义；统一用顶部 latestMonthLabel -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2249,7 +2249,7 @@ function renderFulfillmentHistoryCharts() {
   const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
   const monthIdx = months.map(function(_, i) { return i; });
   const lastIdx = monthIdx[monthIdx.length - 1];
-  // lastMonthLabel 已在函数顶部定义，复用
+  // latestMonthLabel 已在函数顶部定义，KPI 块复用（用 lastLabel/fullLabel/lastMonthNum 派生）
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
     rdcList.forEach(r => { idxs.forEach(i => { const v = H[year][type][r] && H[year][type][r][i]; if (v != null) { s += v; c++; } }); });
@@ -2268,10 +2268,10 @@ function renderFulfillmentHistoryCharts() {
   let improvedD = 0, declinedD = 0;
   rdcList.forEach(r => monthIdx.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
   const totalCells = rdcList.length * monthIdx.length;
-  const fullLabel = '1-' + lastMonthLabel;
-  const lastLabel = lastMonthLabel + '月';
+  const fullLabel = '1-' + latestMonthLabel;
+  const lastLabel = latestMonthLabel + '月';
   // 对比标题：2025 年同月（用月份号而非索引）
-  const lastMonthNum = parseInt(String(lastMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
+  const lastMonthNum = parseInt(String(latestMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
   // 4 列指标 + 改善/下滑计数（横向平铺，避免右侧换行拥挤）
   const kpiCell = function(label, value, yoy, yoyColor, prevLabel, prevValue) {
     return '<div style="flex:1;padding:10px 16px;border-right:1px solid var(--border-card);min-width:0">' +
