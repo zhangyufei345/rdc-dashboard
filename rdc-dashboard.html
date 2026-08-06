@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v2.8 (deploy-2026-08-06) 弹框"订单缺口(箱)"改为显示小数箱数：<1箱保留2位小数（如0.25箱），>=1箱取整显示；同时修一处 line3857 把件数误标为箱的口径错误 -->
+<!-- RDC运营数据看板 v2.9 (deploy-2026-08-06) 弹框缺货口径修正：缺货报告维度(gap已是整箱)直接显示箱数，不再除箱规；订单维度(支数)保留小数转箱。修复 v2.8 引入的双重换算回归 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1631,9 +1631,10 @@ function renderOverview() {
           const rdc = RDC_LIST[p.value[0]];
           const rate = (p.value[2] * 100).toFixed(1) + '%';
           let html = '<strong>' + brand + ' · ' + rdc + '</strong><br/>月满足率：' + rate;
-          const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
+            const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
           if (skus.length > 0) {
-            html += buildTopShortTipTable(skus, '订单缺口', function(s, info){ if (!info.boxSpec || !s.gap) return '—'; const b = s.gap / info.boxSpec; return b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱'; }, rdc);
+            // 缺货报告维度：gap 已是整箱数，直接展示（缺货汇总各 RDC 列为箱，勿再除箱规）
+            html += buildTopShortTipTable(skus, '订单缺口(箱)', function(s, info){ return (s.gap > 0) ? s.gap + ' 箱' : '—'; }, rdc);
           } else {
             // 从orderDetail计算当月该品牌×RDC的总缺货
             const monthStr = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (filters.overviewDate ? filters.overviewDate.slice(0, 7) : '');
@@ -3854,9 +3855,8 @@ function renderBrandChannel() {
           if (skus.length > 0) {
             html += '<br/>—— TOP5 缺货SKU ——';
             skus.forEach((s, i) => {
-              const info = getSkuSupplyInfo(s.code, rdc);
-              const b = (info.boxSpec && s.gap) ? (s.gap / info.boxSpec) : 0;
-              const txt = !s.gap ? '—' : (b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱');
+              // 缺货报告维度：s.gap 已是整箱数，直接展示
+              const txt = (s.gap > 0) ? s.gap + ' 箱' : '—';
               html += '<br/>' + (i+1) + '. ' + s.name + '<br/>   订单缺口：' + txt;
             });
           } else {
