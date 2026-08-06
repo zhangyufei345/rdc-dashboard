@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0 (deploy-2026-08-06) 日订单满足率同比页面：KPI卡片硬编码H1→动态1-最新月（与折线图同步）；卡片标题、"36个"、对比月标签全部动态化；同时修 latestMonthLabel 跨函数作用域bug -->
+<!-- RDC运营数据看板 v3.0.1 (deploy-2026-08-06) 修复v3.0 ReferenceError: months 在 if(gridContainer)块内未暴露到KPI块作用域。将 months/latestIdx/latestMonthLabel 提到函数顶部 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2152,6 +2152,13 @@ function renderFulfillmentHistoryCharts() {
     return null;
   }
 
+  // 动态月份：1-6月来自 history；2026年当月来自 orderDetail 实时聚合（提到函数顶部，KPI 块也要用）
+  const months = (window._availableMonths && window._availableMonths.length > 0)
+    ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; }).map(function(m) { return parseInt(m.split('-')[1], 10) + '月'; })
+    : ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
+  const latestIdx = months.length - 1;
+  const latestMonthLabel = months[latestIdx] || '';
+
   // ========== 小倍数折线图：每个 RDC 一张图，2025 vs 2026 双线（日订单满足率口径）==========
   const gridContainer = document.getElementById('chart-fulfill-history-grid');
   if (gridContainer) {
@@ -2160,12 +2167,6 @@ function renderFulfillmentHistoryCharts() {
       window._fulHtyChartInstances.forEach(function(c) { try { c.dispose(); } catch (e) {} });
     }
     window._fulHtyChartInstances = [];
-    // 动态月份：1-6月来自 history；2026年当月来自 orderDetail 实时聚合
-    const months = (window._availableMonths && window._availableMonths.length > 0)
-      ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; }).map(function(m) { return parseInt(m.split('-')[1], 10) + '月'; })
-      : ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
-    const latestIdx = months.length - 1;
-    const latestMonthLabel = months[latestIdx] || '';
     let gridHtml = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px">' +
       '<div style="grid-column:span 3;display:flex;align-items:center;gap:16px;padding:4px 8px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#94a3b8"></span>2025 1-' + latestMonthLabel + '</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:14px;height:2px;background:#2563EB"></span>2026 1-' + latestMonthLabel + '</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;border:2px solid #2563EB;border-radius:50%;background:#FFF"></span>2026 ' + latestMonthLabel + '（实时聚合）</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#10B981;border-radius:50%"></span>同比改善</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%"></span>同比下滑</span></div>';
     RDC_LIST.forEach(function(r) {
@@ -2248,7 +2249,7 @@ function renderFulfillmentHistoryCharts() {
   const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
   const monthIdx = months.map(function(_, i) { return i; });
   const lastIdx = monthIdx[monthIdx.length - 1];
-  const lastMonthLabel = months[lastIdx] || '';
+  // lastMonthLabel 已在函数顶部定义，复用
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
     rdcList.forEach(r => { idxs.forEach(i => { const v = H[year][type][r] && H[year][type][r][i]; if (v != null) { s += v; c++; } }); });
