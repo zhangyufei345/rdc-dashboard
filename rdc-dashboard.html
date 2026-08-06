@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v2.9 (deploy-2026-08-06) 弹框缺货口径修正：缺货报告维度(gap已是整箱)直接显示箱数，不再除箱规；订单维度(支数)保留小数转箱。修复 v2.8 引入的双重换算回归 -->
+<!-- RDC运营数据看板 v3.0 (deploy-2026-08-06) 日订单满足率同比页面：KPI卡片硬编码H1→动态1-最新月（与折线图同步）；卡片标题、"36个"、对比月标签全部动态化；同时修 latestMonthLabel 跨函数作用域bug -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2107,11 +2107,16 @@ function renderFulfillmentHistory() {
   const rdc = window._fulHtyRdc;
   const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
     RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
+  // 与折线图同步 1-最新月（用于卡片标题展示）
+  const months = (window._availableMonths && window._availableMonths.length > 0)
+    ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; }).map(function(m) { return parseInt(m.split('-')[1], 10) + '月'; })
+    : ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
+  const latestMonthLabel = months[months.length - 1] || '';
   return '' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 日订单满足率同比对比（2025 vs 2026）</span>' +
       '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，1 位小数百分比，2026年当月按订单数据实时聚合</span>' +
     '</div><div id="chart-fulfill-history-grid"></div></div>' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">年度同比概览（上半年）</span>' +
+    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title" id="kpi-fulfill-history-title">年度同比概览（截至 ' + latestMonthLabel + '）</span>' +
       '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
     '</div><div id="kpi-fulfill-history"></div></div>';
 }
@@ -2239,26 +2244,33 @@ function renderFulfillmentHistoryCharts() {
     });
   }
 
-  // KPI overview (first-half YoY)
+  // KPI overview (1~最新月 同比)，与折线图 months 保持一致
   const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
-  const h1 = [0, 1, 2, 3, 4, 5];
+  const monthIdx = months.map(function(_, i) { return i; });
+  const lastIdx = monthIdx[monthIdx.length - 1];
+  const lastMonthLabel = months[lastIdx] || '';
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
     rdcList.forEach(r => { idxs.forEach(i => { const v = H[year][type][r] && H[year][type][r][i]; if (v != null) { s += v; c++; } }); });
     return c ? s / c : 0;
   }
-  const h1_26 = avgOf('monthly', '2026', h1), h1_25 = avgOf('monthly', '2025', h1);
-  const jun_26 = avgOf('monthly', '2026', [5]), jun_25 = avgOf('monthly', '2025', [5]);
-  const h1_26d = avgOf('daily', '2026', h1), h1_25d = avgOf('daily', '2025', h1);
-  const jun_26d = avgOf('daily', '2026', [5]), jun_25d = avgOf('daily', '2025', [5]);
+  // 1~最新月 累计均值（与折线图同期对齐；history 缺数据的月份自动跳过）
+  const full_26 = avgOf('monthly', '2026', monthIdx), full_25 = avgOf('monthly', '2025', monthIdx);
+  const last_26 = avgOf('monthly', '2026', [lastIdx]), last_25 = avgOf('monthly', '2025', [lastIdx]);
+  const full_26d = avgOf('daily', '2026', monthIdx), full_25d = avgOf('daily', '2025', monthIdx);
+  const last_26d = avgOf('daily', '2026', [lastIdx]), last_25d = avgOf('daily', '2025', [lastIdx]);
   function pp(cur, prev) { const d = cur - prev; return { color: d >= 0 ? 'var(--color-green)' : 'var(--color-red)', txt: (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp' }; }
-  const a1 = pp(h1_26, h1_25), a2 = pp(jun_26, jun_25);
-  const a1d = pp(h1_26d, h1_25d), a2d = pp(jun_26d, jun_25d);
+  const a1 = pp(full_26, full_25), a2 = pp(last_26, last_25);
+  const a1d = pp(full_26d, full_25d), a2d = pp(last_26d, last_25d);
   let improved = 0, declined = 0;
-  rdcList.forEach(r => h1.forEach(i => { const v26 = H['2026'].monthly[r][i], v25 = H['2025'].monthly[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improved++; else declined++; } }));
+  rdcList.forEach(r => monthIdx.forEach(i => { const v26 = H['2026'].monthly[r][i], v25 = H['2025'].monthly[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improved++; else declined++; } }));
   let improvedD = 0, declinedD = 0;
-  rdcList.forEach(r => h1.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
-  const totalCells = rdcList.length * h1.length;
+  rdcList.forEach(r => monthIdx.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
+  const totalCells = rdcList.length * monthIdx.length;
+  const fullLabel = '1-' + lastMonthLabel;
+  const lastLabel = lastMonthLabel + '月';
+  // 对比标题：2025 年同月（用月份号而非索引）
+  const lastMonthNum = parseInt(String(lastMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
   // 4 列指标 + 改善/下滑计数（横向平铺，避免右侧换行拥挤）
   const kpiCell = function(label, value, yoy, yoyColor, prevLabel, prevValue) {
     return '<div style="flex:1;padding:10px 16px;border-right:1px solid var(--border-card);min-width:0">' +
@@ -2272,14 +2284,14 @@ function renderFulfillmentHistoryCharts() {
   };
   const kpiHtml = '<div style="padding:0">' +
     '<div style="display:flex;border-bottom:1px solid var(--border-card)">' +
-      kpiCell('上半年月均满足率', (h1_26 * 100).toFixed(1), a1.txt, a1.color, '2025 H1', (h1_25 * 100).toFixed(1)) +
-      kpiCell('6月月均满足率', (jun_26 * 100).toFixed(1), a2.txt, a2.color, '2025年6月', (jun_25 * 100).toFixed(1)) +
-      kpiCell('上半年日满足率', (h1_26d * 100).toFixed(1), a1d.txt, a1d.color, '2025 H1', (h1_25d * 100).toFixed(1)) +
-      kpiCell('6月日满足率', (jun_26d * 100).toFixed(1), a2d.txt, a2d.color, '2025年6月', (jun_25d * 100).toFixed(1)).replace('border-right:1px solid', 'border-right:none') +
+      kpiCell(fullLabel + '月均满足率', (full_26 * 100).toFixed(1), a1.txt, a1.color, '2025 ' + fullLabel, (full_25 * 100).toFixed(1)) +
+      kpiCell(lastLabel + '月均满足率', (last_26 * 100).toFixed(1), a2.txt, a2.color, '2025年' + lastMonthNum + '月', (last_25 * 100).toFixed(1)) +
+      kpiCell(fullLabel + '日满足率', (full_26d * 100).toFixed(1), a1d.txt, a1d.color, '2025 ' + fullLabel, (full_25d * 100).toFixed(1)) +
+      kpiCell(lastLabel + '日满足率', (last_26d * 100).toFixed(1), a2d.txt, a2d.color, '2025年' + lastMonthNum + '月', (last_25d * 100).toFixed(1)).replace('border-right:1px solid', 'border-right:none') +
     '</div>' +
     '<div style="display:flex;padding:10px 16px;gap:24px;font-size:12px;color:var(--text-secondary)">' +
-      '<span><b style="color:var(--text-primary)">月均满足率</b> 36 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improved + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declined + ' 下滑</span></span>' +
-      '<span><b style="color:var(--text-primary)">日满足率</b> 36 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improvedD + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declinedD + ' 下滑</span></span>' +
+      '<span><b style="color:var(--text-primary)">月均满足率</b> ' + totalCells + ' 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improved + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declined + ' 下滑</span></span>' +
+      '<span><b style="color:var(--text-primary)">日满足率</b> ' + totalCells + ' 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improvedD + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declinedD + ' 下滑</span></span>' +
     '</div>' +
     '</div>';
   document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
