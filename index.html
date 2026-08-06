@@ -5911,7 +5911,7 @@ function exportTransshipCSV() {
 }
 
 // ============ SHORTAGE COMPARISON PAGE ============
-const SHORTAGE_REASONS = ['库存在KA库', '低于2/3效期', '指定效期发货', '入库时间差'];
+const SHORTAGE_REASONS = ['库存在KA库', '低于2/3效期', '指定效期发货', '入库时间差', '超销', '淘汰产品'];
 
 function buildShortageCompareData() {
   // Helper: check if dateStr is weekend (Saturday or Sunday)
@@ -6355,6 +6355,8 @@ function renderReplenishment() {
       else if (c.reason.indexOf('效期') >= 0) reasonAdvice = '调拨替代批次';
       else if (c.reason.indexOf('效期发货') >= 0) reasonAdvice = '客户沟通效期';
       else if (c.reason.indexOf('入库时间差') >= 0) reasonAdvice = '持续监控入库';
+      else if (c.reason.indexOf('超销') >= 0) reasonAdvice = '建议补货+下架评估';
+      else if (c.reason.indexOf('淘汰产品') >= 0) reasonAdvice = '建议下架/不再补货';
       else reasonAdvice = '待确认原因';
     } else {
       reasonAdvice = '待确认原因';
