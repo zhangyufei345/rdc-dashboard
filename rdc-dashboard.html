@@ -534,8 +534,9 @@ async function loadFromIDB() {
           resolve(true);
         } else {
           // IDB 整条记录为空（首次访问 / clearIDB 后 / 浏览器清理站点数据），
-          // 从 localStorage 恢复缺货原因（v0.4.8 引入的 clearIDB 会在每次部署后清空 IDB，
-          // 之前仅在 IDB 存在但 shortageReasons 为空时才回退 localStorage，导致部署后用户保存的原因"消失"）
+          // 从 localStorage 恢复缺货原因（之前修"转储vs出货"缓存时引入的 clearIDB
+          // 会在每次 manifest.generatedAt 变化时清空 IDB，loadFromIDB 仅在 IDB 存在
+          // 但 shortageReasons 为空时才回退 localStorage，导致部署后用户保存的原因"消失"）
           try {
             const lsR = localStorage.getItem('rdc_shortage_reasons');
             if (lsR) window._shortageReasons = JSON.parse(lsR);
