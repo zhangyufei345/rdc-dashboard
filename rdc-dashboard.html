@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.3 (deploy-2026-08-06) KPI avgOf 增加实时聚合回退：history.json 仅含1-6月数据，7/8月缺失时回退 liveMonthlyFulfillment（与 getDailyRate 一致） -->
+<!-- RDC运营数据看板 v3.0.4 (deploy-2026-08-06) history.json 不走IDB缓存：saveToIDB移除history字段 + bootLoad每次强制 fetch history.json。彻底避免IDB缓存旧7/8月数据导致KPI偏高的bug -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -485,7 +485,7 @@ async function saveToIDB() {
       transship: dataStore.transship,
       inventoryTurnover: dataStore.inventoryTurnover || null,
       inventory: dataStore.inventory || null,
-      history: dataStore.history || null,
+      // history 不缓存：每次从 history.json 重新加载（保证 KPI 用最新历史数据，避免 IDB 缓存旧 7/8月数据）
       shortageReasons: window._shortageReasons || {},
       replStatus: window._replStatus || {},
       boxSpecMap: window._boxSpec || {},
@@ -8239,6 +8239,8 @@ function init() {
         if (changed.includes('data.json')) {
           Object.keys(manifest.files).forEach(function(f) { if (f.indexOf('data-') === 0 && changed.indexOf(f) < 0) changed.push(f); });
         }
+        // history.json 不走 IDB 缓存：每次重新 fetch，保证 KPI 用最新历史数据（避免 IDB 缓存旧 7/8 月数据）
+        if (!changed.includes('history.json')) changed.push('history.json');
         if (restored && changed.length === 0) {
           if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
           showToast('已加载本地缓存（数据未更新）');
