@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.2 (deploy-2026-08-06) 修复v3.0.1 ReferenceError: KPI块使用lastMonthLabel未定义；统一用顶部 latestMonthLabel -->
+<!-- RDC运营数据看板 v3.0.3 (deploy-2026-08-06) KPI avgOf 增加实时聚合回退：history.json 仅含1-6月数据，7/8月缺失时回退 liveMonthlyFulfillment（与 getDailyRate 一致） -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2252,7 +2252,16 @@ function renderFulfillmentHistoryCharts() {
   // latestMonthLabel 已在函数顶部定义，KPI 块复用（用 lastLabel/fullLabel/lastMonthNum 派生）
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
-    rdcList.forEach(r => { idxs.forEach(i => { const v = H[year][type][r] && H[year][type][r][i]; if (v != null) { s += v; c++; } }); });
+    rdcList.forEach(r => { idxs.forEach(i => {
+      const v = H[year][type][r] && H[year][type][r][i];
+      if (v != null) { s += v; c++; }
+      else if (year === '2026') {
+        // history.json 仅含 1-6 月数据，缺数据的月份回退实时聚合（与 getDailyRate 一致）
+        const ym = '2026-' + String(i + 1).padStart(2, '0');
+        const live = liveMonthlyFulfillment(r, ym);
+        if (live != null) { s += live; c++; }
+      }
+    }); });
     return c ? s / c : 0;
   }
   // 1~最新月 累计均值（与折线图同期对齐；history 缺数据的月份自动跳过）
