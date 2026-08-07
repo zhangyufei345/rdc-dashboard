@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 19; // v19: 库存金额表右表解析拆分「全部/非海南花露水」两块；库存结构模块新增海南花露水下拉；库存覆盖-可用库存改为堆叠柱状图+明细表，单位：元
+const DB_VERSION = 20; // v20: 修复新模板「2026周转」sheet 解析（旧「库存周转」拆分为「2026周转」「2025周转」），恢复 1-7 月出货成本
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -743,23 +743,29 @@ function parseInventoryTurnoverSheet(shI) {
 
   const invData = { allLocation: {}, sharedLocation: {}, subLocation: {}, inventoryByRdc: {}, shipmentCost: {}, rdcOrder: [], months: ['1月','2月','3月','4月','5月','6月','7月'], formula: '' };
 
-  // 找到「出货成本统计」表头所在行（右表 I 列），其上为库存金额、其下为出货成本
-  let splitPoint = shI.length;
+  // 自动识别右表起始列：旧模板在 I 列（索引8），新模板（2026周转/2025周转）在 J 列（索引9）
+  let rightStartCol = -1;
+  let amountHeaderRow = -1;
+  let costHeaderRow = -1;
   let sharedHeaderRow = -1;
   for (let i=0;i<shI.length;i++){
     const r=shI[i]; if(!r) continue;
-    const right = r[8]!=null ? String(r[8]).trim() : '';
-    if (right.indexOf('出货成本统计')>=0) { splitPoint = i; break; }
+    for (let c=7;c<=10;c++){
+      const v = r[c]!=null ? String(r[c]).trim() : '';
+      if (v.indexOf('库存金额统计')>=0 && rightStartCol < 0) { rightStartCol = c; amountHeaderRow = i; }
+      if (v.indexOf('出货成本统计')>=0) { rightStartCol = c; costHeaderRow = i; }
+    }
+    if (r[0] && String(r[0]).indexOf('RDC共享库位库存周转天数')>=0){ sharedHeaderRow=i; }
   }
-  for (let i=0;i<shI.length;i++){
-    const r=shI[i]; if(!r) continue;
-    if (r[0] && String(r[0]).indexOf('RDC共享库位库存周转天数')>=0){ sharedHeaderRow=i; break; }
-  }
+  // 若未识别到右表，默认按旧模板 I 列处理
+  if (rightStartCol < 0) rightStartCol = 8;
+  // 出货成本统计之后的行才是出货成本；之前的行（含库存金额）为库存金额
+  let splitPoint = costHeaderRow >= 0 ? costHeaderRow : shI.length;
 
   for (let i=0;i<shI.length;i++){
     const r=shI[i]; if(!r) continue;
     const left = r[0]!=null ? String(r[0]).trim() : '';
-    const right = r[8]!=null ? String(r[8]).trim() : '';
+    const right = r[rightStartCol]!=null ? String(r[rightStartCol]).trim() : '';
 
     // 左表：周转天数（B-G 列）
     if (left === 'RDC（全库位）') invData.totalAllLocation = rowVals(r,1,7);
@@ -774,18 +780,24 @@ function parseInventoryTurnoverSheet(shI) {
       if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,7); }
     }
 
-    // 右表：库存金额（出货成本统计之前）/ 出货成本（之后），I 列标签为 RDC 简称
+    // 右表：库存金额（出货成本统计之前）/ 出货成本（之后）
     if (right && ALL_RDC_NAMES.indexOf(right)>=0){
       const mapKey = right === '总仓' ? '总仓' : RDC_FULL[RDC_SHORT.indexOf(right)];
-      if (i < splitPoint) invData.inventoryByRdc[mapKey] = rowVals(r,9,15);
+      const vals = rowVals(r, rightStartCol+1, rightStartCol+7);
+      if (i < splitPoint) invData.inventoryByRdc[mapKey] = vals;
       else {
-        invData.shipmentCost[mapKey] = rowVals(r,9,15);
-        if (right==='总仓') invData.shipmentCost['总部'] = rowVals(r,9,15);
+        invData.shipmentCost[mapKey] = vals;
+        if (right==='总仓') invData.shipmentCost['总部'] = vals;
       }
     }
   }
 
-  for (let i=0;i<shI.length;i++){ const r=shI[i]; if(r && r[8] && String(r[8]).indexOf('周转天数=')>=0){ invData.formula=String(r[8]); break; } }
+  for (let i=0;i<shI.length;i++){
+    const r=shI[i];
+    if(r && r[rightStartCol] && String(r[rightStartCol]).indexOf('周转天数=')>=0){ invData.formula=String(r[rightStartCol]); break; }
+    // 旧模板公式可能在 I 列，兜底扫描
+    if(r && r[8] && String(r[8]).indexOf('周转天数=')>=0){ invData.formula=String(r[8]); break; }
+  }
   if (invData.rdcOrder.length===0) invData.rdcOrder = ['东北RDC','华北RDC','华南RDC','华中RDC','西南RDC','西北RDC'];
   return invData;
 }
