@@ -9118,22 +9118,6 @@ function renderInventoryStructure() {
         '<tr style="background:#F1F5F9;font-weight:600"><td>合计</td>' +
         covLabels.map((l, idx) => '<td class="num">' + fmtYuan(covTableRows.reduce((s, r) => s + r.vals[idx], 0)) + '</td>').join('') +
         '<td class="num">' + fmtYuan(covGrandTotal) + '</td></tr>') +
-      '</tbody></table></div></div>' +
-      // 订单满足率（新表）
-      '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 订单满足率（2-5月）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">数据源：库存覆盖表</span></div>' +
-      '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>RDC</th><th>指标</th><th style="text-align:right">2月</th><th style="text-align:right">3月</th><th style="text-align:right">4月</th><th style="text-align:right">5月</th></tr></thead><tbody>' +
-      (covRdcs.length === 0 ? '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无库存覆盖表数据</td></tr>' :
-        covRdcs.map(rdc => {
-          const fl = coverageNew[rdc].fulfill || {};
-          function rowOf(label, fmt) {
-            const d = fl[label] || {};
-            return '<tr><td>' + rdc + '</td><td>' + label + '</td>' + ['2月','3月','4月','5月'].map(m => {
-              const v = d[m];
-              return '<td class="num">' + (v == null ? '-' : fmt(v)) + '</td>';
-            }).join('') + '</tr>';
-          }
-          return rowOf('月订单满足率', v => (v*100).toFixed(1) + '%') + rowOf('日订单满足率', v => (v*100).toFixed(1) + '%');
-        }).join('')) +
       '</tbody></table></div></div>';
 
     // 4状态堆叠柱状图
