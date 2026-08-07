@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 18; // v18: 7月库存分析模版——库存金额表(金额趋势4透视块+库存结构分析4状态)、库存覆盖表(覆盖月数+订单满足率)解析；库存周转页金额改新表+状态下拉；库存结构页重构为4状态堆叠柱状图
+const DB_VERSION = 19; // v19: 库存金额表右表解析拆分「全部/非海南花露水」两块；库存结构模块新增海南花露水下拉；库存覆盖-可用库存改为堆叠柱状图+明细表，单位：元
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8554,7 +8554,8 @@ function parseInventoryExcel(rawData) {
     // ===== 7月新模板：库存金额 sheet（左表=金额趋势 4透视块；右表=库存结构分析 4种状态） =====
     const amountArr = findByName('库存金额');
     const amountTrendBlocks = []; // [{hainan,status,rdcs,byYear:{year:{month:{rdc:金额元}}}}]
-    const structureByYear = {};   // {year:{month:{rdc名|'合计':{orange,red,yellow,safe}}}}
+    const structureByYear = {};   // {year:{month:{rdc名|'合计':{orange,red,yellow,safe}}}} — 全部
+    const structureByYearNoHainan = {}; // 同上 — 不含海南花露水（库存金额表右表第二块）
     if (amountArr) {
       // ---- 左表：金额趋势透视块（按 是否海南花露水 × 状态 组合，共4块） ----
       for (let i = 0; i < amountArr.length; i++) {
@@ -8602,28 +8603,38 @@ function parseInventoryExcel(rawData) {
       }
 
       // ---- 右表：库存结构分析（4种状态 × 年/月/RDC） ----
-      // r[12]=行标签(年/月/RDC名), r[13]=橙, r[14]=红, r[15]=黄, r[16]=非风险
-      let curYear = null, curMonth = null;
+      // r[12]=行标签(年/月/RDC名/是否海南花露水), r[13]=橙/是否值, r[14]=红, r[15]=黄, r[16]=非风险
+      // 右表分为两块：第一块=全部；第二块由「是否海南花露水=否」开头=不含海南花露水
+      let curYear = null, curMonth = null, hainanMode = 'all';
       for (let i = 0; i < amountArr.length; i++) {
         const r = amountArr[i] || [];
         const label = String(r[12] || '').trim();
+        // 检测第二块起点：右表「是否海南花露水」标签在 col12，值在 col13
+        if (label === '是否海南花露水') {
+          const v = String(r[13] || '').trim();
+          if (v === '否') { hainanMode = 'no'; curYear = null; curMonth = null; }
+          else if (v === '是') { hainanMode = 'yes'; curYear = null; curMonth = null; }
+          continue;
+        }
+        const target = hainanMode === 'no' ? structureByYearNoHainan : structureByYear;
         const yMatch = label.match(/^(\d{4})年$/);
         if (yMatch) { curYear = parseInt(yMatch[1], 10); curMonth = null; continue; }
         if (!curYear) continue;
         const mMatch = label.match(/^(\d+)月$/);
         if (mMatch) {
           curMonth = parseInt(mMatch[1], 10);
-          if (!structureByYear[curYear]) structureByYear[curYear] = {};
-          if (!structureByYear[curYear][curMonth]) structureByYear[curYear][curMonth] = {};
-          structureByYear[curYear][curMonth]['合计'] = {
+          if (!target[curYear]) target[curYear] = {};
+          if (!target[curYear][curMonth]) target[curYear][curMonth] = {};
+          target[curYear][curMonth]['合计'] = {
             orange: getSN(r, 13), red: getSN(r, 14), yellow: getSN(r, 15), safe: getSN(r, 16)
           };
           continue;
         }
         if (!curMonth || !label) continue;
         // RDC 行（东北仓/华北仓/...）
-        if (!structureByYear[curYear][curMonth]) structureByYear[curYear][curMonth] = {};
-        structureByYear[curYear][curMonth][label] = {
+        if (!target[curYear]) target[curYear] = {};
+        if (!target[curYear][curMonth]) target[curYear][curMonth] = {};
+        target[curYear][curMonth][label] = {
           orange: getSN(r, 13), red: getSN(r, 14), yellow: getSN(r, 15), safe: getSN(r, 16)
         };
       }
@@ -8658,7 +8669,7 @@ function parseInventoryExcel(rawData) {
     dataStore.inventory = {
       summary, rdcStatus, status5, status6, cov5, cov6, rdcCoverage, expiry6,
       hainanHistoryStatus, productMaster, pullbackByRdcMonth,
-      amountTrendBlocks, structureByYear, coverageNew,
+      amountTrendBlocks, structureByYear, structureByYearNoHainan, coverageNew,
       pullbackRaw: pullbackArr || [],  // 原始行化数据，供拉回分析 TAB 使用
       _rawSheets: rawSheets,  // 原始 sheet 行数组，供拉回分析 hnMap 构建
       loadedAt: new Date().toISOString()
@@ -8949,15 +8960,18 @@ function renderInventoryStructure() {
   // 全局错误边界：渲染失败时显示错误而非白屏
   try {
     const inv = dataStore.inventory;
-    const structure = inv.structureByYear;   // {year:{month:{rdc|'合计':{orange,red,yellow,safe}}}}
-    const coverageNew = inv.coverageNew;     // {RDC:{status,coverage,fulfill}}
-    if (!structure || !structure['2026']) {
+    const structureAll = inv.structureByYear || {};            // 全部（含海南花露水）
+    const structureNo = inv.structureByYearNoHainan || {};     // 不含海南花露水
+    const coverageNew = inv.coverageNew || {};                 // {RDC:{status,coverage,fulfill}}
+    if (!structureAll || !structureAll['2026']) {
       page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📊</div><div>未找到「库存金额」表中的库存结构分析数据</div><div style="font-size:12px;margin-top:8px">请确认已导入含「库存金额」Sheet 的最新库存分析模版</div></div>';
       return;
     }
 
-    // RDC 筛选（7 RDC 含华东）
+    // 筛选器：海南花露水 + RDC
+    window._invHainan = window._invHainan || 'all';
     window._isRdc = window._isRdc || 'all';
+    const hainanFilter = window._invHainan;
     const rdcFilter = window._isRdc;
     const allRdcs = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
     const MONTHS = [1,2,3,4,5,6];
@@ -8969,6 +8983,35 @@ function renderInventoryStructure() {
       { key: 'safe',   name: '非风险库存', sub: '计划可用库存', color: '#10B981' }
     ];
     const rdcKey = rdcFilter === 'all' ? null : rdcFilter.replace('RDC', '仓');
+
+    // 根据海南花露水下拉得到有效库存结构数据
+    function diffStruct(a, b) {
+      return {
+        orange: Math.max(0, (a.orange || 0) - (b.orange || 0)),
+        red:    Math.max(0, (a.red    || 0) - (b.red    || 0)),
+        yellow: Math.max(0, (a.yellow || 0) - (b.yellow || 0)),
+        safe:   Math.max(0, (a.safe   || 0) - (b.safe   || 0))
+      };
+    }
+    function getEffectiveStructure() {
+      if (hainanFilter === 'all') return structureAll;
+      if (hainanFilter === 'no') return structureNo;
+      // 'yes' = 全部 - 非海南花露水
+      const res = {};
+      Object.keys(structureAll).forEach(year => {
+        res[year] = {};
+        Object.keys(structureAll[year]).forEach(month => {
+          res[year][month] = {};
+          Object.keys(structureAll[year][month]).forEach(rdc => {
+            const a = structureAll[year][month][rdc] || { orange:0, red:0, yellow:0, safe:0 };
+            const n = (structureNo[year] && structureNo[year][month] && structureNo[year][month][rdc]) || { orange:0, red:0, yellow:0, safe:0 };
+            res[year][month][rdc] = diffStruct(a, n);
+          });
+        });
+      });
+      return res;
+    }
+    const structure = getEffectiveStructure();
 
     // 取某月（按 RDC 筛选）4状态金额（元）
     function monthCell(m) {
@@ -8995,40 +9038,61 @@ function renderInventoryStructure() {
     // 6月各状态占比（用于 KPI 副标题）
     function pctOf(v) { return latestSum > 0 ? (v / latestSum * 100).toFixed(1) + '%' : '0%'; }
     function fmtWan(v) { return (v / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' 万'; }
+    function fmtYuan(v) { return (v != null ? Math.round(v).toLocaleString() : '-') + ' 元'; }
 
-    // 覆盖数据：按 RDC 汇总（6月）
-    const covRdcs = Object.keys(coverageNew || {});
+    // 库存覆盖数据
+    const covRdcs = Object.keys(coverageNew);
     const covLabels = ['≤1个月','1~2个月','2~3个月','3~4个月','4~5个月','5~6个月','大于6个月','无需求','非卖品','促销装','新品期'];
+    const covColors = ['#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE','#1D4ED8','#1E3A8A','#9CA3AF','#6B7280','#F59E0B','#10B981'];
     // 兼容 0~1个月 变体
-    function normCovLabel(l) { return l === '0~1个月' ? '≤1个月' : l; }
+    function covKey(cov, l) { return cov[l] ? l : (l === '≤1个月' && cov['0~1个月'] ? '0~1个月' : null); }
 
-    // RDC 下拉
+    // 筛选栏：海南花露水 + RDC
+    const hainanOptions = '<option value="all"' + (hainanFilter==='all'?' selected':'') + '>全部</option>' +
+      '<option value="yes"' + (hainanFilter==='yes'?' selected':'') + '>仅海南花露水</option>' +
+      '<option value="no"' + (hainanFilter==='no'?' selected':'') + '>不含海南花露水</option>';
     const rdcOptions = '<option value="all"' + (rdcFilter==='all'?' selected':'') + '>全部RDC</option>' +
       allRdcs.map(r => '<option value="' + r + '"' + (rdcFilter===r?' selected':'') + '>' + r + '</option>').join('');
-    const rdcFilterBar = '<div class="filter-bar" style="margin-bottom:12px"><span style="font-size:12px;color:var(--text-secondary);margin-right:8px">RDC：</span>' +
-      '<select onchange="window._isRdc=this.value;renderInventoryStructure()" style="padding:4px 10px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px">' + rdcOptions + '</select>' +
-      '<span style="font-size:11px;color:var(--text-secondary);margin-left:12px">库存结构分析数据源：库存金额表「库存结构分析」（4种状态）· 金额单位：万元</span></div>';
+    const filterBar = '<div class="filter-bar" style="margin-bottom:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">' +
+      '<div><span style="font-size:12px;color:var(--text-secondary);margin-right:8px">海南花露水：</span>' +
+      '<select onchange="window._invHainan=this.value;renderInventoryStructure()" style="padding:4px 10px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px">' + hainanOptions + '</select></div>' +
+      '<div><span style="font-size:12px;color:var(--text-secondary);margin-right:8px">RDC：</span>' +
+      '<select onchange="window._isRdc=this.value;renderInventoryStructure()" style="padding:4px 10px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px">' + rdcOptions + '</select></div>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">库存结构数据源：库存金额表「库存结构分析」· 金额单位：万元</span></div>';
+
+    // 库存覆盖按当前 RDC 筛选聚合（6月，元）
+    const covDisplayRdcs = rdcFilter === 'all' ? allRdcs : [rdcFilter];
+    const covTableRows = covDisplayRdcs.map(rdc => {
+      const cov = (coverageNew[rdc] && coverageNew[rdc].coverage) || {};
+      const vals = covLabels.map(l => {
+        const key = covKey(cov, l);
+        return key ? (cov[key]['6月'] || 0) : 0;
+      });
+      const rowTotal = vals.reduce((s, v) => s + v, 0);
+      return { rdc, vals, total: rowTotal };
+    });
+    const covGrandTotal = covTableRows.reduce((s, r) => s + r.total, 0);
 
     page.innerHTML =
-      rdcFilterBar +
+      filterBar +
       // KPI：4 状态
       '<div class="kpi-row" style="margin-bottom:16px">' +
       STATUS_META.map(s => {
         const bg = s.color + '18';
         return '<div class="kpi-card" style="background:' + bg + ';border-color:' + s.color + '55"><div class="kpi-label" style="color:#1E293B">' + s.name + '（' + s.sub + '）</div>' +
           '<div class="kpi-value" style="color:' + s.color + '">' + fmtWan(latest[s.key]) + '<span class="kpi-unit" style="color:' + s.color + '">万</span></div>' +
-          '<div style="font-size:11px;color:var(--text-secondary)">6月占比 ' + pctOf(latest[s.key]) + ' · ' + (rdcFilter === 'all' ? '全部RDC' : rdcFilter) + '</div></div>';
+          '<div style="font-size:11px;color:var(--text-secondary)">6月占比 ' + pctOf(latest[s.key]) + ' · ' + (rdcFilter === 'all' ? '全部RDC' : rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</div></div>';
       }).join('') +
       '<div class="kpi-card" style="background:#F1F5F9"><div class="kpi-label">全部库存合计（6月）</div><div class="kpi-value">' + fmtWan(latestSum) + '<span class="kpi-unit">万</span></div>' +
-      '<div style="font-size:11px;color:var(--text-secondary)">4种状态之和 · ' + (rdcFilter === 'all' ? '全部RDC' : rdcFilter) + '</div></div>' +
+      '<div style="font-size:11px;color:var(--text-secondary)">4种状态之和 · ' + (rdcFilter === 'all' ? '全部RDC' : rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</div></div>' +
       '</div>' +
-      // 堆叠柱状图
+      // 4状态堆叠柱状图
       '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">📊 库存结构分析（2026年1-6月 · 4种状态堆叠）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · 单位：万元</span></div>' +
+      '<div class="card-header"><span class="card-title">📊 库存结构分析（2026年1-6月 · 4种状态堆叠）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：万元</span></div>' +
       '<div class="chart-container" style="height:320px" id="chart-is-stacked"></div>' +
       '</div>' +
       // 4状态月度明细表
-      '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存结构月度明细（万元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + '</span></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存结构月度明细（万元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr><th>库存状态</th>' + monthLabels.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">6月占比</th></tr></thead><tbody>' +
       STATUS_META.map(s => {
         return '<tr><td><span style="color:' + s.color + ';font-weight:600">●</span> ' + s.name + '<br/><span style="font-size:10px;color:var(--text-secondary)">' + s.sub + '</span></td>' +
@@ -9039,19 +9103,21 @@ function renderInventoryStructure() {
       MONTHS.map((m, idx) => { const t = totals[idx]; const s = t ? t.orange+t.red+t.yellow+t.safe : 0; return '<td class="num">' + (s ? (s/10000).toFixed(1) : '-') + '</td>'; }).join('') +
       '<td class="num">100%</td></tr>' +
       '</tbody></table></div></div>' +
-      // 库存覆盖（新表）
-      '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📦 库存覆盖-可用库存（' + monthLabels[4] + '，万元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">数据源：库存覆盖表 · 库存状态区块已停用（以库存金额表为准）</span></div>' +
-      '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>RDC</th>' + covLabels.map(l => '<th style="text-align:right">' + l + '</th>').join('') + '</tr></thead><tbody>' +
-      (covRdcs.length === 0 ? '<tr><td colspan="' + (covLabels.length+1) + '" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无库存覆盖表数据</td></tr>' :
-        covRdcs.map(rdc => {
-          const cov = coverageNew[rdc].coverage || {};
-          return '<tr><td>' + rdc + '</td>' + covLabels.map(l => {
-            // 兼容「≤1个月」与「0~1个月」标签变体
-            const key = cov[l] ? l : (l === '≤1个月' && cov['0~1个月'] ? '0~1个月' : null);
-            const v = key ? cov[key]['6月'] : null;
-            return '<td class="num">' + (v != null ? (v/10000).toFixed(1) : '-') + '</td>';
-          }).join('') + '</tr>';
-        }).join('')) +
+      // 库存覆盖-可用库存：堆叠柱状图（元）
+      '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">📦 库存覆盖-可用库存（2026年6月 · 按RDC堆叠）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · 数据源：库存覆盖表 · 单位：元</span></div>' +
+      '<div class="chart-container" style="height:360px" id="chart-cov-stacked"></div>' +
+      '</div>' +
+      // 库存覆盖-可用库存：明细表（元）
+      '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存覆盖-可用库存明细（6月 · 元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + '</span></div>' +
+      '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>RDC</th>' + covLabels.map(l => '<th style="text-align:right">' + l + '</th>').join('') + '<th style="text-align:right">合计</th></tr></thead><tbody>' +
+      (covRdcs.length === 0 ? '<tr><td colspan="' + (covLabels.length+2) + '" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无库存覆盖表数据</td></tr>' :
+        covTableRows.map(row => {
+          return '<tr><td>' + row.rdc + '</td>' + row.vals.map(v => '<td class="num">' + fmtYuan(v) + '</td>').join('') + '<td class="num" style="font-weight:600">' + fmtYuan(row.total) + '</td></tr>';
+        }).join('') +
+        '<tr style="background:#F1F5F9;font-weight:600"><td>合计</td>' +
+        covLabels.map((l, idx) => '<td class="num">' + fmtYuan(covTableRows.reduce((s, r) => s + r.vals[idx], 0)) + '</td>').join('') +
+        '<td class="num">' + fmtYuan(covGrandTotal) + '</td></tr>') +
       '</tbody></table></div></div>' +
       // 订单满足率（新表）
       '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 订单满足率（2-5月）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">数据源：库存覆盖表</span></div>' +
@@ -9070,7 +9136,7 @@ function renderInventoryStructure() {
         }).join('')) +
       '</tbody></table></div></div>';
 
-    // 堆叠柱状图
+    // 4状态堆叠柱状图
     const stackedEl = document.getElementById('chart-is-stacked');
     if (stackedEl) {
       const c = initChart('chart-is-stacked');
@@ -9092,6 +9158,38 @@ function renderInventoryStructure() {
           name: s.name, type: 'bar', stack: 'total',
           data: MONTHS.map((m, idx) => { const t = totals[idx]; return t ? Math.round(t[s.key] / 10000) : null; }),
           color: s.color,
+          itemStyle: { borderRadius: 0 },
+          emphasis: { focus: 'series' }
+        }))
+      });
+    }
+
+    // 库存覆盖堆叠柱状图（元）
+    const covChartEl = document.getElementById('chart-cov-stacked');
+    if (covChartEl) {
+      const c2 = initChart('chart-cov-stacked');
+      c2.setOption({
+        tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
+          formatter: function(params) {
+            let h = '<strong>' + params[0].axisValue + '</strong>';
+            let sum = 0;
+            params.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
+            h += '<br/><strong style="color:#1E293B">合计：' + Math.round(sum).toLocaleString() + ' 元</strong>';
+            return h;
+          }
+        },
+        legend: { data: covLabels, top: 0, left: 'center', textStyle: { fontSize: 10 }, type: 'scroll' },
+        grid: { left: 70, right: 30, top: 50, bottom: 30 },
+        xAxis: { type: 'category', data: covDisplayRdcs, axisLabel: { fontSize: 11 } },
+        yAxis: { type: 'value', name: '元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : v } },
+        series: covLabels.map((l, idx) => ({
+          name: l, type: 'bar', stack: 'cov',
+          data: covDisplayRdcs.map(rdc => {
+            const cov = (coverageNew[rdc] && coverageNew[rdc].coverage) || {};
+            const key = covKey(cov, l);
+            return key ? (cov[key]['6月'] || 0) : 0;
+          }),
+          color: covColors[idx],
           itemStyle: { borderRadius: 0 },
           emphasis: { focus: 'series' }
         }))
