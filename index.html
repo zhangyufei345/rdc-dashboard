@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 28; // v28: 库存覆盖图RDC切换改为点击色块/RDC名（去掉checkbox）；全选/全取消合并为一个toggle按钮
+const DB_VERSION = 29; // v29: 库存覆盖图加点击下钻到SKU明细页（drillRdcPeriodCovDetail）；tooltip 提示可下钻
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9255,7 +9255,7 @@ function renderInventoryStructure() {
       c2.setOption({
         tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
           formatter: function(params) {
-            let h = '<strong>' + params[0].axisValue + '</strong>';
+            let h = '<strong>' + params[0].axisValue + '</strong> <span style="color:#9aa7b4;font-size:10px">(点击下钻SKU)</span>';
             let sum = 0;
             params.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
             h += '<br/><strong style="color:#1E293B">合计：' + Math.round(sum).toLocaleString() + ' 元</strong>';
@@ -9274,9 +9274,15 @@ function renderInventoryStructure() {
             return key ? (cov[key]['6月'] || 0) : 0;
           }),
           color: rdcColors[idx % rdcColors.length],
+          cursor: 'pointer',
           itemStyle: { borderRadius: 0 },
           emphasis: { focus: 'series' }
         }))
+      });
+      // 点击柱状段下钻到 SKU 明细页（RDC × 周期）
+      c2.on('click', function(p) {
+        if (!p || !p.seriesName || p.value == null) return;
+        drillRdcPeriodCovDetail(p.seriesName, p.name);
       });
     }
   } catch (e) {
@@ -9317,6 +9323,19 @@ function drillRdcCovDetail(rdc) {
   if (h === 'no') data = data.filter(d => d.isHainan !== true);
   window._invCoverageDetailTitle = rdc + ' 覆盖明细（共' + data.length + '条）';
   window._invCoverageDetailData = data.slice().sort((a,b) => (b.inventoryAmt || 0) - (a.inventoryAmt || 0));
+  navigateTo('inventory-coverage-detail');
+}
+
+// 库存覆盖图点击下钻：RDC + 周期 → SKU 明细
+function drillRdcPeriodCovDetail(rdc, periodLabel) {
+  // 兼容 "0~1个月" 与 "≤1个月"
+  let data = (dataStore.inventory.cov6 || []).filter(d => d.rdc === rdc && (d.coverageLevel === periodLabel || (periodLabel === '≤1个月' && d.coverageLevel === '0~1个月')));
+  const h = window._invHainan || 'all';
+  if (h === 'yes') data = data.filter(d => d.isHainan === true);
+  if (h === 'no') data = data.filter(d => d.isHainan !== true);
+  window._invCoverageDetailTitle = rdc + ' · ' + periodLabel + ' 明细（共' + data.length + '条）';
+  window._invCoverageDetailData = data.slice().sort((a,b) => (b.inventoryAmt || 0) - (a.inventoryAmt || 0));
+  if (data.length === 0) { showToast(rdc + ' · ' + periodLabel + ' 暂无SKU明细'); return; }
   navigateTo('inventory-coverage-detail');
 }
 
