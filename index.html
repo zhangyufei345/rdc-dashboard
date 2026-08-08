@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 32; // v32: 单维度时直接隐藏对比卡（不再显示"筛选范围"提示卡）
+const DB_VERSION = 33; // v33: 删除「库存覆盖-可用库存明细（6月·元）」表格（点击下钻已能看SKU明细，重复）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9196,18 +9196,7 @@ function renderInventoryStructure() {
       '</div>') : '') +
       '</div>' +
       '<div class="chart-container" style="height:360px" id="chart-cov-stacked"></div>' +
-      '</div>' +
-      // 库存覆盖-可用库存：明细表（元）
-      '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存覆盖-可用库存明细（6月 · 元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</span></div>' +
-      '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>RDC</th>' + covLabels.map(l => '<th style="text-align:right">' + l + '</th>').join('') + '<th style="text-align:right">合计</th></tr></thead><tbody>' +
-      (covRdcs.length === 0 ? '<tr><td colspan="' + (covLabels.length+2) + '" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无库存覆盖表数据</td></tr>' :
-        covTableRows.map(row => {
-          return '<tr><td>' + row.rdc + '</td>' + row.vals.map(v => '<td class="num">' + fmtYuan(v) + '</td>').join('') + '<td class="num" style="font-weight:600">' + fmtYuan(row.total) + '</td></tr>';
-        }).join('') +
-        '<tr style="background:#F1F5F9;font-weight:600"><td>合计</td>' +
-        covLabels.map((l, idx) => '<td class="num">' + fmtYuan(covTableRows.reduce((s, r) => s + r.vals[idx], 0)) + '</td>').join('') +
-        '<td class="num">' + fmtYuan(covGrandTotal) + '</td></tr>') +
-      '</tbody></table></div></div>';
+      '</div>';
 
     // 4状态堆叠柱状图
     const stackedEl = document.getElementById('chart-is-stacked');
