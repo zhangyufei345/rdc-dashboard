@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 36; // v36: 修复"万万"单位bug(fmtWan去单位)；KPI改环比(%大字号+红绿配色)；库存覆盖card-header拆分两行避免图例截断；风险SKU变动加CSV导出
+const DB_VERSION = 37; // v37: 4状态堆叠图y轴max自动收紧（向上取整到1000倍数+5%空间），避免柱顶留白过多
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9310,7 +9310,7 @@ function renderInventoryStructure() {
         grid: { left: 70, right: 70, top: 40, bottom: 30 },
         xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 11 } },
         yAxis: [
-          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.ceil(latestSum / 1000) * 1000 * 1.05 },
           { type: 'value', name: '风险占比%', nameTextStyle: { fontSize: 10, color: '#DC2626' }, axisLabel: { fontSize: 10, color: '#DC2626', formatter: '{value}%' }, min: 0, max: 70, splitLine: { show: false } }
         ],
         series: STATUS_META.map(s => ({
