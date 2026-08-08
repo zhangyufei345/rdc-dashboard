@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 23; // v23: 库存覆盖图RDC图例改为HTML checkbox + 全选/全取消按钮；按勾选动态过滤series和明细表
+const DB_VERSION = 24; // v24: 删除「库存变化根因分析」TAB；年末库存预测页加 2026 7月实际数据点对比
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6938,24 +6938,18 @@ function renderInventoryTurnover() {
   if (!page) return;
   if (typeof window._invTab === 'undefined') window._invTab = 'turnover';
 
-  // TAB 切换：库存周转分析 / 库存变化根因分析 / 年末库存预测
+  // TAB 切换：库存周转分析 / 年末库存预测（根因分析TAB已停用 v23）
   if (typeof window._invTab === 'undefined') window._invTab = 'turnover';
   const _tab = window._invTab;
   const isForecast = (_tab === 'forecast');
-  const isRootCause = (_tab === 'rootCause');
   const tabStyle = (active) => active ? 'background:var(--color-blue);color:#fff;' : '';
   const tabBar = '<div style="display:flex;gap:8px;margin-bottom:16px">' +
-    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + tabStyle(!isForecast && !isRootCause) + '" onclick="window._invTab=\'turnover\';renderInventoryTurnover()">📊 库存周转分析</button>' +
-    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + tabStyle(isRootCause) + '" onclick="window._invTab=\'rootCause\';renderInventoryTurnover()">🔍 库存变化根因分析</button>' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + tabStyle(!isForecast) + '" onclick="window._invTab=\'turnover\';renderInventoryTurnover()">📊 库存周转分析</button>' +
     '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + tabStyle(isForecast) + '" onclick="window._invTab=\'forecast\';renderInventoryTurnover()">🔮 年末库存预测</button>' +
     '</div>';
 
   if (isForecast) {
     renderInventoryForecast(page, tabBar);
-    return;
-  }
-  if (isRootCause) {
-    renderInventoryRootCause(page, tabBar);
     return;
   }
 
@@ -7395,6 +7389,25 @@ function renderInventoryForecast(page, tabBar) {
   const nationalYiH2 = rdcOnlyH2.map(v => (v + twYuan) / 1e8);
   const nat26Demand = nat26A.concat(rdcOnlyYiH2);
 
+  // === 5b. 2026 7月实际库存金额（亿元，6RDC 汇总）—— 与预测同口径对比 ===
+  // 数据源：2026 周转 sheet 的 inventoryByRdc（千元 → 元 → 亿元）；东北RDC 7 月缺数据
+  function sumRdc6JulActual() {
+    const invTurn = dataStore.inventoryTurnover;
+    if (!invTurn || !invTurn.inventoryByRdc) return null;
+    let s = 0, any = false;
+    rdc6.forEach(r => {
+      const key = Object.keys(invTurn.inventoryByRdc).find(k => k.indexOf(r) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
+      if (!key) return;
+      const arr = invTurn.inventoryByRdc[key];
+      const v = arr && arr[6]; // i=6 = 7月
+      if (v) { s += v; any = true; }
+    });
+    return any ? s / 100000 : null; // 千元 → 亿元（除以 1e5）
+  }
+  const nat26A7 = sumRdc6JulActual();
+  // 7 月实际折线：12 个月份索引，前 6 个月 null，7 月=nat26A7，8-12 月 null
+  const nat26A7Series = months.map((_, i) => i === 6 ? nat26A7 : null);
+
   // === 7. 各地点年末推演 (亿元) —— 只含 6 RDC；总仓/全国合计作为信息脚注 ===
   const proj = [];
   rdc6.forEach(r => {
@@ -7483,7 +7496,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">6RDC 库存金额月度走势（单位：亿元）</span></div>' +
       '<div class="chart-container" id="chart-forecast" style="height:420px"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，参数可调 ⬆ 面板）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，参数可调 ⬆ 面板）；<span style="color:#10B981;font-weight:600">🟢 绿色实心点=2026 7月实际（与预测同口径 6RDC 汇总）</span>。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
@@ -7507,14 +7520,17 @@ function renderInventoryForecast(page, tabBar) {
   const chart = initChart('chart-forecast');
   chart.setOption({
     tooltip:{trigger:'axis'},
-    legend:{data:['2025 7RDC 实际','2026 实际+渐进入市'],top:0},
+    legend:{data:['2025 7RDC 实际','2026 实际+渐进入市','2026 7月实际'],top:0},
     grid:{left:60,right:24,top:50,bottom:40},
     xAxis:{type:'category',data:months},
     yAxis:{type:'value',name:'亿元',min:0,max:1.2},
     series:[
       {name:'2025 7RDC 实际',type:'line',data:nat25,lineStyle:{type:'dashed',color:'#9aa7b4'},itemStyle:{color:'#9aa7b4'},symbol:'circle'},
       {name:'2026 实际+渐进入市',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'},
-        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}}
+        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}},
+      // 2026 7月实际：仅 7 月一个绿色实心点（6RDC 汇总，亿元）
+      {name:'2026 7月实际',type:'scatter',data:nat26A7Series,symbol:'circle',symbolSize:14,itemStyle:{color:'#10B981',borderColor:'#065F46',borderWidth:2},z:20,
+        label:{show:true,position:'top',fontSize:11,color:'#065F46',fontWeight:'bold',formatter:function(p){return p.value == null ? '' : '实际 ' + p.value.toFixed(2) + ' 亿';}}}
     ]
   });
 
