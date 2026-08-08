@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 27; // v27: 用户确认 2026周转sheet库存金额右表只有 1-6月（表头 6个日期）；回退所有库存金额7月fallback（amountAt/年度对比图/年末预测），出货成本7月数据保留
+const DB_VERSION = 28; // v28: 库存覆盖图RDC切换改为点击色块/RDC名（去掉checkbox）；全选/全取消合并为一个toggle按钮
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9086,6 +9086,12 @@ function renderInventoryStructure() {
       window._covSelectedRdcs = checked ? ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'].slice() : [];
       renderInventoryStructure();
     };
+    // toggle 版本：当前是全选就全取消，否则全选
+    window._covToggleAll = function() {
+      const all = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
+      window._covSelectedRdcs = (window._covSelectedRdcs && window._covSelectedRdcs.length === all.length) ? [] : all.slice();
+      renderInventoryStructure();
+    };
 
     // 库存覆盖数据
     const covRdcs = Object.keys(coverageNew);
@@ -9159,16 +9165,20 @@ function renderInventoryStructure() {
       // 库存覆盖-可用库存：堆叠柱状图（元）
       '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📦 库存覆盖-可用库存（2026年6月 · 按RDC堆叠）</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · 单位：元</span>' +
-      // RDC 勾选控件：仅在顶部 RDC=全部 时启用
+      // RDC 切换控件：仅在顶部 RDC=全部 时启用；点击色块/RDC名 整体切换显示
       (rdcFilter === 'all' ? ('<div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px">' +
-        '<span style="color:#6B7280">请勾选RDC：</span>' +
-        '<button onclick="window._covSelectAll(true)" style="padding:3px 10px;font-size:11px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF;cursor:pointer">全选</button>' +
-        '<button onclick="window._covSelectAll(false)" style="padding:3px 10px;font-size:11px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF;cursor:pointer">全取消</button>' +
+        '<span style="color:#6B7280">点击色块切换RDC显示：</span>' +
+        '<button onclick="window._covToggleAll()" style="padding:3px 10px;font-size:11px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF;cursor:pointer">' +
+        (window._covSelectedRdcs.length === allRdcs.length ? '全取消' : '全选') +
+        '</button>' +
         rdcColors.map((c, i) => {
           const name = allRdcs[i];
           if (!name) return '';
-          const checked = window._covSelectedRdcs.indexOf(name) >= 0 ? 'checked' : '';
-          return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;white-space:nowrap"><input type="checkbox" data-rdc="' + name + '" ' + checked + ' onchange="window._covToggle(this.dataset.rdc, this.checked)" style="margin:0"><span style="display:inline-block;width:10px;height:10px;background:' + c + ';border-radius:2px"></span>' + name + '</label>';
+          const on = window._covSelectedRdcs.indexOf(name) >= 0;
+          const labelStyle = on
+            ? 'opacity:1;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px'
+            : 'opacity:0.35;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px;text-decoration:line-through';
+          return '<span data-rdc="' + name + '" onclick="window._covToggle(\'' + name + '\', ' + !on + ')" style="' + labelStyle + '"><span style="display:inline-block;width:12px;height:12px;background:' + c + ';border-radius:2px"></span>' + name + '</span>';
         }).join('') +
       '</div>') : '') +
       '</div>' +
