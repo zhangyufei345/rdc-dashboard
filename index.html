@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 41; // v41: 删除库存周转分析页两个KPI卡（RDC 6月总库存(千元)、RDC 7月总出货成本(千元)）；保留其他4个周转相关KPI
+const DB_VERSION = 42; // v42: 删除库存规模年度对比区块（KPI卡+两个图表，整块不再展示）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8006,33 +8006,9 @@ function getHainanAdjustedAmount(year, rdc, monthIdx) {
   return hainanFilter === 'yes' ? hainanAmt : Math.max(0, baseAll - hainanAmt);
 }
 
-// 库存规模年度对比卡片（HTML 部分）
+// 库存规模年度对比卡片（HTML 部分）- v42 已删除（KPI+图表整块不再展示）
 function renderInventoryTurnoverHistory() {
-  if (!dataStore.history || !dataStore.history.inventory) return '';
-  const rdcSel = getInvRdcSelection();
-  const rdcLabel = rdcSel.isAll ? '全部RDC' : (rdcSel.selected.length > 3 ? rdcSel.selected.length + '个RDC' : rdcSel.selected.join('、'));
-  const hainanSel = window._invHainan || 'all';
-  const statusSel = window._invStatus || 'all';
-  const hainanDropdown = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">海南花露水：</label>' +
-    '<select onchange="window._invHainan=this.value;renderInventoryTurnover()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
-      '<option value="all" ' + (hainanSel==='all'?'selected':'') + '>全部</option>' +
-      '<option value="yes" ' + (hainanSel==='yes'?'selected':'') + '>仅海南花露水</option>' +
-      '<option value="no" ' + (hainanSel==='no'?'selected':'') + '>不含海南花露水</option>' +
-    '</select>';
-  const statusDropdown = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px;margin-left:10px">状态：</label>' +
-    '<select onchange="window._invStatus=this.value;renderInventoryTurnover()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
-      '<option value="all" ' + (statusSel==='all'?'selected':'') + '>全部状态</option>' +
-      '<option value="非风险库存" ' + (statusSel==='非风险库存'?'selected':'') + '>仅非风险库存</option>' +
-    '</select>';
-  return '' +
-    '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
-      '<div class="card-header"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 7大RDC口径（不含总仓）· 数据源：库存金额表</span></div>' +
-      '<div id="kpi-inv-history"></div>' +
-      '<div class="row-2" style="margin-top:8px">' +
-        '<div class="card" style="background:var(--bg-card)"><div class="card-header" style="display:flex;align-items:center"><span class="card-title">库存金额趋势（2025 vs 2026）</span><div style="margin-left:auto;display:flex;align-items:center">' + hainanDropdown + statusDropdown + '</div></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
-        '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">出货成本趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-ship"></div></div>' +
-      '</div>' +
-    '</div>';
+  return '';
 }
 
 // 库存规模年度对比卡片（图表 + KPI 渲染），随 RDC 下拉联动
