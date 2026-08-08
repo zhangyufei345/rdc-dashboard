@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 30; // v30: 库存覆盖-可用库存图数据源改为SKU级聚合（6月库存覆盖数据），支持海南花露水筛选；补「零库存」分类；图+明细表+下钻口径统一
+const DB_VERSION = 31; // v31: 库存覆盖图tooltip RDC按金额降序；下钻明细页单个RDC/单个品牌时隐藏维度对比图（避免无意义单柱）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9268,8 +9268,10 @@ function renderInventoryStructure() {
         tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
           formatter: function(params) {
             let h = '<strong>' + params[0].axisValue + '</strong> <span style="color:#9aa7b4;font-size:10px">(点击下钻SKU)</span>';
+            // 按金额降序排序
+            const sorted = params.slice().sort((a, b) => (b.value || 0) - (a.value || 0));
             let sum = 0;
-            params.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
+            sorted.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
             h += '<br/><strong style="color:#1E293B">合计：' + Math.round(sum).toLocaleString() + ' 元</strong>';
             return h;
           }
@@ -9416,10 +9418,24 @@ function renderInventoryCoverageDetail() {
   const rdcData = Object.entries(rdcAmt).sort((a,b) => b[1] - a[1]).map(([k,v]) => ({name: k, value: Math.round(v)}));
   const brandData = Object.entries(brandAmt).sort((a,b) => b[1] - a[1]).map(([k,v]) => ({name: k, value: Math.round(v)}));
 
-  // 图形分析
-  html += '<div class="row-2" style="margin-bottom:16px">';
-  html += '<div class="card"><div class="card-header"><span class="card-title">RDC维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-rdc"></div></div>';
-  html += '<div class="card"><div class="card-header"><span class="card-title">品牌维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-brand"></div></div>';
+  // 图形分析：RDC 维度仅当 ≥2 个 RDC 时显示（单个 RDC 无意义）
+  const showRdcChart = rdcData.length >= 2;
+  const showBrandChart = brandData.length >= 2;
+  if (showRdcChart && showBrandChart) {
+    html += '<div class="row-2" style="margin-bottom:16px">';
+  } else {
+    html += '<div class="row-2" style="margin-bottom:16px">';
+  }
+  if (showRdcChart) {
+    html += '<div class="card"><div class="card-header"><span class="card-title">RDC维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-rdc"></div></div>';
+  } else {
+    html += '<div class="card"><div class="card-header"><span class="card-title">筛选范围</span></div><div style="padding:12px;font-size:13px;color:var(--text-secondary)">已限定到单一 RDC（' + rdcData[0].name + '），不展示 RDC 维度对比</div></div>';
+  }
+  if (showBrandChart) {
+    html += '<div class="card"><div class="card-header"><span class="card-title">品牌维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-brand"></div></div>';
+  } else {
+    html += '<div class="card"><div class="card-header"><span class="card-title">筛选范围</span></div><div style="padding:12px;font-size:13px;color:var(--text-secondary)">仅 ' + brandData[0].name + ' 一个品牌，无维度对比</div></div>';
+  }
   html += '</div>';
 
   html += '<div class="card"><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">金额</th><th class="num">6月</th><th class="num">7月</th><th class="num">8月</th><th class="num">9月</th><th class="num">10月</th><th class="num">11月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
@@ -9433,25 +9449,33 @@ function renderInventoryCoverageDetail() {
 
   page.innerHTML = html;
 
-  // 渲染图表
-  const rdcChart = echarts.init(document.getElementById('chart-inv-cov-rdc'));
-  rdcChart.setOption({
-    tooltip: { trigger: 'axis', formatter: p => p[0].name + '<br/>金额：¥' + (p[0].value/1000).toFixed(1) + '千元' },
-    grid: { left: 70, right: 20, top: 10, bottom: 20 },
-    xAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { type: 'dashed' } } },
-    yAxis: { type: 'category', data: rdcData.map(d => d.name).reverse(), axisLabel: { fontSize: 10 } },
-    series: [{ type: 'bar', data: rdcData.map(d => d.value).reverse(), itemStyle: { color: '#3B82F6' }, label: { show: true, position: 'right', formatter: p => (p.value/1000).toFixed(1) + 'k' } }]
-  });
-  const brandChart = echarts.init(document.getElementById('chart-inv-cov-brand'));
-  brandChart.setOption({
-    tooltip: { trigger: 'axis', formatter: p => p[0].name + '<br/>金额：¥' + (p[0].value/1000).toFixed(1) + '千元' },
-    grid: { left: 70, right: 20, top: 10, bottom: 20 },
-    xAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { type: 'dashed' } } },
-    yAxis: { type: 'category', data: brandData.map(d => d.name).reverse(), axisLabel: { fontSize: 10 } },
-    series: [{ type: 'bar', data: brandData.map(d => d.value).reverse(), itemStyle: { color: '#10B981' }, label: { show: true, position: 'right', formatter: p => (p.value/1000).toFixed(1) + 'k' } }]
-  });
-  window._chartInstances = window._chartInstances || [];
-  window._chartInstances.push(rdcChart, brandChart);
+  // 渲染图表（仅当对应容器存在时）
+  const rdcEl = document.getElementById('chart-inv-cov-rdc');
+  if (rdcEl) {
+    const rdcChart = echarts.init(rdcEl);
+    rdcChart.setOption({
+      tooltip: { trigger: 'axis', formatter: p => p[0].name + '<br/>金额：¥' + (p[0].value/1000).toFixed(1) + '千元' },
+      grid: { left: 70, right: 20, top: 10, bottom: 20 },
+      xAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { type: 'dashed' } } },
+      yAxis: { type: 'category', data: rdcData.map(d => d.name).reverse(), axisLabel: { fontSize: 10 } },
+      series: [{ type: 'bar', data: rdcData.map(d => d.value).reverse(), itemStyle: { color: '#3B82F6' }, label: { show: true, position: 'right', formatter: p => (p.value/1000).toFixed(1) + 'k' } }]
+    });
+    window._chartInstances = window._chartInstances || [];
+    window._chartInstances.push(rdcChart);
+  }
+  const brandEl = document.getElementById('chart-inv-cov-brand');
+  if (brandEl) {
+    const brandChart = echarts.init(brandEl);
+    brandChart.setOption({
+      tooltip: { trigger: 'axis', formatter: p => p[0].name + '<br/>金额：¥' + (p[0].value/1000).toFixed(1) + '千元' },
+      grid: { left: 70, right: 20, top: 10, bottom: 20 },
+      xAxis: { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { type: 'dashed' } } },
+      yAxis: { type: 'category', data: brandData.map(d => d.name).reverse(), axisLabel: { fontSize: 10 } },
+      series: [{ type: 'bar', data: brandData.map(d => d.value).reverse(), itemStyle: { color: '#10B981' }, label: { show: true, position: 'right', formatter: p => (p.value/1000).toFixed(1) + 'k' } }]
+    });
+    window._chartInstances = window._chartInstances || [];
+    window._chartInstances.push(brandChart);
+  }
 }
 
 // 导出库存覆盖明细CSV
