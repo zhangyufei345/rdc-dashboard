@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 42; // v42: 删除库存规模年度对比区块（KPI卡+两个图表，整块不再展示）
+const DB_VERSION = 43; // v43: 柱状图顶部留更多空间（max余量 1.05→1.25）；三个图表/表格宽度max-width:75%（3/4）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9203,11 +9203,11 @@ function renderInventoryStructure() {
       // 4状态堆叠柱状图
       '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">📊 库存结构分析（2026年1-6月 · 4种状态堆叠）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：万元</span></div>' +
-      '<div class="chart-container" style="height:320px" id="chart-is-stacked"></div>' +
+      '<div class="chart-container" style="height:320px;max-width:75%;min-width:480px" id="chart-is-stacked"></div>' +
       '</div>' +
       // 4状态月度明细表
       '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存结构月度明细（万元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</span></div>' +
-      '<div class="table-wrap"><table class="data-table" style="table-layout:fixed;width:100%"><colgroup>' +
+      '<div class="table-wrap" style="max-width:75%"><table class="data-table" style="table-layout:fixed;width:100%"><colgroup>' +
       '<col style="width:24%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:16%"></colgroup>' +
       '<thead><tr><th>库存状态</th>' + monthLabels.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">6月占比</th></tr></thead><tbody>' +
       STATUS_META.map(s => {
@@ -9240,7 +9240,7 @@ function renderInventoryStructure() {
         }).join('') +
       '</div>') : '') +
       '</div>' +
-      '<div class="chart-container" style="height:360px" id="chart-cov-stacked"></div>' +
+      '<div class="chart-container" style="height:360px;max-width:75%;min-width:480px" id="chart-cov-stacked"></div>' +
       '</div>' +
       // 风险库存 SKU 变动（5月→6月）
       '<div class="card" style="margin-bottom:16px">' +
@@ -9286,7 +9286,7 @@ function renderInventoryStructure() {
         grid: { left: 70, right: 70, top: 40, bottom: 30 },
         xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 11 } },
         yAxis: [
-          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.ceil(latestSum / 10000 / 1000) * 1000 * 1.05 },
+          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.ceil(latestSum / 10000 / 1000) * 1000 * 1.25 },
           { type: 'value', name: '风险占比%', nameTextStyle: { fontSize: 10, color: '#DC2626' }, axisLabel: { fontSize: 10, color: '#DC2626', formatter: '{value}%' }, min: 0, max: 70, splitLine: { show: false } }
         ],
         series: STATUS_META.map(s => ({
