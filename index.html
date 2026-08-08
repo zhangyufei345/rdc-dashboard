@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 39; // v39: 撤销v38宽度改动，三个图表/表格恢复全宽
+const DB_VERSION = 40; // v40: 修v37柱子消失bug（y轴max单位是元series是万元，多/10000对齐）；月度明细表加table-layout:fixed+colgroup分配列宽，避免横向滚动条
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9233,7 +9233,9 @@ function renderInventoryStructure() {
       '</div>' +
       // 4状态月度明细表
       '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存结构月度明细（万元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</span></div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th>库存状态</th>' + monthLabels.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">6月占比</th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="data-table" style="table-layout:fixed;width:100%"><colgroup>' +
+      '<col style="width:24%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:16%"></colgroup>' +
+      '<thead><tr><th>库存状态</th>' + monthLabels.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">6月占比</th></tr></thead><tbody>' +
       STATUS_META.map(s => {
         return '<tr><td><span style="color:' + s.color + ';font-weight:600">●</span> ' + s.name + '<br/><span style="font-size:10px;color:var(--text-secondary)">' + s.sub + '</span></td>' +
           MONTHS.map((m, idx) => { const t = totals[idx]; return '<td class="num">' + (t ? (t[s.key]/10000).toFixed(1) : '-') + '</td>'; }).join('') +
@@ -9310,7 +9312,7 @@ function renderInventoryStructure() {
         grid: { left: 70, right: 70, top: 40, bottom: 30 },
         xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 11 } },
         yAxis: [
-          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.ceil(latestSum / 1000) * 1000 * 1.05 },
+          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.ceil(latestSum / 10000 / 1000) * 1000 * 1.05 },
           { type: 'value', name: '风险占比%', nameTextStyle: { fontSize: 10, color: '#DC2626' }, axisLabel: { fontSize: 10, color: '#DC2626', formatter: '{value}%' }, min: 0, max: 70, splitLine: { show: false } }
         ],
         series: STATUS_META.map(s => ({
