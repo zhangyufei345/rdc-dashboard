@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 43; // v43: 柱状图顶部留更多空间（max余量 1.05→1.25）；三个图表/表格宽度max-width:75%（3/4）
+const DB_VERSION = 44; // v44: 修v43y轴max bug——只用6月合计算max导致1-5月高月份(2月10293万)柱子被截断；改用1-6月合计最大值×1.25，保证所有月份柱子完整
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9285,8 +9285,9 @@ function renderInventoryStructure() {
         legend: { data: STATUS_META.map(s => s.name).concat(['风险库存占比']), top: 0, left: 'center', textStyle: { fontSize: 11 } },
         grid: { left: 70, right: 70, top: 40, bottom: 30 },
         xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 11 } },
+        // y轴 max 取 1-6月 4状态合计的最大值（含 25% 顶部留白），保证所有月份柱子完整显示
         yAxis: [
-          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.ceil(latestSum / 10000 / 1000) * 1000 * 1.25 },
+          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.max.apply(null, MONTHS.map((_, i) => { const t = totals[i]; return t ? (t.orange + t.red + t.yellow + t.safe) / 10000 : 0; })) * 1.25 },
           { type: 'value', name: '风险占比%', nameTextStyle: { fontSize: 10, color: '#DC2626' }, axisLabel: { fontSize: 10, color: '#DC2626', formatter: '{value}%' }, min: 0, max: 70, splitLine: { show: false } }
         ],
         series: STATUS_META.map(s => ({
