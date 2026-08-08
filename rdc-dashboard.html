@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 40; // v40: 修v37柱子消失bug（y轴max单位是元series是万元，多/10000对齐）；月度明细表加table-layout:fixed+colgroup分配列宽，避免横向滚动条
+const DB_VERSION = 41; // v41: 删除库存周转分析页两个KPI卡（RDC 6月总库存(千元)、RDC 7月总出货成本(千元)）；保留其他4个周转相关KPI
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -7072,8 +7072,6 @@ function renderInventoryTurnover() {
     '<div class="kpi-row">' +
     '<div class="kpi-card blue"><div class="kpi-label">RDC ' + months[latestIdx] + '全库位周转</div><div class="kpi-value">' + totalAllTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalAllTurnover, totalAllTurnoverPrev) + '</div></div>' +
     '<div class="kpi-card green"><div class="kpi-label">RDC ' + months[latestIdx] + '共享库周转</div><div class="kpi-value">' + totalShared + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(totalShared, totalSharedPrev) + '</div></div>' +
-    '<div class="kpi-card red"><div class="kpi-label">RDC ' + months[amtLatestIdx] + '总库存(千元)</div><div class="kpi-value">' + fmtNum(rdcTotalInventory) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">' + fmtPctChange(rdcTotalInventory, rdcTotalInventoryPrev) + '</div></div>' +
-    '<div class="kpi-card orange"><div class="kpi-label">RDC ' + months[latestIdx] + '总出货成本(千元)</div><div class="kpi-value">' + fmtNum(rdcTotalShipment) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">' + fmtPctChange(rdcTotalShipment, rdcTotalShipmentPrev) + '</div></div>' +
     '<div class="kpi-card purple"><div class="kpi-label">最快/慢RDC</div><div class="kpi-value">' + minTurn + '/' + maxTurn + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + (minRdc ? '最快' + minRdc + '<br/>最慢' + maxRdc : '') + '</div></div>' +
     '<div class="kpi-card teal"><div class="kpi-label">总仓周转</div><div class="kpi-value">' + hqTurnover + '<span class="kpi-unit">天</span></div><div style="font-size:11px">' + fmtPctChange(hqTurnover, hqTurnoverPrev) + '</div></div>' +
     '</div>' +
