@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 20; // v20: 修复新模板「2026周转」sheet 解析（旧「库存周转」拆分为「2026周转」「2025周转」），恢复 1-7 月出货成本
+const DB_VERSION = 21; // v21: 库存结构分析堆叠图改为双轴图，新增「风险库存占比」折线（右轴%）；保留原 4 状态堆叠柱状（左轴万元）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9136,27 +9136,50 @@ function renderInventoryStructure() {
     const stackedEl = document.getElementById('chart-is-stacked');
     if (stackedEl) {
       const c = initChart('chart-is-stacked');
+      // 风险库存占比 = (橙+红+黄) / 4状态合计；单位：百分比
+      const riskRatioData = MONTHS.map((m, idx) => {
+        const t = totals[idx]; if (!t) return null;
+        const risk = (t.orange || 0) + (t.red || 0) + (t.yellow || 0);
+        const total = risk + (t.safe || 0);
+        return total > 0 ? +(risk / total * 100).toFixed(1) : null;
+      });
       c.setOption({
         tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
           formatter: function(params) {
             let h = '<strong>' + params[0].axisValue + '</strong>';
-            let sum = 0;
-            params.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : (p.value).toLocaleString() + ' 万'); });
+            let sum = 0; let ratioShown = null;
+            params.forEach(p => {
+              if (p.seriesType === 'line') { ratioShown = p.value; return; }
+              sum += (p.value || 0);
+              h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : (p.value).toLocaleString() + ' 万');
+            });
             h += '<br/><strong style="color:#1E293B">合计：' + sum.toLocaleString() + ' 万</strong>';
+            if (ratioShown != null) h += '<br/>📍 风险库存占比：<strong style="color:#DC2626">' + ratioShown + '%</strong>';
             return h;
           }
         },
-        legend: { data: STATUS_META.map(s => s.name), top: 0, left: 'center', textStyle: { fontSize: 11 } },
-        grid: { left: 70, right: 30, top: 40, bottom: 30 },
+        legend: { data: STATUS_META.map(s => s.name).concat(['风险库存占比']), top: 0, left: 'center', textStyle: { fontSize: 11 } },
+        grid: { left: 70, right: 70, top: 40, bottom: 30 },
         xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 11 } },
-        yAxis: { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+        yAxis: [
+          { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+          { type: 'value', name: '风险占比%', nameTextStyle: { fontSize: 10, color: '#DC2626' }, axisLabel: { fontSize: 10, color: '#DC2626', formatter: '{value}%' }, min: 0, max: 100, splitLine: { show: false } }
+        ],
         series: STATUS_META.map(s => ({
           name: s.name, type: 'bar', stack: 'total',
           data: MONTHS.map((m, idx) => { const t = totals[idx]; return t ? Math.round(t[s.key] / 10000) : null; }),
           color: s.color,
           itemStyle: { borderRadius: 0 },
           emphasis: { focus: 'series' }
-        }))
+        })).concat([{
+          name: '风险库存占比', type: 'line', yAxisIndex: 1,
+          data: riskRatioData,
+          color: '#DC2626', smooth: true, symbol: 'circle', symbolSize: 8,
+          lineStyle: { width: 2 },
+          itemStyle: { color: '#DC2626' },
+          label: { show: true, position: 'top', fontSize: 10, color: '#DC2626', formatter: '{c}%' },
+          z: 10
+        }])
       });
     }
 
