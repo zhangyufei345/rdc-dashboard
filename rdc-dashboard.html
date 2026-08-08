@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 31; // v31: 库存覆盖图tooltip RDC按金额降序；下钻明细页单个RDC/单个品牌时隐藏维度对比图（避免无意义单柱）
+const DB_VERSION = 32; // v32: 单维度时直接隐藏对比卡（不再显示"筛选范围"提示卡）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9418,25 +9418,19 @@ function renderInventoryCoverageDetail() {
   const rdcData = Object.entries(rdcAmt).sort((a,b) => b[1] - a[1]).map(([k,v]) => ({name: k, value: Math.round(v)}));
   const brandData = Object.entries(brandAmt).sort((a,b) => b[1] - a[1]).map(([k,v]) => ({name: k, value: Math.round(v)}));
 
-  // 图形分析：RDC 维度仅当 ≥2 个 RDC 时显示（单个 RDC 无意义）
+  // 图形分析：单维度时不展示对比图（直接隐藏）
   const showRdcChart = rdcData.length >= 2;
   const showBrandChart = brandData.length >= 2;
-  if (showRdcChart && showBrandChart) {
+  if (showRdcChart || showBrandChart) {
     html += '<div class="row-2" style="margin-bottom:16px">';
-  } else {
-    html += '<div class="row-2" style="margin-bottom:16px">';
+    if (showRdcChart) {
+      html += '<div class="card"><div class="card-header"><span class="card-title">RDC维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-rdc"></div></div>';
+    }
+    if (showBrandChart) {
+      html += '<div class="card"><div class="card-header"><span class="card-title">品牌维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-brand"></div></div>';
+    }
+    html += '</div>';
   }
-  if (showRdcChart) {
-    html += '<div class="card"><div class="card-header"><span class="card-title">RDC维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-rdc"></div></div>';
-  } else {
-    html += '<div class="card"><div class="card-header"><span class="card-title">筛选范围</span></div><div style="padding:12px;font-size:13px;color:var(--text-secondary)">已限定到单一 RDC（' + rdcData[0].name + '），不展示 RDC 维度对比</div></div>';
-  }
-  if (showBrandChart) {
-    html += '<div class="card"><div class="card-header"><span class="card-title">品牌维度库存金额</span></div><div class="chart-container" id="chart-inv-cov-brand"></div></div>';
-  } else {
-    html += '<div class="card"><div class="card-header"><span class="card-title">筛选范围</span></div><div style="padding:12px;font-size:13px;color:var(--text-secondary)">仅 ' + brandData[0].name + ' 一个品牌，无维度对比</div></div>';
-  }
-  html += '</div>';
 
   html += '<div class="card"><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">金额</th><th class="num">6月</th><th class="num">7月</th><th class="num">8月</th><th class="num">9月</th><th class="num">10月</th><th class="num">11月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
     pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov06) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td class="num">' + formatNum(d.cov09) + '</td><td class="num">' + formatNum(d.cov10) + '</td><td class="num">' + formatNum(d.cov11) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table></div>';
