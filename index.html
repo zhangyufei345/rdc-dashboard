@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 34; // v34: 库存结构页新增「风险库存SKU变动(5月→6月)」上涨/下降TOP10，点击行下钻SKU风险明细
+const DB_VERSION = 35; // v35: 风险库存变动表新增「6月风险构成」列（4状态占比横条+文字），直观显示SKU风险来自哪个状态
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9148,7 +9148,9 @@ function renderInventoryStructure() {
     // 风险库存 SKU 变动（5月 → 6月）：按 SKU 聚合风险金额(stale+expired+return+near)差值，跟随海南+RDC筛选
     const cov5All = (dataStore.inventory && dataStore.inventory.cov5) || [];
     const cov6All2 = (dataStore.inventory && dataStore.inventory.cov6) || [];
-    function riskOf(d) { return (d.staleAmt||0) + (d.expiredAmt||0) + (d.returnAmt||0) + (d.nearExpiryAmt||0); }
+    const RISK_NAMES = [['staleAmt','残次','#F97316'],['expiredAmt','过期','#EF4444'],['returnAmt','退货','#9CA3AF'],['nearExpiryAmt','近效期','#FACC15']];
+    function riskOf(d) { return RISK_NAMES.reduce((s,[k]) => s + (d[k]||0), 0); }
+    function riskBreak(d) { return RISK_NAMES.map(([k]) => d[k]||0); } // [stale, expired, return, near]
     function aggRisk(src) {
       const m = {};
       src.forEach(d => {
@@ -9157,8 +9159,10 @@ function renderInventoryStructure() {
         if (hainanFilter === 'no' && d.isHainan === true) return;
         if (rdcFilter !== 'all' && d.rdc !== rdcFilter) return;
         const k = d.sku;
-        if (!m[k]) m[k] = { sku: k, skuName: d.skuName || '', brand: d.brand || '', amt: 0, isHainan: d.isHainan === true };
+        if (!m[k]) m[k] = { sku: k, skuName: d.skuName || '', brand: d.brand || '', amt: 0, parts: [0,0,0,0], isHainan: d.isHainan === true };
         m[k].amt += riskOf(d);
+        const br = riskBreak(d);
+        for (let i = 0; i < 4; i++) m[k].parts[i] += br[i];
       });
       return m;
     }
@@ -9168,19 +9172,30 @@ function renderInventoryStructure() {
     Object.keys(riskM6).forEach(k => {
       const a = riskM6[k], b = riskM5[k];
       const amt5 = b ? b.amt : 0;
-      riskSkuList.push({ sku: k, skuName: a.skuName, brand: a.brand, isHainan: a.isHainan, amt5: amt5, amt6: a.amt, diff: a.amt - amt5 });
+      riskSkuList.push({ sku: k, skuName: a.skuName, brand: a.brand, isHainan: a.isHainan, amt5: amt5, amt6: a.amt, diff: a.amt - amt5, parts5: b ? b.parts : [0,0,0,0], parts6: a.parts });
     });
-    // 只在 5 月有风险、6 月消失的也纳入（下降榜）
-    Object.keys(riskM5).forEach(k => { if (!riskM6[k]) { const b = riskM5[k]; riskSkuList.push({ sku: k, skuName: b.skuName, brand: b.brand, isHainan: b.isHainan, amt5: b.amt, amt6: 0, diff: -b.amt }); } });
+    Object.keys(riskM5).forEach(k => { if (!riskM6[k]) { const b = riskM5[k]; riskSkuList.push({ sku: k, skuName: b.skuName, brand: b.brand, isHainan: b.isHainan, amt5: b.amt, amt6: 0, diff: -b.amt, parts5: b.parts, parts6: [0,0,0,0] }); } });
     const riskUp = riskSkuList.filter(x => x.diff > 0).sort((a,b) => b.diff - a.diff).slice(0, 10);
     const riskDown = riskSkuList.filter(x => x.diff < 0).sort((a,b) => a.diff - b.diff).slice(0, 10);
+    // 把 4 个状态占比做成小横条 + 文字（用 6 月金额口径）
+    function partsHtml(parts, total) {
+      if (total <= 0) return '<span style="color:var(--text-secondary)">-</span>';
+      let bar = '<div style="display:flex;height:8px;border-radius:3px;overflow:hidden;min-width:80px;margin-bottom:3px">';
+      let lbl = '';
+      for (let i = 0; i < 4; i++) {
+        const pct = parts[i] / total * 100;
+        if (pct > 0) { bar += '<div title="' + RISK_NAMES[i][1] + ' ' + pct.toFixed(0) + '%" style="background:' + RISK_NAMES[i][2] + ';width:' + pct + '%"></div>'; lbl += (lbl ? ' ' : '') + '<span style="color:' + RISK_NAMES[i][2] + '">' + RISK_NAMES[i][1] + pct.toFixed(0) + '%</span>'; }
+      }
+      bar += '</div>';
+      return bar + '<div style="font-size:10px;line-height:1.4">' + lbl + '</div>';
+    }
     function riskRowHtml(x, arrow) {
       const cls = arrow === 'up' ? '#EF4444' : '#10B981';
       const arrowTxt = arrow === 'up' ? '⬆' : '⬇';
-      return '<tr style="cursor:pointer" onclick="drillRiskSkuDetail(\'' + x.sku + '\')" title="点击查看该SKU风险明细"><td>' + (x.sku||'') + '</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (x.skuName||'') + '">' + (x.skuName||'') + '</td><td>' + (x.brand||'') + '</td><td class="num">' + fmtYuan(x.amt5) + '</td><td class="num">' + fmtYuan(x.amt6) + '</td><td class="num" style="color:' + cls + ';font-weight:600">' + arrowTxt + ' ' + fmtYuan(Math.abs(x.diff)) + '</td></tr>';
+      return '<tr style="cursor:pointer" onclick="drillRiskSkuDetail(\'' + x.sku + '\')" title="点击查看该SKU风险明细"><td>' + (x.sku||'') + '</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (x.skuName||'') + '">' + (x.skuName||'') + '</td><td>' + (x.brand||'') + '</td><td class="num">' + fmtYuan(x.amt5) + '</td><td class="num">' + fmtYuan(x.amt6) + '</td><td class="num" style="color:' + cls + ';font-weight:600">' + arrowTxt + ' ' + fmtYuan(Math.abs(x.diff)) + '</td><td style="min-width:140px">' + partsHtml(x.parts6, x.amt6) + '</td></tr>';
     }
-    const riskUpHtml = riskUp.length === 0 ? '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text-secondary)">无上涨SKU</td></tr>' : riskUp.map(x => riskRowHtml(x, 'up')).join('');
-    const riskDownHtml = riskDown.length === 0 ? '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text-secondary)">无下降SKU</td></tr>' : riskDown.map(x => riskRowHtml(x, 'down')).join('');
+    const riskUpHtml = riskUp.length === 0 ? '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--text-secondary)">无上涨SKU</td></tr>' : riskUp.map(x => riskRowHtml(x, 'up')).join('');
+    const riskDownHtml = riskDown.length === 0 ? '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--text-secondary)">无下降SKU</td></tr>' : riskDown.map(x => riskRowHtml(x, 'down')).join('');
 
     page.innerHTML =
       filterBar +
@@ -9239,9 +9254,9 @@ function renderInventoryStructure() {
       '<div class="card-header"><span class="card-title">🔴 风险库存 SKU 变动（2026年5月 → 6月）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 风险=残次+过期+退货+近效期 · 单位：元 · 点击行下钻</span></div>' +
       '<div class="row-2" style="gap:16px">' +
         '<div class="card" style="background:#FFF7F7;border-color:#FECACA"><div class="card-header"><span class="card-title" style="color:#EF4444">⬆ 风险库存上涨 TOP 10</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">5月→6月</span></div>' +
-        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">5月</th><th class="num">6月</th><th class="num">上涨</th></tr></thead><tbody>' + riskUpHtml + '</tbody></table></div></div>' +
+        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">5月</th><th class="num">6月</th><th class="num">上涨</th><th>6月风险构成</th></tr></thead><tbody>' + riskUpHtml + '</tbody></table></div></div>' +
         '<div class="card" style="background:#F0FDF4;border-color:#BBF7D0"><div class="card-header"><span class="card-title" style="color:#10B981">⬇ 风险库存下降 TOP 10</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">5月→6月</span></div>' +
-        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">5月</th><th class="num">6月</th><th class="num">下降</th></tr></thead><tbody>' + riskDownHtml + '</tbody></table></div></div>' +
+        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">5月</th><th class="num">6月</th><th class="num">下降</th><th>6月风险构成</th></tr></thead><tbody>' + riskDownHtml + '</tbody></table></div></div>' +
       '</div>' +
       '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">口径：同一 SKU 跨 RDC 聚合；「上涨」= 6月风险金额 − 5月风险金额（红色），「下降」= 5月 − 6月（绿色）。点击行查看该 SKU 在 5月/6月 的 RDC 明细。</div>' +
       '</div>';
