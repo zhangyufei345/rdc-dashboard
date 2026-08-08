@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 24; // v24: 删除「库存变化根因分析」TAB；年末库存预测页加 2026 7月实际数据点对比
+const DB_VERSION = 25; // v25: 修复库存结构分析TDZ错误(rdcColors提前定义)；年度对比图加 2026 7月数据(库存金额+出货成本)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8087,12 +8087,58 @@ function renderInventoryTurnoverHistoryCharts() {
   const EXCLUDE_KEYS = ['总仓'];
   function sumSelected(map, i) { let s = 0; selectedRdcs.forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
 
-  // 库存金额：改用 7月新模板「库存金额」sheet（跟随 海南+状态 筛选），单位千元；2026 仅 1-6月
+  // 库存金额：改用 7月新模板「库存金额」sheet（跟随 海南+状态 筛选），单位千元；2026 1-7月（7月从2026周转sheet inventoryByRdc兜底）
+  const invTurn = dataStore.inventoryTurnover;
+  function sumInvTurnByRdc(rdc, i) {
+    if (!invTurn || !invTurn.inventoryByRdc) return null;
+    const key = Object.keys(invTurn.inventoryByRdc).find(k => k.indexOf(rdc) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
+    if (!key) return null;
+    const arr = invTurn.inventoryByRdc[key];
+    return (arr && arr[i]) || null; // 千元
+  }
+  function sumShipTurnByRdc(rdc, i) {
+    if (!invTurn || !invTurn.shipmentCost) return null;
+    const key = Object.keys(invTurn.shipmentCost).find(k => k.indexOf(rdc) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
+    if (!key) return null;
+    const arr = invTurn.shipmentCost[key];
+    return (arr && arr[i]) || null; // 千元
+  }
+  // 7月只有当 hainan=all 且 status=all 时可用（2026周转无这两维度），否则画 0
+  const hainanOk = (window._invHainan || 'all') === 'all' && (window._invStatus || 'all') === 'all';
+  function sumAmtJul() {
+    if (!hainanOk) return 0;
+    let s = 0, any = false;
+    selectedRdcs.forEach(r => {
+      if (EXCLUDE_KEYS.indexOf(r) >= 0) return;
+      const v = sumInvTurnByRdc(r, 6); // i=6 = 7月
+      if (v) { s += v; any = true; }
+    });
+    return any ? s : null;
+  }
+  function sumShipJul() {
+    let s = 0, any = false;
+    selectedRdcs.forEach(r => {
+      if (EXCLUDE_KEYS.indexOf(r) >= 0) return;
+      const v = sumShipTurnByRdc(r, 6);
+      if (v) { s += v; any = true; }
+    });
+    return any ? s : null;
+  }
+  const amt26Jul = sumAmtJul(); // 千元
+  const ship26Jul = sumShipJul(); // 千元
   const amt25 = months12.map((_, i) => amountAtRdcs('2025', i + 1, selectedRdcs) / 1000);
-  const amt26 = months12.map((_, i) => (i < 6 ? amountAtRdcs('2026', i + 1, selectedRdcs) / 1000 : null));
+  const amt26 = months12.map((_, i) => {
+    if (i < 6) return amountAtRdcs('2026', i + 1, selectedRdcs) / 1000;
+    if (i === 6) return amt26Jul;
+    return null;
+  });
   // 出货成本图不跟随海南花露水筛选（出货成本无海南花露水维度数据，按库存占比估算意义不大）
   const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
-  const ship26 = months12.map((_, i) => (i < months.length ? sumSelected(INV['2026'].shipmentCost, i) : null));
+  const ship26 = months12.map((_, i) => {
+    if (i < months.length) return sumSelected(INV['2026'].shipmentCost, i);
+    if (i === 6) return ship26Jul;
+    return null;
+  });
 
   // 上半年合计对比
   let h1_26 = 0; for (let i = 0; i < months.length; i++) h1_26 += (ship26[i] || 0);
@@ -9080,6 +9126,20 @@ function renderInventoryStructure() {
     function fmtWan(v) { return (v / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' 万'; }
     function fmtYuan(v) { return (v != null ? Math.round(v).toLocaleString() : '-') + ' 元'; }
 
+    // RDC 颜色（堆叠图例用）+ 全局 RDC 勾选切换函数（提前定义避免 TDZ）
+    const rdcColors = ['#EF4444','#F97316','#FACC15','#10B981','#3B82F6','#8B5CF6','#06B6D4'];
+    window._covToggle = function(rdc, checked) {
+      if (!Array.isArray(window._covSelectedRdcs)) window._covSelectedRdcs = [];
+      const i = window._covSelectedRdcs.indexOf(rdc);
+      if (checked && i < 0) window._covSelectedRdcs.push(rdc);
+      else if (!checked && i >= 0) window._covSelectedRdcs.splice(i, 1);
+      renderInventoryStructure();
+    };
+    window._covSelectAll = function(checked) {
+      window._covSelectedRdcs = checked ? ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'].slice() : [];
+      renderInventoryStructure();
+    };
+
     // 库存覆盖数据
     const covRdcs = Object.keys(coverageNew);
     const covLabels = ['≤1个月','1~2个月','2~3个月','3~4个月','4~5个月','5~6个月','大于6个月','无需求','非卖品','促销装','新品期'];
@@ -9230,20 +9290,7 @@ function renderInventoryStructure() {
       });
     }
 
-    // 库存覆盖堆叠柱状图（元）：横轴=覆盖周期，堆叠段=RDC
-    const rdcColors = ['#EF4444','#F97316','#FACC15','#10B981','#3B82F6','#8B5CF6','#06B6D4'];
-    // 全局 RDC 勾选切换（库存覆盖图）
-    window._covToggle = function(rdc, checked) {
-      if (!Array.isArray(window._covSelectedRdcs)) window._covSelectedRdcs = [];
-      const i = window._covSelectedRdcs.indexOf(rdc);
-      if (checked && i < 0) window._covSelectedRdcs.push(rdc);
-      else if (!checked && i >= 0) window._covSelectedRdcs.splice(i, 1);
-      renderInventoryStructure();
-    };
-    window._covSelectAll = function(checked) {
-      window._covSelectedRdcs = checked ? ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'].slice() : [];
-      renderInventoryStructure();
-    };
+    // 库存覆盖堆叠柱状图（元）：横轴=覆盖周期，堆叠段=RDC（rdcColors 已提前定义在 page.innerHTML 之前）
     const covChartEl = document.getElementById('chart-cov-stacked');
     if (covChartEl) {
       const c2 = initChart('chart-cov-stacked');
