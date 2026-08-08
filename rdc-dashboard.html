@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 21; // v21: 库存结构分析堆叠图改为双轴图，新增「风险库存占比」折线（右轴%）；保留原 4 状态堆叠柱状（左轴万元）
+const DB_VERSION = 22; // v22: 双轴图补齐7月库存金额（amountAt 7月fallback到2026周转sheet inventoryByRdc）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6902,8 +6902,20 @@ function amountAt(rdc, year, month) {
   const hainan = window._invHainan || 'all';
   const status = window._invStatus || 'all';
   const pair = getAmountTrendBlocksByStatus(status);
-  if (!pair) return null;
   const rdcKey = String(rdc).replace('RDC', '仓');
+  // 「库存金额」sheet 仅 2026 1-6月；7月起 fallback 到「2026周转」sheet 的 inventoryByRdc（千元 → 元）
+  if (year === '2026' && month === 7) {
+    const invTurn = dataStore.inventoryTurnover;
+    if (!invTurn || !invTurn.inventoryByRdc) return null;
+    // 7月/8月起只能走「全部」海南/状态（2026周转无该维度）
+    if (hainan !== 'all' || status !== 'all') return null;
+    const key = Object.keys(invTurn.inventoryByRdc).find(k => k.indexOf(rdc) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
+    if (!key) return null;
+    const arr = invTurn.inventoryByRdc[key];
+    const v = arr && arr[6]; // i=6 = 7月；null/0 都视为无数据
+    return v ? v * 1000 : null; // 千元 → 元
+  }
+  if (!pair) return null;
   function v(block) {
     return (block && block.byYear[year] && block.byYear[year][month] && block.byYear[year][month][rdcKey]) || 0;
   }
