@@ -9115,12 +9115,13 @@ function renderInventoryStructure() {
 
     // 库存覆盖按当前 RDC 筛选聚合（6月，元）
     // 顶部 RDC 下拉选单个 RDC 时固定一个；选「全部」时用窗口内 _covSelectedRdcs 二次勾选
-    if (!Array.isArray(window._covSelectedRdcs) || window._covSelectedRdcs.length === 0) {
+    // 注意：只在未初始化（undefined）时填默认值；空数组是合法的"全取消"状态，不要重置
+    if (!Array.isArray(window._covSelectedRdcs)) {
       window._covSelectedRdcs = allRdcs.slice();
     }
     // 已不在 allRdcs 内的脏数据清理
     window._covSelectedRdcs = window._covSelectedRdcs.filter(r => allRdcs.indexOf(r) >= 0);
-    const covDisplayRdcs = rdcFilter === 'all' ? (window._covSelectedRdcs.length ? window._covSelectedRdcs : allRdcs) : [rdcFilter];
+    const covDisplayRdcs = rdcFilter === 'all' ? window._covSelectedRdcs : [rdcFilter];
     const covTableRows = covDisplayRdcs.map(rdc => {
       const cov = (coverageNew[rdc] && coverageNew[rdc].coverage) || {};
       const vals = covLabels.map(l => {
