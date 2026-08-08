@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 44; // v44: 修v43y轴max bug——只用6月合计算max导致1-5月高月份(2月10293万)柱子被截断；改用1-6月合计最大值×1.25，保证所有月份柱子完整
+const DB_VERSION = 45; // v45: 库存覆盖图card-header控件区左对齐（justify-content:flex-start + width:100%）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9224,7 +9224,7 @@ function renderInventoryStructure() {
       '<div class="card-header" style="display:flex;flex-direction:column;gap:6px">' +
         '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📦 库存覆盖-可用库存（2026年6月 · 按RDC堆叠）</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：元 · 数据源：6月库存覆盖数据(SKU级，跟随海南筛选)</span></div>' +
       // RDC 切换控件：仅在顶部 RDC=全部 时启用；点击色块/RDC名 整体切换显示
-      (rdcFilter === 'all' ? ('<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px">' +
+      (rdcFilter === 'all' ? ('<div style="display:flex;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:11px;width:100%">' +
         '<span style="color:#6B7280">点击色块切换RDC显示：</span>' +
         '<button onclick="window._covToggleAll()" style="padding:3px 10px;font-size:11px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF;cursor:pointer">' +
         (window._covSelectedRdcs.length === allRdcs.length ? '全取消' : '全选') +
