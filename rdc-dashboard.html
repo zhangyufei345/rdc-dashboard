@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 37; // v37: 4状态堆叠图y轴max自动收紧（向上取整到1000倍数+5%空间），避免柱顶留白过多
+const DB_VERSION = 38; // v38: 4状态堆叠图/库存结构月度明细表/库存覆盖图三个图表/表格宽度缩短为50%（max-width:50%，min-width:480px保可用性）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9229,11 +9229,11 @@ function renderInventoryStructure() {
       // 4状态堆叠柱状图
       '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">📊 库存结构分析（2026年1-6月 · 4种状态堆叠）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：万元</span></div>' +
-      '<div class="chart-container" style="height:320px" id="chart-is-stacked"></div>' +
+      '<div class="chart-container" style="height:320px;max-width:50%;min-width:480px" id="chart-is-stacked"></div>' +
       '</div>' +
       // 4状态月度明细表
       '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📋 库存结构月度明细（万元）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + '</span></div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th>库存状态</th>' + monthLabels.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">6月占比</th></tr></thead><tbody>' +
+      '<div class="table-wrap" style="max-width:50%;min-width:480px;overflow-x:auto"><table class="data-table"><thead><tr><th>库存状态</th>' + monthLabels.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">6月占比</th></tr></thead><tbody>' +
       STATUS_META.map(s => {
         return '<tr><td><span style="color:' + s.color + ';font-weight:600">●</span> ' + s.name + '<br/><span style="font-size:10px;color:var(--text-secondary)">' + s.sub + '</span></td>' +
           MONTHS.map((m, idx) => { const t = totals[idx]; return '<td class="num">' + (t ? (t[s.key]/10000).toFixed(1) : '-') + '</td>'; }).join('') +
@@ -9264,7 +9264,7 @@ function renderInventoryStructure() {
         }).join('') +
       '</div>') : '') +
       '</div>' +
-      '<div class="chart-container" style="height:360px" id="chart-cov-stacked"></div>' +
+      '<div class="chart-container" style="height:360px;max-width:50%;min-width:480px" id="chart-cov-stacked"></div>' +
       '</div>' +
       // 风险库存 SKU 变动（5月→6月）
       '<div class="card" style="margin-bottom:16px">' +
