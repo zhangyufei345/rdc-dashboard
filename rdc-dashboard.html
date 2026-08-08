@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 26; // v26: 修复「不含海南花露水」时2026 7月库存=0的bug：7月数据按全部口径返回（2026周转无海南维度，无法拆分），仅"非风险库存"状态筛选时断点
+const DB_VERSION = 27; // v27: 用户确认 2026周转sheet库存金额右表只有 1-6月（表头 6个日期）；回退所有库存金额7月fallback（amountAt/年度对比图/年末预测），出货成本7月数据保留
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -780,12 +780,16 @@ function parseInventoryTurnoverSheet(shI) {
       if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,7); }
     }
 
-    // 右表：库存金额（出货成本统计之前）/ 出货成本（之后）
+    // 右表：库存金额（出货成本统计之前，仅 1-6月 6 列）/ 出货成本（之后，1-7月 7 列）
+    // 注意：表头日期 cols 10-15 是 6 个月（库存金额），出货成本表头 cols 10-16 是 7 个月；用户已确认 7 月库存数据未更新
     if (right && ALL_RDC_NAMES.indexOf(right)>=0){
       const mapKey = right === '总仓' ? '总仓' : RDC_FULL[RDC_SHORT.indexOf(right)];
-      const vals = rowVals(r, rightStartCol+1, rightStartCol+7);
-      if (i < splitPoint) invData.inventoryByRdc[mapKey] = vals;
-      else {
+      if (i < splitPoint) {
+        // 库存金额：固定 6 列（1-6月）
+        invData.inventoryByRdc[mapKey] = rowVals(r, rightStartCol+1, rightStartCol+6);
+      } else {
+        // 出货成本：固定 7 列（1-7月）
+        const vals = rowVals(r, rightStartCol+1, rightStartCol+7);
         invData.shipmentCost[mapKey] = vals;
         if (right==='总仓') invData.shipmentCost['总部'] = vals;
       }
@@ -6902,20 +6906,8 @@ function amountAt(rdc, year, month) {
   const hainan = window._invHainan || 'all';
   const status = window._invStatus || 'all';
   const pair = getAmountTrendBlocksByStatus(status);
-  const rdcKey = String(rdc).replace('RDC', '仓');
-  // 「库存金额」sheet 仅 2026 1-6月；7月起 fallback 到「2026周转」sheet 的 inventoryByRdc（千元 → 元）
-  if (year === '2026' && month === 7) {
-    const invTurn = dataStore.inventoryTurnover;
-    if (!invTurn || !invTurn.inventoryByRdc) return null;
-    // 7月/8月起只能走「全部」海南/状态（2026周转无该维度）
-    if (hainan !== 'all' || status !== 'all') return null;
-    const key = Object.keys(invTurn.inventoryByRdc).find(k => k.indexOf(rdc) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
-    if (!key) return null;
-    const arr = invTurn.inventoryByRdc[key];
-    const v = arr && arr[6]; // i=6 = 7月；null/0 都视为无数据
-    return v ? v * 1000 : null; // 千元 → 元
-  }
   if (!pair) return null;
+  const rdcKey = String(rdc).replace('RDC', '仓');
   function v(block) {
     return (block && block.byYear[year] && block.byYear[year][month] && block.byYear[year][month][rdcKey]) || 0;
   }
@@ -7389,25 +7381,6 @@ function renderInventoryForecast(page, tabBar) {
   const nationalYiH2 = rdcOnlyH2.map(v => (v + twYuan) / 1e8);
   const nat26Demand = nat26A.concat(rdcOnlyYiH2);
 
-  // === 5b. 2026 7月实际库存金额（亿元，6RDC 汇总）—— 与预测同口径对比 ===
-  // 数据源：2026 周转 sheet 的 inventoryByRdc（千元 → 元 → 亿元）；东北RDC 7 月缺数据
-  function sumRdc6JulActual() {
-    const invTurn = dataStore.inventoryTurnover;
-    if (!invTurn || !invTurn.inventoryByRdc) return null;
-    let s = 0, any = false;
-    rdc6.forEach(r => {
-      const key = Object.keys(invTurn.inventoryByRdc).find(k => k.indexOf(r) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
-      if (!key) return;
-      const arr = invTurn.inventoryByRdc[key];
-      const v = arr && arr[6]; // i=6 = 7月
-      if (v) { s += v; any = true; }
-    });
-    return any ? s / 100000 : null; // 千元 → 亿元（除以 1e5）
-  }
-  const nat26A7 = sumRdc6JulActual();
-  // 7 月实际折线：12 个月份索引，前 6 个月 null，7 月=nat26A7，8-12 月 null
-  const nat26A7Series = months.map((_, i) => i === 6 ? nat26A7 : null);
-
   // === 7. 各地点年末推演 (亿元) —— 只含 6 RDC；总仓/全国合计作为信息脚注 ===
   const proj = [];
   rdc6.forEach(r => {
@@ -7496,7 +7469,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">6RDC 库存金额月度走势（单位：亿元）</span></div>' +
       '<div class="chart-container" id="chart-forecast" style="height:420px"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，参数可调 ⬆ 面板）；<span style="color:#10B981;font-weight:600">🟢 绿色实心点=2026 7月实际（与预测同口径 6RDC 汇总）</span>。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，参数可调 ⬆ 面板）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
@@ -7520,17 +7493,14 @@ function renderInventoryForecast(page, tabBar) {
   const chart = initChart('chart-forecast');
   chart.setOption({
     tooltip:{trigger:'axis'},
-    legend:{data:['2025 7RDC 实际','2026 实际+渐进入市','2026 7月实际'],top:0},
+    legend:{data:['2025 7RDC 实际','2026 实际+渐进入市'],top:0},
     grid:{left:60,right:24,top:50,bottom:40},
     xAxis:{type:'category',data:months},
     yAxis:{type:'value',name:'亿元',min:0,max:1.2},
     series:[
       {name:'2025 7RDC 实际',type:'line',data:nat25,lineStyle:{type:'dashed',color:'#9aa7b4'},itemStyle:{color:'#9aa7b4'},symbol:'circle'},
       {name:'2026 实际+渐进入市',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'},
-        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}},
-      // 2026 7月实际：仅 7 月一个绿色实心点（6RDC 汇总，亿元）
-      {name:'2026 7月实际',type:'scatter',data:nat26A7Series,symbol:'circle',symbolSize:14,itemStyle:{color:'#10B981',borderColor:'#065F46',borderWidth:2},z:20,
-        label:{show:true,position:'top',fontSize:11,color:'#065F46',fontWeight:'bold',formatter:function(p){return p.value == null ? '' : '实际 ' + p.value.toFixed(2) + ' 亿';}}}
+        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}}
     ]
   });
 
@@ -8087,15 +8057,8 @@ function renderInventoryTurnoverHistoryCharts() {
   const EXCLUDE_KEYS = ['总仓'];
   function sumSelected(map, i) { let s = 0; selectedRdcs.forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
 
-  // 库存金额：改用 7月新模板「库存金额」sheet（跟随 海南+状态 筛选），单位千元；2026 1-7月（7月从2026周转sheet inventoryByRdc兜底）
+  // 库存金额：改用 7月新模板「库存金额」sheet（跟随 海南+状态 筛选），单位千元；2026 仅 1-6月（7月未更新，按断点处理）
   const invTurn = dataStore.inventoryTurnover;
-  function sumInvTurnByRdc(rdc, i) {
-    if (!invTurn || !invTurn.inventoryByRdc) return null;
-    const key = Object.keys(invTurn.inventoryByRdc).find(k => k.indexOf(rdc) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
-    if (!key) return null;
-    const arr = invTurn.inventoryByRdc[key];
-    return (arr && arr[i]) || null; // 千元
-  }
   function sumShipTurnByRdc(rdc, i) {
     if (!invTurn || !invTurn.shipmentCost) return null;
     const key = Object.keys(invTurn.shipmentCost).find(k => k.indexOf(rdc) >= 0 && k.indexOf('总部') < 0 && k.indexOf('共享') < 0);
@@ -8103,19 +8066,7 @@ function renderInventoryTurnoverHistoryCharts() {
     const arr = invTurn.shipmentCost[key];
     return (arr && arr[i]) || null; // 千元
   }
-  // 7月数据仅来自2026周转sheet（无海南/状态维度），按全部金额口径返回；
-  // 若选了"仅非风险库存"则7月断点（2026周转未拆状态，无法换算）
-  const statusOk = (window._invStatus || 'all') === 'all';
-  function sumAmtJul() {
-    if (!statusOk) return null;
-    let s = 0, any = false;
-    selectedRdcs.forEach(r => {
-      if (EXCLUDE_KEYS.indexOf(r) >= 0) return;
-      const v = sumInvTurnByRdc(r, 6); // i=6 = 7月
-      if (v) { s += v; any = true; }
-    });
-    return any ? s : null;
-  }
+  // 7月出货成本从2026周转sheet 兜底读取（出货成本右表有 1-7月 7 列）
   function sumShipJul() {
     let s = 0, any = false;
     selectedRdcs.forEach(r => {
@@ -8125,19 +8076,14 @@ function renderInventoryTurnoverHistoryCharts() {
     });
     return any ? s : null;
   }
-  const amt26Jul = sumAmtJul(); // 千元
-  const ship26Jul = sumShipJul(); // 千元
+  const ship26Jul = sumShipJul();
   const amt25 = months12.map((_, i) => amountAtRdcs('2025', i + 1, selectedRdcs) / 1000);
-  const amt26 = months12.map((_, i) => {
-    if (i < 6) return amountAtRdcs('2026', i + 1, selectedRdcs) / 1000;
-    if (i === 6) return amt26Jul;
-    return null;
-  });
+  const amt26 = months12.map((_, i) => (i < 6 ? amountAtRdcs('2026', i + 1, selectedRdcs) / 1000 : null));
   // 出货成本图不跟随海南花露水筛选（出货成本无海南花露水维度数据，按库存占比估算意义不大）
   const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
   const ship26 = months12.map((_, i) => {
     if (i < months.length) return sumSelected(INV['2026'].shipmentCost, i);
-    if (i === 6) return ship26Jul;
+    if (i === 6) return ship26Jul; // 7月兜底
     return null;
   });
 
