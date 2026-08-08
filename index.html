@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 25; // v25: 修复库存结构分析TDZ错误(rdcColors提前定义)；年度对比图加 2026 7月数据(库存金额+出货成本)
+const DB_VERSION = 26; // v26: 修复「不含海南花露水」时2026 7月库存=0的bug：7月数据按全部口径返回（2026周转无海南维度，无法拆分），仅"非风险库存"状态筛选时断点
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8103,10 +8103,11 @@ function renderInventoryTurnoverHistoryCharts() {
     const arr = invTurn.shipmentCost[key];
     return (arr && arr[i]) || null; // 千元
   }
-  // 7月只有当 hainan=all 且 status=all 时可用（2026周转无这两维度），否则画 0
-  const hainanOk = (window._invHainan || 'all') === 'all' && (window._invStatus || 'all') === 'all';
+  // 7月数据仅来自2026周转sheet（无海南/状态维度），按全部金额口径返回；
+  // 若选了"仅非风险库存"则7月断点（2026周转未拆状态，无法换算）
+  const statusOk = (window._invStatus || 'all') === 'all';
   function sumAmtJul() {
-    if (!hainanOk) return 0;
+    if (!statusOk) return null;
     let s = 0, any = false;
     selectedRdcs.forEach(r => {
       if (EXCLUDE_KEYS.indexOf(r) >= 0) return;
