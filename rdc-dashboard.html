@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 62; // v61: 日订单满足率趋势全部/单个RDC均显示KA+经销商双曲线，趋势图与RDC缺货金额图增加hover TOP5缺货SKU tooltip，品牌矩阵tooltip增加表头；v62: 拉回数据解析增强（日期/RDC/数量容错、列头关键词扩充、诊断日志），修复13868行解析为0的问题
+const DB_VERSION = 63; // v61: 日订单满足率趋势全部/单个RDC均显示KA+经销商双曲线，趋势图与RDC缺货金额图增加hover TOP5缺货SKU tooltip，品牌矩阵tooltip增加表头；v62: 拉回数据解析增强（日期/RDC/数量容错、列头关键词扩充、诊断日志），修复13868行解析为0的问题；v63: 品牌矩阵弹框缺货箱数改为取最新日期（非跨日累计）；总览「Top 20 缺货物料」的「显示全部缺货信息」按钮修复（之前 _top20List 始终 slice(0,20) 导致按钮无效）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1765,7 +1765,8 @@ function renderOverview() {
     };
     _top20List.sort((a,b) => _supplyRank(a.dcSupply) - _supplyRank(b.dcSupply) || b.rdcShortBoxes - a.rdcShortBoxes);
   }
-  _top20List = _top20List.slice(0, 20);
+  // v63: 「显示全部缺货信息」按钮：展开时展示全部，按默认排序
+  if (!window._showAllShortage) _top20List = _top20List.slice(0, 20);
   const _sortBtnsHtml = ['boxes','amount','rdcCount','dcSupply'].map(k => '<button class="btn-export" style="font-size:11px;padding:3px 8px;' + (_sortKey===k?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':'background:rgba(99,179,237,0.15);color:#93c5fd;border:1px solid rgba(99,179,237,0.3);') + '" onclick="window._overviewShortSort=\'' + k + '\';renderOverview()">' + _sortLabels[k] + '</button>').join('');
   const _showAllHtml = '<button class="btn-export" style="font-size:11px;padding:3px 10px;margin-left:8px;background:rgba(249,115,22,0.2);color:#fdba74;border:1px solid rgba(249,115,22,0.4)" onclick="window._showAllShortage=!window._showAllShortage;renderOverview()">' + (window._showAllShortage?'返回 Top 20':'显示全部缺货信息') + '</button>';
   const top20RowHtml = _top20List.map(d => {
@@ -2849,6 +2850,11 @@ function getTopShortageSKUsByMonth(brand, rdc, month, limit) {
   if (brand && brand !== 'all') data = data.filter(d => d.brand === brand);
   const rdcKey = rdc && rdc !== 'all' ? rdcShortKeyMap[rdc] : null;
   if (rdcKey) data = data.filter(d => d[rdcKey] > 0);
+  // v63: 只取最新一天的缺货数据，避免跨日累计
+  if (data.length > 0) {
+    const latestDate = data.reduce((max, d) => (!max || d.dateStr > max) ? d.dateStr : max, '');
+    if (latestDate) data = data.filter(d => d.dateStr === latestDate);
+  }
   const map = {};
   data.forEach(d => {
     if (!d.materialCode) return;
