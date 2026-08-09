@@ -1977,21 +1977,28 @@ function renderOverview() {
     });
   }
 
-  // 2. 日订单满足率趋势（近 7 个工作日；默认"全部"显示 KA+经销商，单选 RDC 显示该 RDC 单线，v54）
+  // 2. 日订单满足率趋势（近 7 个工作日；全部/单个 RDC 均显示 KA+经销商双曲线，v61）
   const trendRdc = window._trendRdc || 'all';
+  function normalizeTrendChannel(ch) {
+    const s = String(ch || '').trim().toUpperCase();
+    if (s === 'KA' || s === 'KA直营' || s === 'KA直营店' || s.indexOf('KA') === 0) return 'KA';
+    if (s.indexOf('经销') >= 0 || s === 'DEALER' || s === 'JX') return '经销商';
+    return '其他';
+  }
   const trendDayMap = {};
   monthOrders.forEach(d => {
     if (!d.dateStr || !d.warehouse) return;
     if (!isWorkday(d.dateStr)) return;
     if (trendRdc !== 'all' && d.warehouse !== trendRdc) return;
     const key = d.dateStr;
-    if (!trendDayMap[key]) trendDayMap[key] = { ka: { orderQty: 0, firstQty: 0 }, jx: { orderQty: 0, firstQty: 0 }, rdc: { orderQty: 0, firstQty: 0 } };
-    trendDayMap[key].rdc.orderQty += d.orderQty || 0;
-    trendDayMap[key].rdc.firstQty += d.firstDayQty || 0;
-    if (d.channel === 'KA' || d.channel === '经销商') {
-      const bucket = d.channel === 'KA' ? trendDayMap[key].ka : trendDayMap[key].jx;
-      bucket.orderQty += d.orderQty || 0;
-      bucket.firstQty += d.firstDayQty || 0;
+    if (!trendDayMap[key]) trendDayMap[key] = { ka: { orderQty: 0, firstQty: 0 }, jx: { orderQty: 0, firstQty: 0 } };
+    const ch = normalizeTrendChannel(d.channel);
+    if (ch === 'KA') {
+      trendDayMap[key].ka.orderQty += d.orderQty || 0;
+      trendDayMap[key].ka.firstQty += d.firstDayQty || 0;
+    } else if (ch === '经销商') {
+      trendDayMap[key].jx.orderQty += d.orderQty || 0;
+      trendDayMap[key].jx.firstQty += d.firstDayQty || 0;
     }
   });
   const trendDates = Object.keys(trendDayMap).sort();
@@ -1999,24 +2006,18 @@ function renderOverview() {
   if (trendLast7.length > 0) {
     const chartTrend = initChart('chart-trend');
     if (chartTrend) {
-      let legendData, seriesData;
-      if (trendRdc === 'all') {
-        legendData = ['KA 满足率', '经销商 满足率'];
-        const kaData = trendLast7.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
-        const jxData = trendLast7.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
-        seriesData = [
-          { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
-          { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
-        ];
-      } else {
-        legendData = [trendRdc + ' 满足率'];
-        const rdcData = trendLast7.map(d => trendDayMap[d].rdc.orderQty > 0 ? trendDayMap[d].rdc.firstQty / trendDayMap[d].rdc.orderQty : null);
-        seriesData = [{ name: trendRdc + ' 满足率', type: 'line', smooth: true, data: rdcData, lineStyle: { width: 3, color: getRDCColor(trendRdc), shadowBlur: 8, shadowColor: 'rgba(99,179,237,0.5)' }, itemStyle: { color: getRDCColor(trendRdc) }, symbol: 'circle', symbolSize: 8 }];
-      }
+      const legendData = ['KA 满足率', '经销商 满足率'];
+      const kaData = trendLast7.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
+      const jxData = trendLast7.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
+      const seriesData = [
+        { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
+        { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
+      ];
       chartTrend.setOption({
+        title: { text: trendRdc === 'all' ? '全部 RDC 聚合' : trendRdc, left: 'center', top: 0, textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 'normal' } },
         tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
-        legend: { data: legendData, textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0 },
-        grid: { left: 50, right: 20, top: 35, bottom: 30 },
+        legend: { data: legendData, textStyle: { color: '#94a3b8', fontSize: 11 }, top: 18 },
+        grid: { left: 50, right: 20, top: 50, bottom: 30 },
         xAxis: { type: 'category', data: trendLast7.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
         yAxis: { type: 'value', min: 0, max: 1.03, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => (v*100).toFixed(0)+'%' } },
         series: seriesData
