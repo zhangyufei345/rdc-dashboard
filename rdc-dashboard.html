@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 63; // v61: 日订单满足率趋势全部/单个RDC均显示KA+经销商双曲线，趋势图与RDC缺货金额图增加hover TOP5缺货SKU tooltip，品牌矩阵tooltip增加表头；v62: 拉回数据解析增强（日期/RDC/数量容错、列头关键词扩充、诊断日志），修复13868行解析为0的问题；v63: 品牌矩阵弹框缺货箱数改为取最新日期（非跨日累计）；总览「Top 20 缺货物料」的「显示全部缺货信息」按钮修复（之前 _top20List 始终 slice(0,20) 导致按钮无效）
+const DB_VERSION = 64; // v61: 日订单满足率趋势全部/单个RDC均显示KA+经销商双曲线，趋势图与RDC缺货金额图增加hover TOP5缺货SKU tooltip，品牌矩阵tooltip增加表头；v62: 拉回数据解析增强（日期/RDC/数量容错、列头关键词扩充、诊断日志），修复13868行解析为0的问题；v63: 品牌矩阵弹框缺货箱数改为取最新日期（非跨日累计）；总览「Top 20 缺货物料」的「显示全部缺货信息」按钮修复（之前 _top20List 始终 slice(0,20) 导致按钮无效）；v64: 拉回数据表头行自动识别（前15行找含最多列名关键词的行）+ 空态页面直接展示诊断信息（表头/样例行/失败计数）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6260,11 +6260,28 @@ function renderPullbackAnalysis(page) {
     // v60: 区分「sheet 未找到」和「找到但解析出 0 行」
     var sheetFound = inv.pullbackSheetFound;
     var matchedName = inv.pullbackSheetName || '';
+    var diag = inv.pullbackDiag || {};
     var titleText = sheetFound ? '找到「' + matchedName + '」Sheet，但未解析出有效数据' : '未找到「拉回数据」Sheet';
     var subText = sheetFound
-      ? '请按 F12 查看 Console 中的 [拉回分析] 日志，检查表头/列映射是否正确。'
+      ? '已自动识别表头行与列映射，但所有行都在校验中被过滤。请参考下方诊断信息，或按 F12 查看 Console 日志。'
       : 'v55 已自动尝试以下变体：拉回数据 / 拉回明细 / 拉回 / 回货';
-    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回分析</button></div><div style="text-align:center;padding:60px 20px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg);color:#fbbf24;margin-bottom:8px">' + titleText + '</div><div style="font-size:12px;margin-bottom:16px;color:#94a3b8">' + subText + '</div><div style="font-size:12px;color:#94a3b8;margin-bottom:8px">当前 inventory.xlsx 含以下 Sheet：</div><div style="max-width:600px;margin:0 auto;line-height:2">' + sheetListHtml + '</div><div style="font-size:11px;margin-top:16px;color:#64748B">提示：重新导入库存文件，或将拉回相关 Sheet 重命名包含「拉回」或「回货」关键词</div></div>';
+    // v64: 空态页面直接展示诊断信息（表头、样例行、失败计数），用户截图即可反馈
+    var diagHtml = '';
+    if (sheetFound && diag) {
+      var headerJson = JSON.stringify(diag.header || []);
+      var sampleJson = JSON.stringify((diag.sampleValues || []).slice(0, 5));
+      var headerDesc = diag.headerDetected ? '匹配到 <b style="color:#fbbf24">' + diag.score + '</b> 个列名关键词' : '未匹配到任何列名关键词';
+      var cols = diag.cols || {};
+      diagHtml = '<div style="max-width:800px;margin:20px auto;text-align:left;background:rgba(15,23,42,0.6);border:1px solid rgba(99,179,237,0.3);border-radius:8px;padding:16px;font-size:11px;color:#cbd5e1;line-height:1.7">' +
+        '<div style="font-weight:600;color:#93c5fd;margin-bottom:8px">🛠 诊断信息（可截图给我）</div>' +
+        '<div>表头行识别：扫描前15行，' + headerDesc + '（数据起始行=' + (diag.headerDetected ? '检测到的表头行+1' : '第1行') + '）</div>' +
+        '<div>探测列映射：date=col' + (cols.date!==undefined?cols.date:'?') + ', rdc=col' + (cols.rdc!==undefined?cols.rdc:'?') + ', sku=col' + (cols.sku!==undefined?cols.sku:'?') + ', qty=col' + (cols.qty!==undefined?cols.qty:'?') + ', unit=col' + (cols.unit!==undefined?cols.unit:'?') + '</div>' +
+        '<div>失败计数：缺日期=<b style="color:' + ((diag.failMissingDate||0)>0?'#fca5a5':'#86efac') + '">' + (diag.failMissingDate||0) + '</b>，日期无效=<b style="color:' + ((diag.failDateInvalid||0)>0?'#fca5a5':'#86efac') + '">' + (diag.failDateInvalid||0) + '</b>，RDC为空=<b style="color:' + ((diag.failRdcEmpty||0)>0?'#fca5a5':'#86efac') + '">' + (diag.failRdcEmpty||0) + '</b>，成功=<b style="color:#86efac">' + (diag.successRows||0) + '</b></div>' +
+        '<div style="margin-top:8px">表头实际值：<span style="color:#86efac;word-break:break-all">' + headerJson + '</span></div>' +
+        '<div style="margin-top:4px">前5行探测列样例（date/rdc/qty/unit）：<span style="color:#86efac;word-break:break-all">' + sampleJson + '</span></div>' +
+        '</div>';
+    }
+    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回分析</button></div><div style="text-align:center;padding:40px 20px 20px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg);color:#fbbf24;margin-bottom:8px">' + titleText + '</div><div style="font-size:12px;margin-bottom:16px;color:#94a3b8;max-width:700px;margin-left:auto;margin-right:auto">' + subText + '</div>' + diagHtml + '<div style="font-size:12px;color:#94a3b8;margin:8px 0">当前 inventory.xlsx 含以下 Sheet：</div><div style="max-width:600px;margin:0 auto;line-height:2">' + sheetListHtml + '</div><div style="font-size:11px;margin-top:16px;color:#64748B">提示：重新导入库存文件，或将拉回相关 Sheet 重命名包含「拉回」或「回货」关键词</div></div>';
     return;
   }
 
@@ -9229,16 +9246,43 @@ function parseInventoryExcel(rawData) {
       pullbackSheetName = sheetNames.find(n => keywords.some(k => norm(n) === k || norm(n).includes(k))) || '';
     }
 
-    // v56/v60: 列名自动探测——按表头匹配日期/SKU/箱数/发货RDC 等，避免列错位导致全部被过滤
+    // v64: 表头行自动识别——扫描前 15 行找含最多列名关键词的行作为表头
+    function detectPullbackHeaderRow(arr) {
+      if (!arr || arr.length === 0) return 0;
+      const dateKws = ['日期', 'date', '过账', '创建'];
+      const rdcKws = ['rdc', '仓库', '区域'];
+      const skuKws = ['sku', '物料', '商品', '编码'];
+      const qtyKws = ['数量', '箱数', '件数', 'qty'];
+      const allKws = [...dateKws, ...rdcKws, ...skuKws, ...qtyKws];
+      let bestRow = 0, bestScore = -1;
+      const scan = Math.min(15, arr.length);
+      for (let i = 0; i < scan; i++) {
+        const row = arr[i] || [];
+        const text = row.map(c => String(c || '').replace(/\s+/g, '').toLowerCase()).join('|');
+        let score = 0;
+        allKws.forEach(k => { if (text.indexOf(k) >= 0) score++; });
+        if (score > bestScore) { bestScore = score; bestRow = i; }
+      }
+      return { rowIdx: bestScore > 0 ? bestRow : 0, score: bestScore };
+    }
+
+    // v56/v60/v64: 列名自动探测——按表头匹配日期/SKU/箱数/发货RDC 等
     const _pbColDefault = { date: 0, rdc: 7, sku: 3, name: 4, qty: 5, unit: 6, rec: 2, brand: 8 };
     let _pbCol = Object.assign({}, _pbColDefault);
+    let _headerRowIdx = 0;
+    let _diag = { headerDetected: false, score: 0, header: [], sampleRows: [], sampleValues: [], failMissingDate: 0, failDateInvalid: 0, failRdcEmpty: 0 };
     if (pullbackArr && pullbackArr.length > 0) {
-      const _header = pullbackArr[0] || [];
+      const _hdrInfo = detectPullbackHeaderRow(pullbackArr);
+      _headerRowIdx = _hdrInfo.rowIdx;
+      _diag.headerDetected = _hdrInfo.score > 0;
+      _diag.score = _hdrInfo.score;
+      const _header = pullbackArr[_headerRowIdx] || [];
+      _diag.header = _header.slice(0, 12);
       const _hLower = _header.map(function(h) { return String(h || '').replace(/\s+/g, '').toLowerCase(); });
       function _findCol(kws) { for (let _i = 0; _i < _hLower.length; _i++) { if (kws.some(function(k) { return _hLower[_i].indexOf(k) >= 0; })) return _i; } return -1; }
-      const _dateCol = _findCol(['日期', '发货日期', '拉回日期', '出库日期', '创建日期', '过账日期', 'date']);
+      const _dateCol = _findCol(['日期', '发货日期', '拉回日期', '出库日期', '创建日期', '过账日期', '业务日期', '单据日期', 'date']);
       if (_dateCol >= 0) _pbCol.date = _dateCol;
-      const _rdcCol = _findCol(['发货rdc', '发货仓', '发货区域', '出库rdc', '发货仓库', '调出仓', '调出区域', '出库仓库', '调出rdc', 'rdc']);
+      const _rdcCol = _findCol(['发货rdc', '发货仓', '发货区域', '出库rdc', '发货仓库', '调出仓', '调出区域', '出库仓库', '调出rdc', '调拨仓库', '调拨方', '来源仓', '出库方', '调出', 'rdc']);
       if (_rdcCol >= 0) _pbCol.rdc = _rdcCol;
       const _skuCol = _findCol(['sku编码', 'sku', '物料编码', '物料号', '商品编码', '物料']);
       if (_skuCol >= 0) _pbCol.sku = _skuCol;
@@ -9252,7 +9296,17 @@ function parseInventoryExcel(rawData) {
       if (_recCol >= 0) _pbCol.rec = _recCol;
       const _brandCol = _findCol(['品牌', 'brand']);
       if (_brandCol >= 0) _pbCol.brand = _brandCol;
-      console.log('[拉回分析] sheet 名:', pullbackSheetName, '行数:', pullbackArr.length - 1, '探测列映射:', _pbCol, '表头:', _header.slice(0, 12));
+      // v64: 表头行偏移，数据从 _headerRowIdx+1 开始
+      _diag.cols = _pbCol;
+      for (let si = _headerRowIdx + 1; si < Math.min(_headerRowIdx + 6, pullbackArr.length); si++) {
+        const r = pullbackArr[si] || [];
+        _diag.sampleRows.push({ rowIdx: si, data: r.slice(0, 12) });
+        _diag.sampleValues.push({ date: r[_pbCol.date], rdc: r[_pbCol.rdc], qty: r[_pbCol.qty], unit: r[_pbCol.unit] });
+      }
+      console.log('[拉回分析] sheet 名:', pullbackSheetName, '行数:', pullbackArr.length - 1, '表头行:', _headerRowIdx, '得分:', _hdrInfo.score, '探测列映射:', _pbCol);
+      console.log('[拉回分析] 表头:', JSON.stringify(_diag.header));
+      console.log('[拉回分析] 样例行:', JSON.stringify(_diag.sampleRows));
+      console.log('[拉回分析] 探测列样例值(date/rdc/qty/unit):', JSON.stringify(_diag.sampleValues));
     }
 
     // v59/v60/v62: 结构化行数据，避免 TAB 端硬编码列索引；增强日期/RDC/数量解析与诊断
@@ -9288,12 +9342,13 @@ function parseInventoryExcel(rawData) {
       const rows = [];
       if (!pullbackArr) return rows;
       let failMissingDate = 0, failDateInvalid = 0, failRdcEmpty = 0;
-      for (let i = 1; i < pullbackArr.length; i++) {
+      const startIdx = _headerRowIdx + 1;
+      for (let i = startIdx; i < pullbackArr.length; i++) {
         const r = pullbackArr[i]; if (!r) continue;
         if (!r[pbCols.date]) { failMissingDate++; continue; }
         const dt = parsePullDate(r[pbCols.date]);
         if (!dt) { failDateInvalid++; continue; }
-        const ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth() + 1).toString().padStart(2, '0');
+        const ym = dt.getFullYear() + '-' + (dt.getMonth() + 1).toString().padStart(2, '0');
         let rdcRaw = String(r[pbCols.rdc] || '').trim();
         if (!rdcRaw) { failRdcEmpty++; continue; }
         rdcRaw = normalizePullbackRDC(rdcRaw);
@@ -9318,7 +9373,10 @@ function parseInventoryExcel(rawData) {
         rows.push({ date: dt, ym: ym, rdc: rdcRaw, sku: sku, name: name, brand: brand, rec: rec, qty: qty, unit: unit, boxQty: qtyBox, amount: amt });
       }
       if (logDiag) {
-        console.log('[拉回分析] 诊断：缺日期=' + failMissingDate + ', 日期无效=' + failDateInvalid + ', RDC为空=' + failRdcEmpty + ', 成功=' + rows.length);
+        console.log('[拉回分析] 诊断：缺日期=' + failMissingDate + ', 日期无效=' + failDateInvalid + ', RDC为空=' + failRdcEmpty + ', 成功=' + rows.length + ' (起始行=' + startIdx + ')');
+        _diag.failMissingDate = failMissingDate;
+        _diag.failDateInvalid = failDateInvalid;
+        _diag.failRdcEmpty = failRdcEmpty;
       }
       return rows;
     }
@@ -9330,21 +9388,9 @@ function parseInventoryExcel(rawData) {
       _parsed = parsePullbackWithCols(_pbColDefault, true);
     }
     pullbackRows.push(..._parsed);
-    // 增强诊断：输出表头、前3行原始值、样本日期/RDC值
-    if (pullbackArr && pullbackArr.length > 0) {
-      const _h = pullbackArr[0] || [];
-      console.log('[拉回分析] 表头:', JSON.stringify(_h.slice(0, 12)));
-      for (let i = 1; i < Math.min(4, pullbackArr.length); i++) {
-        const r = pullbackArr[i] || [];
-        console.log('[拉回分析] 样例行' + i + ':', JSON.stringify(r.slice(0, 12)));
-      }
-      const _sample = [];
-      for (let i = 1; i < Math.min(6, pullbackArr.length); i++) {
-        const r = pullbackArr[i] || [];
-        _sample.push({ date: r[_pbCol.date], rdc: r[_pbCol.rdc], qty: r[_pbCol.qty], unit: r[_pbCol.unit] });
-      }
-      console.log('[拉回分析] 探测列样例值(date/rdc/qty/unit):', JSON.stringify(_sample));
-    }
+    _diag.successRows = pullbackRows.length;
+    // 将诊断信息挂到 window 供空态页面展示
+    window._pullbackDiag = _diag;
     console.log('[拉回分析] 最终有效结构化行数:', pullbackRows.length, 'sheetFound:', pullbackSheetFound);
 
     // ===== 7月新模板：库存金额 sheet（左表=金额趋势 4透视块；右表=库存结构分析 4种状态） =====
@@ -9470,6 +9516,7 @@ function parseInventoryExcel(rawData) {
       pullbackRows: pullbackRows,      // v59/v60: 结构化行数据，供拉回分析 TAB 使用
       pullbackSheetFound: pullbackSheetFound, // v60: 标记 sheet 是否真的找到
       pullbackSheetName: pullbackSheetName,   // v60: 实际匹配到的 sheet 名
+      pullbackDiag: _diag,                    // v64: 诊断信息（表头/样例/失败计数）供空态页面展示
       _rawSheets: rawSheets,  // 原始 sheet 行数组，供拉回分析 hnMap 构建
       loadedAt: new Date().toISOString()
     };
