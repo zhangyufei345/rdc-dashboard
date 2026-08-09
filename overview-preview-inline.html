@@ -171,7 +171,19 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
   }
   .center-title { font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 16px; }
-  .center-rings { position: relative; width: 220px; height: 220px; margin: 0 auto 18px; }
+  /* 中央3列布局：左数据(订单流) / 中环形 / 右数据(客户库存) */
+  .center-3col { display: grid; grid-template-columns: 1fr 240px 1fr; gap: 10px; align-items: start; }
+  .center-side { display: flex; flex-direction: column; gap: 6px; }
+  .center-side-title { font-size: 11px; color: #94a3b8; letter-spacing: 1px; margin-bottom: 2px; text-align: left; }
+  .center-side .center-stats { grid-template-columns: 1fr 1fr !important; gap: 6px; }
+  .center-side .center-stat { padding: 8px 6px; }
+  .center-side .center-stat .v { font-size: 16px; }
+  .center-side .center-stat .l { font-size: 9px; }
+  .center-rings { position: relative; width: 240px; height: 240px; margin: 0 auto; }
+  @media (max-width: 900px) {
+    .center-3col { grid-template-columns: 1fr; }
+    .center-rings { margin: 0 auto 12px; }
+  }
   .ring-label { position: absolute; font-size: 11px; color: #94a3b8; }
   .ring-label.tl { top: -2px; left: 50%; transform: translateX(-50%); }
   .ring-label.tr { top: 50%; right: -8px; transform: translateY(-50%); }
@@ -187,7 +199,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   .center-metric .lbl { font-size: 11px; color: #94a3b8; margin-top: 6px; letter-spacing: 1px; }
 
   .center-divider { height: 1px; margin: 14px -16px; background: linear-gradient(90deg, transparent, rgba(99,179,237,0.25), transparent); }
-  .center-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .center-stats { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 10px; }
   .center-stat { padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center; }
   .center-stat .v { font-size: 18px; font-weight: 700; }
   .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
@@ -297,65 +309,72 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     <div id="chart-trend" class="chart-area" style="height:240px"></div>
   </div>
 
-  <!-- 中央：订单流核心（双层环形 + 辐射柱） -->
+  <!-- 中央：订单流核心（双层环形 + 左右数据发散） -->
   <div class="mindmap-center">
     <div class="center-title">订 单 流 全 景</div>
-    <div class="center-rings">
-      <div id="chart-core" style="width:240px;height:240px"></div>
+    <div class="center-3col">
+      <!-- 左列：订单流 4 个数据点（2×2 网格） -->
+      <div class="center-side">
+        <div class="center-side-title">📦 订单流</div>
+        <div class="center-stats" style="grid-template-columns:1fr 1fr">
+          <div class="center-stat">
+            <div class="v" style="color:#60a5fa">3,256</div>
+            <div class="l">订单箱数</div>
+          </div>
+          <div class="center-stat">
+            <div class="v" style="color:#34d399">2,539</div>
+            <div class="l">首日已发</div>
+          </div>
+          <div class="center-stat">
+            <div class="v" style="color:#f97316">847</div>
+            <div class="l">待发</div>
+          </div>
+          <div class="center-stat">
+            <div class="v" style="color:#ef4444">5</div>
+            <div class="l">紧急SKU</div>
+          </div>
+        </div>
+        <!-- 补货流（健康） -->
+        <div style="margin-top:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(52,211,153,0.15),rgba(52,211,153,0.04));border-left:3px solid #34d399;border-radius:6px">
+          <div style="font-size:10px;color:#6ee7b7;letter-spacing:1px">↗ 补货流（健康）</div>
+          <div style="font-size:16px;color:#34d399;font-weight:700;margin-top:2px">85.2%</div>
+        </div>
+      </div>
+
+      <!-- 中列：双层环形 -->
+      <div class="center-rings">
+        <div id="chart-core" style="width:240px;height:240px"></div>
+      </div>
+
+      <!-- 右列：客户/缺货 4 个数据点（2×2 网格） -->
+      <div class="center-side">
+        <div class="center-side-title">🌐 客户/库存</div>
+        <div class="center-stats" style="grid-template-columns:1fr 1fr">
+          <div class="center-stat" style="background:rgba(96,165,250,0.08)">
+            <div class="v" style="color:#93c5fd">128</div>
+            <div class="l">客户数</div>
+          </div>
+          <div class="center-stat" style="background:rgba(168,85,247,0.08)">
+            <div class="v" style="color:#c4b5fd">12</div>
+            <div class="l">品牌数</div>
+          </div>
+          <div class="center-stat" style="background:rgba(239,68,68,0.08)">
+            <div class="v" style="color:#fca5a5">68</div>
+            <div class="l">缺货SKU</div>
+          </div>
+          <div class="center-stat" style="background:rgba(52,211,153,0.08)">
+            <div class="v" style="color:#6ee7b7">42</div>
+            <div class="l">在途SKU</div>
+          </div>
+        </div>
+        <!-- 异常流（关注） -->
+        <div style="margin-top:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(239,68,68,0.15),rgba(239,68,68,0.04));border-left:3px solid #ef4444;border-radius:6px">
+          <div style="font-size:10px;color:#fca5a5;letter-spacing:1px">↘ 异常流（关注）</div>
+          <div style="font-size:16px;color:#ef4444;font-weight:700;margin-top:2px">14.8%</div>
+        </div>
+      </div>
     </div>
-    <div class="center-divider"></div>
-    <!-- 4 个核心数据点（按订单流优先级排） -->
-    <div class="center-stats">
-      <div class="center-stat">
-        <div class="v" style="color:#60a5fa">3,256</div>
-        <div class="l">订单箱数</div>
-      </div>
-      <div class="center-stat">
-        <div class="v" style="color:#34d399">2,539</div>
-        <div class="l">首日已发</div>
-      </div>
-      <div class="center-stat">
-        <div class="v" style="color:#f97316">847</div>
-        <div class="l">待发</div>
-      </div>
-      <div class="center-stat">
-        <div class="v" style="color:#ef4444">5</div>
-        <div class="l">紧急SKU</div>
-      </div>
-    </div>
-    <!-- 新增 4 个数据点：客户/品牌/缺货/在途 -->
-    <div class="center-stats" style="margin-top:10px">
-      <div class="center-stat" style="background:rgba(96,165,250,0.08)">
-        <div class="v" style="color:#93c5fd">128</div>
-        <div class="l">客户数</div>
-      </div>
-      <div class="center-stat" style="background:rgba(168,85,247,0.08)">
-        <div class="v" style="color:#c4b5fd">12</div>
-        <div class="l">品牌数</div>
-      </div>
-      <div class="center-stat" style="background:rgba(239,68,68,0.08)">
-        <div class="v" style="color:#fca5a5">68</div>
-        <div class="l">缺货SKU</div>
-      </div>
-      <div class="center-stat" style="background:rgba(52,211,153,0.08)">
-        <div class="v" style="color:#6ee7b7">42</div>
-        <div class="l">在途SKU</div>
-      </div>
-    </div>
-    <!-- 数据发散：左补货流 / 右异常流 -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
-      <div style="padding:10px 12px;background:linear-gradient(90deg,rgba(52,211,153,0.15),rgba(52,211,153,0.04));border-left:3px solid #34d399;border-radius:6px">
-        <div style="font-size:10px;color:#6ee7b7;letter-spacing:1px">↗ 补货流（健康）</div>
-        <div style="font-size:18px;color:#34d399;font-weight:700;margin-top:2px">85.2%</div>
-        <div style="font-size:10px;color:#94a3b8;margin-top:1px">正常补货占比</div>
-      </div>
-      <div style="padding:10px 12px;background:linear-gradient(90deg,rgba(239,68,68,0.15),rgba(239,68,68,0.04));border-left:3px solid #ef4444;border-radius:6px">
-        <div style="font-size:10px;color:#fca5a5;letter-spacing:1px">↘ 异常流（关注）</div>
-        <div style="font-size:18px;color:#ef4444;font-weight:700;margin-top:2px">14.8%</div>
-        <div style="font-size:10px;color:#94a3b8;margin-top:1px">缺货/超时占比</div>
-      </div>
-    </div>
-    <div class="alert-strip">
+    <div class="alert-strip" style="margin-top:14px">
       <span>🔥 紧急缺货预警</span>
       <span class="num">5 个 SKU</span>
     </div>
@@ -430,22 +449,23 @@ if (!window.__echartsOk) {
 // 模拟 ECharts darkMode
   const baseTextStyle = { color: '#cbd5e1', fontSize: 11 };
 
-  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）+ 6个RDC辐射柱
+  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）+ 6个RDC文字标签环外
   echarts.init(document.getElementById('chart-core')).setOption({
     tooltip: {
       trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
       formatter: function(p) {
-        if (p.seriesType === 'pie') {
-          return '<div style="font-weight:600">' + p.name + '</div>' +
-                 '<div style="margin-top:4px">数值：' + p.value + (p.name.includes('率') ? '%' : '') + '</div>';
-        }
-        if (p.seriesType === 'bar' && p.seriesName === 'RDC 满足率') {
-          return '<div style="font-weight:600">' + p.name + '</div>' +
-                 '<div style="margin-top:4px">满足率：' + (p.value*100).toFixed(1) + '%</div>';
-        }
-        return p.name + ': ' + p.value;
+        return '<div style="font-weight:600">' + p.name + '</div>' +
+               '<div style="margin-top:4px">数值：' + p.value + (p.name.indexOf('率') >= 0 ? '%' : '') + '</div>';
       }
     },
+    graphic: [
+      { type: 'text', left: '4%', top: '6%', style: { text: '华南 85%', fill: '#60a5fa', font: 'bold 12px sans-serif' } },
+      { type: 'text', right: '4%', top: '6%', style: { text: '华北 72%', fill: '#a78bfa', font: 'bold 12px sans-serif' } },
+      { type: 'text', left: '50%', top: '2%', style: { text: '华中 78%', fill: '#c084fc', font: 'bold 12px sans-serif' } },
+      { type: 'text', left: '4%', bottom: '6%', style: { text: '东北 91%', fill: '#34d399', font: 'bold 12px sans-serif' } },
+      { type: 'text', right: '4%', bottom: '6%', style: { text: '西南 83%', fill: '#2dd4bf', font: 'bold 12px sans-serif' } },
+      { type: 'text', right: '4%', top: '50%', style: { text: '西北 68%', fill: '#f97316', font: 'bold 12px sans-serif' } }
+    ],
     series: [
       // 0: 外环 - 月满足率 80%
       {
@@ -480,24 +500,6 @@ if (!window.__echartsOk) {
         data: [
           { value: 1, name: '核心背景', itemStyle: { color: 'rgba(15,23,42,0.4)' } }
         ]
-      },
-      // 3: 6个RDC辐射柱（围绕环形外围）
-      {
-        type: 'bar',
-        coordinateSystem: 'polar',
-        radius: ['108%', '128%'],
-        center: ['50%', '50%'],
-        barWidth: 8,
-        data: [
-          { value: 0.85, name: '华南', itemStyle: { color: '#60a5fa' } },
-          { value: 0.72, name: '华北', itemStyle: { color: '#a78bfa' } },
-          { value: 0.91, name: '东北', itemStyle: { color: '#34d399' } },
-          { value: 0.68, name: '西北', itemStyle: { color: '#f97316' } },
-          { value: 0.78, name: '华中', itemStyle: { color: '#c084fc' } },
-          { value: 0.83, name: '西南', itemStyle: { color: '#2dd4bf' } }
-        ].map(function(d) { return { name: d.name, value: d.value, itemStyle: d.itemStyle }; }),
-        itemStyle: { borderRadius: 4 },
-        label: { show: true, position: 'middle', color: '#e2e8f0', fontSize: 9, formatter: function(p) { return p.name; } }
       }
     ]
   });
