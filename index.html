@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 66; // v65: RDC列头关键词增加「工厂/发货工厂/库位/收货库位」修复RDC错指品牌列；v66: 发货工厂代码P2xx/P4xx/P6xx/P7xx/P8xx/P9xx映射为RDC名称（华中/华南/西北/华中/西南/华北），收货仓表格增加RDC列（按库位前缀映射）
+const DB_VERSION = 67; // v67: 拉回分析品牌优先从「基础数据」productMaster 抓取（解决新模板无品牌列导致全显示「未知」）；新增 recRdcMap（基础数据 col14收货库位→col19 RDC）精确映射，按收货仓表格 RDC 不再全显示「其他」
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6418,11 +6418,18 @@ function renderPullbackAnalysis(page) {
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓' + suf + '</span></div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
       (function() {
+        // v67: 优先使用基础数据中的 收货库位→RDC 映射表，回退到前缀规则
+        var recRdcMap = (dataStore.inventory && dataStore.inventory.recRdcMap) || {};
         var factoryM = { '20':'东北','40':'华南','60':'西北','70':'华中','80':'西南','90':'华北' };
         return Object.entries(agg.rec).map(function(e) { return { name: e[0], box: e[1].box, amt: e[1].amt }; }).sort(function(a, b) { return valOf(b) - valOf(a); }).map(function(r) {
           var rdcLabel = '其他';
-          var locMatch = r.name.match(/^(\d{2})/) || r.name.match(/^P?(\d{2})/);
-          if (locMatch && factoryM[locMatch[1]]) rdcLabel = factoryM[locMatch[1]] + 'RDC';
+          if (recRdcMap[r.name]) {
+            var raw = String(recRdcMap[r.name]).trim().replace(/仓$/g, '');
+            rdcLabel = raw + 'RDC';
+          } else {
+            var locMatch = r.name.match(/^(\d{2})/) || r.name.match(/^P?(\d{2})/);
+            if (locMatch && factoryM[locMatch[1]]) rdcLabel = factoryM[locMatch[1]] + 'RDC';
+          }
           return '<tr><td style="text-align:left;color:#93c5fd">' + rdcLabel + '</td><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
         }).join('');
       })() +
@@ -9211,9 +9218,10 @@ function parseInventoryExcel(rawData) {
     const hainanArr = findByName('海南花露水历史数据');
     const hainanHistoryStatus = parseHainanHistoryByStatus(hainanArr || []);
 
-    // 解析「基础数据」sheet：产品编码 → {成本价, 箱规转化因子, 是否淘汰品}
+    // 解析「基础数据」sheet：产品编码 → {成本价, 箱规转化因子, 是否淘汰品, 品牌, 收货库位→RDC 映射}
     const baseArr = findByName('基础数据');
     const productMaster = {};
+    const recRdcMap = {}; // v67: 收货库位 → RDC 映射（从基础数据 col14/col19 构建）
     if (baseArr) {
       // 按表头名寻列，兼容新旧模板
       const baseHeader = baseArr[0] || [];
@@ -9225,17 +9233,29 @@ function parseInventoryExcel(rawData) {
       }
       const C_BASE_COST = bColIdx('成本价');
       const C_BASE_SPEC = bColIdx('箱规转化因子');
+      const C_BASE_BRAND = bColIdx('品牌');
       const C_BASE_OBSOLETE = bColIdx('是否为淘汰品');
+      // v67: 库位映射表（同一 sheet 右侧区域，列10起）
+      const C_BASE_REC = bColIdx('收货库位');
+      const C_BASE_RDC = bColIdx('RDC');
       for (let i = 1; i < baseArr.length; i++) {
         const r = baseArr[i]; if (!r || !r[0]) continue;
         const sku = String(r[0]).trim();
         if (!sku) continue;
         const cost = Number(r[C_BASE_COST >= 0 ? C_BASE_COST : 2]) || 0;
         const spec = Number(r[C_BASE_SPEC >= 0 ? C_BASE_SPEC : 3]) || 0;
+        const brand = String(r[C_BASE_BRAND >= 0 ? C_BASE_BRAND : 4] || '').trim();
         const obsolete = (C_BASE_OBSOLETE >= 0 ? String(r[C_BASE_OBSOLETE] || '').trim() : '') === '淘汰品';
-        if (!productMaster[sku]) productMaster[sku] = { cost, spec, obsolete };
+        if (!productMaster[sku]) productMaster[sku] = { cost, spec, brand, obsolete };
+        // v67: 收集库位 → RDC 映射
+        if (C_BASE_REC >= 0 && C_BASE_RDC >= 0) {
+          const recKey = String(r[C_BASE_REC] || '').trim();
+          const rdcVal = String(r[C_BASE_RDC] || '').trim();
+          if (recKey && rdcVal && !recRdcMap[recKey]) recRdcMap[recKey] = rdcVal;
+        }
       }
     }
+    console.log('[拉回分析] 基础数据解析：productMaster=' + Object.keys(productMaster).length + ' SKU, recRdcMap=' + Object.keys(recRdcMap).length + ' 库位');
 
     // 解析「拉回数据」sheet：按 (发货RDC, 年月) 聚合「箱数 + 拉回金额」
     // 金额 = 发货单数量(基本单位) × 成本价；若单位是'箱'则金额 = 箱数 × 成本价 × 箱规
@@ -9377,11 +9397,13 @@ function parseInventoryExcel(rawData) {
         rdcRaw = normalizePullbackRDC(rdcRaw);
         const sku = String(r[pbCols.sku] || '').trim();
         const name = String(r[pbCols.name] || '').trim();
-        const brand = String(r[pbCols.brand] || '').trim() || '未知';
+        // v67: 品牌已在前面从 productMaster 抓取
         const rec = String(r[pbCols.rec] || '').trim() || '未知';
         const master = productMaster[sku];
         const cost = master ? master.cost : 0;
         const spec = master ? master.spec : 0;
+        // v67: 品牌优先从产品主数据抓取（兼容新模板无品牌列的情况）
+        const brand = String(r[pbCols.brand] || '').trim() || (master ? master.brand : '') || '未知';
         const unit = String(r[pbCols.unit] || '').trim();
         const qty = parsePullQty(r[pbCols.qty]);
         let qtyBox = 0;
@@ -9541,7 +9563,8 @@ function parseInventoryExcel(rawData) {
       pullbackSheetName: pullbackSheetName,   // v60: 实际匹配到的 sheet 名
       pullbackDiag: _diag,                    // v64: 诊断信息（表头/样例/失败计数）供空态页面展示
       _rawSheets: rawSheets,  // 原始 sheet 行数组，供拉回分析 hnMap 构建
-      loadedAt: new Date().toISOString()
+      loadedAt: new Date().toISOString(),
+      recRdcMap: recRdcMap  // v67: 收货库位→RDC 映射（按基础数据 col14/col19 构建），供按收货仓表格使用
     };
 
     // 转储数据（现位于库存文件，按名称查找；与 parseExcel 中逻辑一致）
