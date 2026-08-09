@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 65; // v64: 拉回数据表头行自动识别（前15行找含最多列名关键词的行）+ 空态页面直接展示诊断信息；v65: RDC/rec/名称/qty 列头关键词扩充（增加「工厂/发货工厂/库位/收货库位/短文本/发货单数量」），空白行跳过不计失败
+const DB_VERSION = 66; // v65: RDC列头关键词增加「工厂/发货工厂/库位/收货库位」修复RDC错指品牌列；v66: 发货工厂代码P2xx/P4xx/P6xx/P7xx/P8xx/P9xx映射为RDC名称（华中/华南/西北/华中/西南/华北），收货仓表格增加RDC列（按库位前缀映射）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6416,11 +6416,17 @@ function renderPullbackAnalysis(page) {
       '<div class="card"><div class="card-header"><span class="card-title">🏷️ 品牌TOP10' + suf + '</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand"></div></div>' +
     '</div>' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓' + suf + '</span></div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
-      Object.entries(agg.rec).map(function(e) { return { name: e[0], box: e[1].box, amt: e[1].amt }; }).sort(function(a, b) { return valOf(b) - valOf(a); }).map(function(r) {
-        return '<tr><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
-      }).join('') +
-      (Object.keys(agg.rec).length === 0 ? '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
+      '<div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
+      (function() {
+        var factoryM = { '20':'东北','40':'华南','60':'西北','70':'华中','80':'西南','90':'华北' };
+        return Object.entries(agg.rec).map(function(e) { return { name: e[0], box: e[1].box, amt: e[1].amt }; }).sort(function(a, b) { return valOf(b) - valOf(a); }).map(function(r) {
+          var rdcLabel = '其他';
+          var locMatch = r.name.match(/^(\d{2})/) || r.name.match(/^P?(\d{2})/);
+          if (locMatch && factoryM[locMatch[1]]) rdcLabel = factoryM[locMatch[1]] + 'RDC';
+          return '<tr><td style="text-align:left;color:#93c5fd">' + rdcLabel + '</td><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
+        }).join('');
+      })() +
+      (Object.keys(agg.rec).length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
       '</tbody></table></div></div>';
 
   // 9. 绘制图表
@@ -9313,9 +9319,22 @@ function parseInventoryExcel(rawData) {
     // v59/v60/v62: 结构化行数据，避免 TAB 端硬编码列索引；增强日期/RDC/数量解析与诊断
     const pullbackRows = [];
     function normalizePullbackRDC(n) {
-      const s = String(n || '').trim().replace(/仓$/g, '').replace(/RDC$/g, '');
+      let s = String(n || '').trim().replace(/仓$/g, '').replace(/RDC$/g, '');
+      // v66: 直接中文/简称映射
       const m = { '华南':'华南RDC','华北':'华北RDC','东北':'东北RDC','西北':'西北RDC','华中':'华中RDC','西南':'西南RDC','华东':'华东RDC' };
-      return m[s] ? m[s] : (s + 'RDC');
+      if (m[s]) return m[s];
+      // v66: 工厂代码 P2xx/P4xx/P6xx/P7xx/P8xx/P9xx → RDC（按 xx 前缀映射：20东北/40华南/60西北/70华中/80西南/90华北）
+      const factoryM = { '20':'东北RDC','40':'华南RDC','60':'西北RDC','70':'华中RDC','80':'西南RDC','90':'华北RDC' };
+      const factoryMatch = s.match(/^P?(\d{2,3})/);
+      if (factoryMatch) {
+        const prefix = factoryMatch[1].substring(0, 2);
+        if (factoryM[prefix]) return factoryM[prefix];
+      }
+      // v66: 库位代码 2x/4x/6x/7x/8x/9x 开头 → RDC（按用户规则）
+      const locMatch = s.match(/^(\d{2})/);
+      if (locMatch && factoryM[locMatch[1]]) return factoryM[locMatch[1]];
+      // 兜底：原样 +RDC
+      return s + 'RDC';
     }
     function parsePullDate(v) {
       if (v == null) return null;
