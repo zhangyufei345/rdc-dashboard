@@ -248,7 +248,7 @@ a { color: var(--color-blue); text-decoration: none; }
   box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 #page-overview .center-title { font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 14px; }
-#page-overview .center-3col { display: grid; grid-template-columns: 1fr 240px 1fr; justify-content: space-between; gap: 14px; align-items: start; width: 100%; }
+#page-overview .center-3col { display: grid; grid-template-columns: 186px 240px 186px; justify-content: space-between; gap: 18px; align-items: start; width: 100%; }
 #page-overview .center-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 #page-overview .center-side-title { font-size: 11px; color: #94a3b8; letter-spacing: 1px; margin-bottom: 2px; text-align: left; }
 #page-overview .center-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
@@ -257,6 +257,17 @@ a { color: var(--color-blue); text-decoration: none; }
 #page-overview .center-stat .v { font-size: 18px; font-weight: 700; line-height: 1; }
 #page-overview .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
 #page-overview .center-rings { position: relative; width: 240px; height: 240px; margin: 0 auto; }
+/* 6 个 RDC 满足率标签（HTML 外置于环图四周，不被遮挡） */
+#page-overview .rdc-label {
+  position: absolute; font-size: 11px; font-weight: 700; line-height: 1;
+  white-space: nowrap; pointer-events: none;
+}
+#page-overview .rdc-label-tl { left: 0; top: -4px; }
+#page-overview .rdc-label-tr { right: 0; top: -4px; }
+#page-overview .rdc-label-tt { left: 50%; top: -14px; transform: translateX(-50%); }
+#page-overview .rdc-label-bl { left: 0; bottom: -4px; }
+#page-overview .rdc-label-br { right: 0; bottom: -4px; }
+#page-overview .rdc-label-rm { right: -22px; top: 50%; transform: translateY(-50%); }
 @media (max-width: 900px) {
   #page-overview .center-3col { grid-template-columns: 1fr; }
   #page-overview .center-rings { margin: 0 auto 12px; }
@@ -614,7 +625,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 52; // v52: 总览页 1:1 复刻 overview-preview.html 的完整 UI/配色/渲染结构（ov-header/KPI 6卡/mindmap-grid 三栏含中央大数字/bottom-grid 含 Top5 mini/heatmap/Top20 表）；删除 v49-v51 所有修补残留；5 个 ECharts option 与原版一致，仅 data 替换为 dataStore 真实聚合
+const DB_VERSION = 53; // v53: 总览页 mindmap-center 微调——删除底部 alert-strip（紧急缺货预警条）；center-3col 改为固定 186/240/186+space-between（两侧列缩到约2/3宽且紧贴左右边缘，环形居中）；6个RDC满足率标签从 ECharts graphic 改为 HTML 外置（.rdc-label-tl/tr/tt/bl/br/rm）以避免被环图遮挡
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1802,13 +1813,14 @@ function renderOverview() {
             </div>
           </div>
 
-          <!-- 中列：双层环形 + 中央大数字 -->
+          <!-- 中列：双层环形 + 中央大数字 + 6 个 RDC 满足率标签（HTML 外置，不被环图遮挡） -->
           <div class="center-rings">
             <div id="chart-core" style="width:240px;height:240px"></div>
             <div class="center-metric">
               <div class="big">${(dayRate*100).toFixed(1)}%</div>
               <div class="lbl">日满足率</div>
             </div>
+            ${rdcRateLabel.map((it, i) => '<div class="rdc-label rdc-label-' + ['tl','tr','tt','bl','br','rm'][i] + '" style="color:' + getRDCColor(it.rdc) + '">' + it.rdc.replace('RDC','') + ' ' + (it.rate == null ? '—' : (it.rate*100).toFixed(0) + '%') + '</div>').join('')}
           </div>
 
           <!-- 右列：客户/库存 4 个数据点（2×2 网格） -->
@@ -1837,10 +1849,6 @@ function renderOverview() {
               <div style="font-size:16px;color:#ef4444;font-weight:700;margin-top:2px">${formatMoney(totalShortAmount)}</div>
             </div>
           </div>
-        </div>
-        <div class="alert-strip ${urgentSkus.size > 0 ? '' : 'green'}">
-          <span>🔥 紧急缺货预警</span>
-          <span class="num">${urgentSkus.size} 个 SKU</span>
         </div>
       </div>
 
@@ -1892,15 +1900,11 @@ function renderOverview() {
 
   // ============== 5 个 ECharts（option 与 overview-preview 一致，仅 data 替换为真实） ==============
 
-  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）+ 6 RDC 真实满足率标签环外
+  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）；6 RDC 标签已外置为 HTML 元素（v53 修复被遮挡）
   const chartCore = initChart('chart-core');
   if (chartCore) {
     const mRate = Math.round(monthFulfillRate * 100);
     const dRate = Math.round(dayRate * 100);
-    const labelPos = [
-      { left: '4%', top: '6%' }, { right: '4%', top: '6%' }, { left: '50%', top: '2%' },
-      { left: '4%', bottom: '6%' }, { right: '4%', bottom: '6%' }, { right: '4%', top: '50%' }
-    ];
     chartCore.setOption({
       tooltip: {
         trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
@@ -1909,12 +1913,6 @@ function renderOverview() {
                  '<div style="margin-top:4px">数值：' + p.value + (p.name.indexOf('率') >= 0 ? '%' : '') + '</div>';
         }
       },
-      graphic: rdcRateLabel.map((it, i) => {
-        const pos = labelPos[i];
-        const obj = { type: 'text', style: { text: it.rdc.replace('RDC','') + ' ' + (it.rate == null ? '—' : (it.rate*100).toFixed(0) + '%'), fill: getRDCColor(it.rdc), font: 'bold 12px sans-serif' } };
-        Object.keys(pos).forEach(k => obj[k] = pos[k]);
-        return obj;
-      }),
       series: [
         { type: 'pie', radius: ['88%','100%'], startAngle: 90, label: { show: false },
           data: [
