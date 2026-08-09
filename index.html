@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 68; // v68: 拉回分析 RDC 直接取「发货工厂」列(H列,如华东仓→华东RDC,7个全有)，收货仓直接取「大仓收货仓」列(C列,4类)；删除 base data recRdcMap(仅7行→大量「其他」)
+const DB_VERSION = 69; // v68: 拉回 RDC 取 H列(发货工厂)、收货仓取 C列(大仓收货仓)；v69: 新增回退——两者缺失时按基础数据「收货库位→RDC/收货仓」映射(recRdcMap/recWhMap)匹配，normalizePullbackRDC 兜底
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9212,7 +9212,8 @@ function parseInventoryExcel(rawData) {
     // 解析「基础数据」sheet：产品编码 → {成本价, 箱规转化因子, 是否淘汰品, 品牌, 收货库位→RDC 映射}
     const baseArr = findByName('基础数据');
     const productMaster = {};
-    const recRdcMap = {}; // v67: 收货库位 → RDC 映射（从基础数据 col14/col19 构建）
+    const recRdcMap = {}; // v67: 收货库位 → RDC 映射（从基础数据 col14/col19 构建）；v69 作为 H列缺失时的回退
+    const recWhMap = {};  // v69: 收货库位 → 收货仓 映射（从基础数据 col14/col15 构建）；作为 C列缺失时的回退
     if (baseArr) {
       // 按表头名寻列，兼容新旧模板
       const baseHeader = baseArr[0] || [];
@@ -9226,9 +9227,10 @@ function parseInventoryExcel(rawData) {
       const C_BASE_SPEC = bColIdx('箱规转化因子');
       const C_BASE_BRAND = bColIdx('品牌');
       const C_BASE_OBSOLETE = bColIdx('是否为淘汰品');
-      // v67: 库位映射表（同一 sheet 右侧区域，列10起）
+      // v67/v69: 库位映射表（同一 sheet 右侧区域，列10起）—— 作为拉回数据 H/C 列缺失时的回退
       const C_BASE_REC = bColIdx('收货库位');
       const C_BASE_RDC = bColIdx('RDC');
+      const C_BASE_WH = bColIdx('收货仓');
       for (let i = 1; i < baseArr.length; i++) {
         const r = baseArr[i]; if (!r || !r[0]) continue;
         const sku = String(r[0]).trim();
@@ -9238,15 +9240,23 @@ function parseInventoryExcel(rawData) {
         const brand = String(r[C_BASE_BRAND >= 0 ? C_BASE_BRAND : 4] || '').trim();
         const obsolete = (C_BASE_OBSOLETE >= 0 ? String(r[C_BASE_OBSOLETE] || '').trim() : '') === '淘汰品';
         if (!productMaster[sku]) productMaster[sku] = { cost, spec, brand, obsolete };
-        // v67: 收集库位 → RDC 映射
-        if (C_BASE_REC >= 0 && C_BASE_RDC >= 0) {
+        // v67/v69: 收集 收货库位 → RDC / 收货仓 映射（基础数据 col14→col19 / col14→col15）
+        if (C_BASE_REC >= 0) {
           const recKey = String(r[C_BASE_REC] || '').trim();
-          const rdcVal = String(r[C_BASE_RDC] || '').trim();
-          if (recKey && rdcVal && !recRdcMap[recKey]) recRdcMap[recKey] = rdcVal;
+          if (recKey) {
+            if (C_BASE_RDC >= 0) {
+              const rdcVal = String(r[C_BASE_RDC] || '').trim();
+              if (rdcVal && !recRdcMap[recKey]) recRdcMap[recKey] = rdcVal;
+            }
+            if (C_BASE_WH >= 0) {
+              const whVal = String(r[C_BASE_WH] || '').trim();
+              if (whVal && !recWhMap[recKey]) recWhMap[recKey] = whVal;
+            }
+          }
         }
       }
     }
-    console.log('[拉回分析] 基础数据解析：productMaster=' + Object.keys(productMaster).length + ' SKU, recRdcMap=' + Object.keys(recRdcMap).length + ' 库位');
+    console.log('[拉回分析] 基础数据解析：productMaster=' + Object.keys(productMaster).length + ' SKU, recRdcMap=' + Object.keys(recRdcMap).length + ' 库位, recWhMap=' + Object.keys(recWhMap).length + ' 库位');
 
     // 解析「拉回数据」sheet：按 (发货RDC, 年月) 聚合「箱数 + 拉回金额」
     // 金额 = 发货单数量(基本单位) × 成本价；若单位是'箱'则金额 = 箱数 × 成本价 × 箱规
@@ -9285,7 +9295,7 @@ function parseInventoryExcel(rawData) {
     }
 
     // v56/v60/v64: 列名自动探测——按表头匹配日期/SKU/箱数/发货RDC 等
-    const _pbColDefault = { date: 0, rdc: 7, sku: 3, name: 4, qty: 5, unit: 6, rec: 2, brand: 8 };
+    const _pbColDefault = { date: 0, rdc: 7, sku: 3, name: 4, qty: 5, unit: 6, rec: 2, recLoc: 1, brand: 8 };
     let _pbCol = Object.assign({}, _pbColDefault);
     let _headerRowIdx = 0;
     let _diag = { headerDetected: false, score: 0, header: [], sampleRows: [], sampleValues: [], failMissingDate: 0, failDateInvalid: 0, failRdcEmpty: 0 };
@@ -9312,6 +9322,9 @@ function parseInventoryExcel(rawData) {
       if (_unitCol >= 0) _pbCol.unit = _unitCol;
       const _recCol = _findCol(['大仓收货仓', '收货仓', '收货方', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', '收货库位', '库位', 'rec']);
       if (_recCol >= 0) _pbCol.rec = _recCol;
+      // v69: 收货库位列（具体库位码，如 T8A8）—— 用于 H/C 列缺失时回退到 基础数据 映射
+      const _recLocCol = _findCol(['收货库位', '具体库位', '实际库位', '库位']);
+      if (_recLocCol >= 0) _pbCol.recLoc = _recLocCol;
       const _brandCol = _findCol(['品牌', 'brand']);
       if (_brandCol >= 0) _pbCol.brand = _brandCol;
       // v64: 表头行偏移，数据从 _headerRowIdx+1 开始
@@ -9383,13 +9396,20 @@ function parseInventoryExcel(rawData) {
         const dt = parsePullDate(r[pbCols.date]);
         if (!dt) { failDateInvalid++; continue; }
         const ym = dt.getFullYear() + '-' + (dt.getMonth() + 1).toString().padStart(2, '0');
+        // v69: RDC 优先取 H列(发货工厂,直接给答案)；缺失时回退 基础数据 收货库位→RDC 映射；再缺失用库位码交给 normalize 兜底
         let rdcRaw = String(r[pbCols.rdc] || '').trim();
+        if (!rdcRaw) {
+          const recLoc = String(r[pbCols.recLoc] || '').trim();
+          if (recLoc) rdcRaw = recRdcMap[recLoc] || recLoc; // 基础数据映射 或 原库位码(交给 normalizePullbackRDC)
+        }
         if (!rdcRaw) { failRdcEmpty++; continue; }
         rdcRaw = normalizePullbackRDC(rdcRaw);
         const sku = String(r[pbCols.sku] || '').trim();
         const name = String(r[pbCols.name] || '').trim();
         // v67: 品牌已在前面从 productMaster 抓取
-        const rec = String(r[pbCols.rec] || '').trim() || '未知';
+        // v69: 收货仓 优先取 C列(大仓收货仓,直接给答案)；缺失时回退 基础数据 收货库位→收货仓 映射
+        const recLoc = String(r[pbCols.recLoc] || '').trim();
+        const rec = String(r[pbCols.rec] || '').trim() || (recLoc && recWhMap[recLoc]) || '未知';
         const master = productMaster[sku];
         const cost = master ? master.cost : 0;
         const spec = master ? master.spec : 0;
@@ -9555,7 +9575,8 @@ function parseInventoryExcel(rawData) {
       pullbackDiag: _diag,                    // v64: 诊断信息（表头/样例/失败计数）供空态页面展示
       _rawSheets: rawSheets,  // 原始 sheet 行数组，供拉回分析 hnMap 构建
       loadedAt: new Date().toISOString(),
-      recRdcMap: recRdcMap  // v67: 收货库位→RDC 映射（按基础数据 col14/col19 构建），供按收货仓表格使用
+      recRdcMap: recRdcMap, // v67/v69: 收货库位→RDC 映射（基础数据 col14/col19），H列缺失时回退
+      recWhMap: recWhMap    // v69: 收货库位→收货仓 映射（基础数据 col14/col15），C列缺失时回退
     };
 
     // 转储数据（现位于库存文件，按名称查找；与 parseExcel 中逻辑一致）
