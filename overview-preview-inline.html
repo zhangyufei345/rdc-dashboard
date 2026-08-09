@@ -171,8 +171,8 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
   }
   .center-title { font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 16px; }
-  /* 中央3列布局：左数据(订单流) / 中环形 / 右数据(客户库存) — 两侧撑满至 mindmap-center 容器边缘 */
-  .center-3col { display: grid; grid-template-columns: minmax(0, 1fr) 240px minmax(0, 1fr); gap: 18px; align-items: start; width: 100%; }
+  /* 中央3列布局：左数据(订单流) / 中环形 / 右数据(客户库存) — 两侧固定为 2/3 宽并紧贴左右边缘，环形居中 */
+  .center-3col { display: grid; grid-template-columns: 280px 240px 280px; justify-content: space-between; gap: 18px; align-items: start; width: 100%; }
   .center-side { display: flex; flex-direction: column; gap: 6px; }
   .center-side-title { font-size: 11px; color: #94a3b8; letter-spacing: 1px; margin-bottom: 2px; text-align: left; }
   .center-side .center-stats { grid-template-columns: 1fr 1fr !important; gap: 6px; }

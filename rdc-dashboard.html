@@ -126,6 +126,27 @@ a { color: var(--color-blue); text-decoration: none; }
 .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 .row-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
 
+/* 总览驾驶舱（v49） */
+.cockpit-card { overflow: hidden; }
+.cockpit-3col { display: grid; grid-template-columns: minmax(0, 1fr) 260px minmax(0, 1fr); gap: 16px; align-items: center; }
+.cockpit-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cockpit-side-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
+.cockpit-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cockpit-stat { background: var(--border-light); border: 1px solid var(--border-card); border-radius: 10px; padding: 10px 12px; text-align: left; }
+.cockpit-stat .v { font-size: 19px; font-weight: 700; line-height: 1.2; }
+.cockpit-stat .l { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
+.cockpit-flow { font-size: 12px; color: var(--text-secondary); padding: 8px 12px; border: 1px dashed var(--border-card); border-radius: 8px; background: var(--border-light); }
+.cockpit-flow b { color: var(--text-primary); }
+.cockpit-center { text-align: center; }
+.cockpit-center-title { font-size: 12px; color: var(--text-secondary); letter-spacing: 2px; margin-bottom: 6px; }
+.cockpit-center-legend { display: flex; justify-content: center; gap: 18px; margin-top: 6px; font-size: 11px; color: var(--text-secondary); flex-wrap: wrap; }
+.cockpit-center-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+.cockpit-alert { margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 12px; border: 1px solid; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cockpit-alert.warn { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.35); color: var(--color-red); }
+.cockpit-alert.ok { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.35); color: var(--color-green); }
+.cockpit-alert b { font-weight: 700; }
+@media (max-width: 1100px) { .cockpit-3col { grid-template-columns: 1fr; } .cockpit-center { order: -1; } }
+
 /* Table */
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
 .data-table th { background: var(--bg-card); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border-card); color: var(--text-secondary); white-space: nowrap; position: sticky; top: 0; z-index: 2; }
@@ -424,7 +445,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 48; // v48: 恢复「库存规模年度对比」区块的2个图表（库存金额趋势/出货成本趋势），v41已删KPI不再恢复；renderInventoryTurnoverHistoryCharts函数体恢复，去掉KPI渲染
+const DB_VERSION = 49; // v49: 总览页新增「总览驾驶舱」卡片（双环满足率图+6RDC真实满足率标签+订单流/客户库存数据列+紧急缺货预警条），全部基于真实数据聚合
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -688,6 +709,12 @@ function formatMoney(n) {
 }
 
 function fmtK(v) { return (Math.round(v || 0)).toLocaleString('zh-CN'); }
+
+// 读取 CSS 变量（浅色/深色主题自适应，v49）
+function cssVar(name) {
+  try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  catch (e) { return ''; }
+}
 
 function parseExcelDate(v) {
   if (v instanceof Date) return v;
@@ -1450,6 +1477,37 @@ function renderOverview() {
   shortageForDates.forEach(d => { if (d.dateStr) dateSet.add(d.dateStr); });
   const dateOptions = [...dateSet].sort().reverse();
 
+  // ===== 总览驾驶舱：订单流 / 客户库存 / RDC满足率（v49，全部真实数据聚合） =====
+  const boxSpecOf = code => { const bs = window._boxSpec && window._boxSpec[String(code)]; return (bs && bs > 0) ? bs : null; };
+  let orderBoxes = 0, firstBoxes = 0;
+  const custSet = new Set(), brandSetC = new Set();
+  const rdcAgg = {}; RDC_LIST.forEach(r => rdcAgg[r] = { orderQty: 0, fulfillQty: 0, firstQty: 0 });
+  monthOrders.forEach(d => {
+    const bs = boxSpecOf(d.skuCode);
+    const ob = d.orderQty || 0, fb = d.firstDayQty || 0;
+    // 箱数换算：先按 SKU 除以各自箱规再加总，不能先聚合支数再除
+    orderBoxes += bs ? ob / bs : ob;
+    firstBoxes += bs ? fb / bs : fb;
+    if (d.customerGroup) custSet.add(d.customerGroup);
+    if (d.brand) brandSetC.add(d.brand);
+    if (d.warehouse && rdcAgg[d.warehouse]) {
+      rdcAgg[d.warehouse].orderQty += ob;
+      rdcAgg[d.warehouse].fulfillQty += (d.totalFulfillQty || 0);
+      rdcAgg[d.warehouse].firstQty += fb;
+    }
+  });
+  const waitBoxes = Math.max(0, orderBoxes - firstBoxes);
+  const urgentSkus = new Set();
+  sData.forEach(d => {
+    const v = String(d.dcSupply || '');
+    if (v.indexOf('缺货') >= 0 || v.indexOf('紧张') >= 0) urgentSkus.add(d.materialCode);
+  });
+  const transitSkuCount = sData.filter(d => (d.rdcTransitTotal || 0) > 0).length;
+  const rdcRateLabel = RDC_LIST.map(r => {
+    const a = rdcAgg[r];
+    return { rdc: r, rate: (a && a.orderQty > 0) ? a.fulfillQty / a.orderQty : null };
+  });
+
   page.innerHTML = `
     <div class="filter-bar">
       <label>缺货日期：</label>
@@ -1457,6 +1515,39 @@ function renderOverview() {
         ${dateOptions.map(d => '<option value="'+d+'"'+(filters.overviewDate===d?' selected':'')+'>'+d+'</option>').join('')}
       </select>
       <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">月度/日订单满足率口径为MTD；缺货指标截止至${dateLabel}</span>
+    </div>
+    <div class="card cockpit-card">
+      <div class="cockpit-3col">
+        <div class="cockpit-side">
+          <div class="cockpit-side-title">📦 订单流（本月MTD）</div>
+          <div class="cockpit-stats">
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-blue)">${formatNum(Math.round(orderBoxes))}</div><div class="l">订单箱数</div></div>
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-green)">${formatNum(Math.round(firstBoxes))}</div><div class="l">首日已发(箱)</div></div>
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-orange)">${formatNum(Math.round(waitBoxes))}</div><div class="l">待发(箱)</div></div>
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-red)">${urgentSkus.size}</div><div class="l">紧急SKU(大仓缺货/紧张)</div></div>
+          </div>
+          <div class="cockpit-flow">↗ 补货流：在途 <b>${formatNum(totalTransitBoxes)}</b> 箱（截止 ${dateLabel}）</div>
+        </div>
+        <div class="cockpit-center">
+          <div class="cockpit-center-title">全国订单满足率</div>
+          <div id="chart-cockpit-core" style="width:100%;max-width:250px;height:250px;margin:0 auto"></div>
+          <div class="cockpit-center-legend">
+            <span><i style="background:${cssVar('--color-blue')||'#2563EB'}"></i>月满足率 ${(monthFulfillRate*100).toFixed(1)}%</span>
+            <span><i style="background:${cssVar('--color-green')||'#10B981'}"></i>日满足率 ${(dayRate*100).toFixed(1)}%</span>
+          </div>
+        </div>
+        <div class="cockpit-side">
+          <div class="cockpit-side-title">🌐 客户 / 库存</div>
+          <div class="cockpit-stats">
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-purple)">${custSet.size}</div><div class="l">客户组数</div></div>
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-teal)">${brandSetC.size}</div><div class="l">品牌数</div></div>
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-red)">${sData.length}</div><div class="l">缺货SKU(截止${dateLabel})</div></div>
+            <div class="cockpit-stat"><div class="v" style="color:var(--color-blue)">${transitSkuCount}</div><div class="l">在途SKU</div></div>
+          </div>
+          <div class="cockpit-flow">↘ 异常流：缺货金额 <b>${formatMoney(totalShortAmount)}</b> · 涉及 <b>${affectedRdcs}</b> 个RDC</div>
+        </div>
+      </div>
+      <div class="cockpit-alert ${urgentSkus.size > 0 ? 'warn' : 'ok'}">${urgentSkus.size > 0 ? '🔥' : '✅'} 紧急缺货预警：<b>${urgentSkus.size}</b> 个SKU 大仓供应为「缺货/紧张」（${dateLabel}）${urgentSkus.size > 0 ? ' · 详见下方缺货概览' : ''}</div>
     </div>
     <div class="kpi-row">
       <div class="kpi-card blue"><div class="kpi-label">月度订单满足率（MTD）</div><div class="kpi-value">${(monthFulfillRate*100).toFixed(1)}<span class="kpi-unit">%</span></div></div>
@@ -1499,6 +1590,42 @@ function renderOverview() {
       <div class="table-wrap" id="table-shortage-overview"></div>
     </div>
   `;
+
+  // 驾驶舱：双层环形满足率图（外环月满足率 / 内环日满足率）+ 6 个 RDC 真实满足率标签
+  const chartCore = initChart('chart-cockpit-core');
+  if (chartCore) {
+    const mRate = Math.round(monthFulfillRate * 100);
+    const dRate = Math.round(dayRate * 100);
+    const cBlue = cssVar('--color-blue') || '#2563EB';
+    const cGreen = cssVar('--color-green') || '#10B981';
+    const labelPos = [
+      { left: '2%', top: '2%' }, { right: '2%', top: '2%' }, { left: '50%', top: '0%' },
+      { left: '2%', bottom: '2%' }, { right: '2%', bottom: '2%' }, { right: '2%', top: '50%' }
+    ];
+    chartCore.setOption({
+      tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => '<strong>' + p.name + '</strong><br/>' + p.value + '%' },
+      graphic: rdcRateLabel.map((it, i) => {
+        const pos = labelPos[i];
+        const obj = { type: 'text', style: { text: it.rdc.replace('RDC','') + ' ' + (it.rate == null ? '—' : (it.rate*100).toFixed(0) + '%'), fill: getRDCColor(it.rdc), font: 'bold 12px sans-serif' } };
+        Object.keys(pos).forEach(k => obj[k] = pos[k]);
+        return obj;
+      }),
+      series: [
+        { type: 'pie', radius: ['88%','100%'], startAngle: 90, label: { show: false },
+          data: [
+            { value: mRate, name: '月满足率', itemStyle: { color: cBlue } },
+            { value: 100 - mRate, name: '月缺口', itemStyle: { color: 'rgba(148,163,184,0.14)' } }
+          ] },
+        { type: 'pie', radius: ['70%','82%'], startAngle: 90, label: { show: false },
+          data: [
+            { value: dRate, name: '日满足率', itemStyle: { color: cGreen } },
+            { value: 100 - dRate, name: '日缺口', itemStyle: { color: 'rgba(148,163,184,0.12)' } }
+          ] },
+        { type: 'pie', radius: ['0%','66%'], startAngle: 90, label: { show: false },
+          data: [ { value: 1, name: '核心', itemStyle: { color: 'rgba(148,163,184,0.08)' } } ] }
+      ]
+    });
+  }
 
   // Chart 1: Daily fulfillment trend (按月份过滤)
   let daily = (filters.dataMonth && filters.dataMonth !== 'all')
