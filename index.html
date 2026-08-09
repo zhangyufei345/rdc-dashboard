@@ -263,10 +263,10 @@ a { color: var(--color-blue); text-decoration: none; }
   white-space: nowrap; pointer-events: none;
 }
 #page-overview .rdc-label-tl { left: -8px; top: 8px; }
-#page-overview .rdc-label-ml { left: -18px; top: 50%; transform: translateY(-50%); }
+#page-overview .rdc-label-ml { left: -36px; top: 50%; transform: translateY(-50%); }
 #page-overview .rdc-label-bl { left: -8px; bottom: 8px; }
 #page-overview .rdc-label-tr { right: -8px; top: 8px; }
-#page-overview .rdc-label-mr { right: -18px; top: 50%; transform: translateY(-50%); }
+#page-overview .rdc-label-mr { right: -36px; top: 50%; transform: translateY(-50%); }
 #page-overview .rdc-label-br { right: -8px; bottom: 8px; }
 @media (max-width: 900px) {
   #page-overview .center-3col { grid-template-columns: 1fr; }
@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 56; // v56: 拉回分析列名自动探测（按表头匹配日期/SKU/箱数/发货RDC 等，避免列错位导致全部被过滤，console.warn 输出列映射便于诊断）；bottom-grid（渠道订单+Top 5 mini）加月份下拉选择器，渠道订单图改 donut → grouped bar 3 series（当月/环比/同比），tooltip 显示环比/同比百分比；Top 5 mini 数据按选中月聚合（TODO）
+const DB_VERSION = 57; // v57: 总览驾驶舱微调——(1) RDC 标签 ml/mr 从 -18px 拉远到 -36px 避免与环图重叠；(2) 渠道订单图改回 donut + MTD累计（移除月份下拉和 grouped bar）；(3) 订单满足模块「年度同比概览」改为只显示当月（X月份）2 列 KPI，含环比 vs 上月 + 同比 vs 2025年同月，去掉 1-X月累计列
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1899,10 +1899,7 @@ function renderOverview() {
     <!-- 第二排：渠道 + Top 5 mini -->
     <div class="bottom-grid">
       <div class="card">
-        <div class="card-header" style="display:flex;align-items:center">
-          <span class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">当月对比</span></span>
-          <select id="channel-month-filter" onchange="window._channelMonth=this.value;renderOverview()" style="margin-left:auto;padding:4px 8px;background:rgba(15,23,42,0.7);color:#e2e8f0;border:1px solid rgba(99,179,237,0.3);border-radius:6px;font-size:11px;outline:none"></select>
-        </div>
+        <div class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">MTD 累计</span></div>
         <div id="chart-channel" class="chart-area" style="height:280px"></div>
       </div>
       <div class="card">
@@ -2053,80 +2050,49 @@ function renderOverview() {
     });
   }
 
-  // 4. 渠道订单量分布（v56：加月份下拉 + 改 donut 为 grouped bar 3 series 当月/环比/同比）
-  const _allMonths = [...new Set(dataStore.orderDetail.map(function(d) { return d.dateStr && d.dateStr.slice(0,7); }).filter(Boolean))].sort();
-  const _selMonth = window._channelMonth || _allMonths[_allMonths.length - 1] || '';
-  // 填充月份下拉选项
-  const _selEl = document.getElementById('channel-month-filter');
-  if (_selEl && _selEl.children.length === 0) {
-    _selEl.innerHTML = _allMonths.map(function(m) { return '<option value="' + m + '"' + (m === _selMonth ? ' selected' : '') + '>' + m + '</option>'; }).join('');
-  }
-  const _mp = _selMonth.split('-');
-  const _y = +_mp[0], _mo = +_mp[1];
-  const _prevYM = (_mo === 1 ? (_y - 1) + '-12' : _y + '-' + String(_mo - 1).padStart(2, '0'));
-  const _lastYrYM = (_y - 1) + '-' + String(_mo).padStart(2, '0');
-  function _aggCh(month) {
-    const m = {};
-    dataStore.orderDetail.forEach(function(d) {
-      if (!d.dateStr || !d.dateStr.startsWith(month)) return;
-      const ch = d.channel || '其他';
-      if (!m[ch]) m[ch] = { orderQty: 0, firstQty: 0, groups: {} };
-      m[ch].orderQty += d.orderQty || 0;
-      m[ch].firstQty += d.firstDayQty || 0;
-      const cg = d.customerGroup || '未知';
-      if (!m[ch].groups[cg]) m[ch].groups[cg] = { orderQty: 0, firstQty: 0 };
-      m[ch].groups[cg].orderQty += d.orderQty || 0;
-      m[ch].groups[cg].firstQty += d.firstDayQty || 0;
-    });
-    return m;
-  }
-  const curChMap = _aggCh(_selMonth);
-  const prevChMap = _aggCh(_prevYM);
-  const lastYrChMap = _aggCh(_lastYrYM);
-  const chMap = curChMap;
+  // 4. 渠道订单量分布（v57：恢复 donut 饼图 + MTD累计，与原 renderOverview 一致）
+  const chMap = {};
+  monthOrders.forEach(d => {
+    const ch = d.channel || '其他';
+    if (!chMap[ch]) chMap[ch] = { orderQty: 0, firstQty: 0, groups: {} };
+    chMap[ch].orderQty += d.orderQty || 0;
+    chMap[ch].firstQty += d.firstDayQty || 0;
+    const cg = d.customerGroup || '未知';
+    if (!chMap[ch].groups[cg]) chMap[ch].groups[cg] = { orderQty: 0, firstQty: 0 };
+    chMap[ch].groups[cg].orderQty += d.orderQty || 0;
+    chMap[ch].groups[cg].firstQty += d.firstDayQty || 0;
+  });
+  const channelData = Object.entries(chMap).map(([name, info]) => ({ name, value: info.orderQty }));
   const channelColors = { 'KA': '#60a5fa', 'KA直营': '#60a5fa', '经销商': '#34d399', '新渠道': '#f97316' };
-  const allChannels = [...new Set([...Object.keys(curChMap), ...Object.keys(prevChMap), ...Object.keys(lastYrChMap)].filter(Boolean))];
-  const curData = allChannels.map(function(c) { return curChMap[c] ? curChMap[c].orderQty : 0; });
-  const prevData = allChannels.map(function(c) { return prevChMap[c] ? prevChMap[c].orderQty : 0; });
-  const lastYrData = allChannels.map(function(c) { return lastYrChMap[c] ? lastYrChMap[c].orderQty : 0; });
   const chartChannel = initChart('chart-channel');
   if (chartChannel) {
     chartChannel.setOption({
       tooltip: {
-        trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
-        formatter: function(params) {
-          const ch = params[0].axisValue;
-          const cur = curChMap[ch] || { orderQty: 0, firstQty: 0, groups: {} };
-          const prev = prevChMap[ch] || { orderQty: 0 };
-          const lastY = lastYrChMap[ch] || { orderQty: 0 };
-          const prevDelta = prev.orderQty > 0 ? ((cur.orderQty - prev.orderQty) / prev.orderQty * 100) : 0;
-          const lastYrDelta = lastY.orderQty > 0 ? ((cur.orderQty - lastY.orderQty) / lastY.orderQty * 100) : 0;
-          const curRate = cur.orderQty > 0 ? (cur.firstQty / cur.orderQty * 100).toFixed(1) : '0.0';
-          let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + ch + ' · ' + _selMonth + '</div>';
-          html += '<div style="margin-bottom:6px"><span style="color:#60a5fa;font-weight:700">当月</span>：' + formatNum(cur.orderQty) + ' 支 <span style="color:#94a3b8;font-size:10px">(日满足率 ' + curRate + '%)</span></div>';
-          html += '<div style="margin-bottom:4px"><span style="color:#94a3b8">环比（' + _prevYM + '）</span>：' + formatNum(prev.orderQty) + ' 支 <span style="color:' + (prevDelta >= 0 ? '#34d399' : '#f87171') + ';font-size:10px">' + (prevDelta >= 0 ? '▲ +' : '▼ ') + Math.abs(prevDelta).toFixed(1) + '%</span></div>';
-          html += '<div style="margin-bottom:6px"><span style="color:#f97316">同比（' + _lastYrYM + '）</span>：' + formatNum(lastY.orderQty) + ' 支 <span style="color:' + (lastYrDelta >= 0 ? '#34d399' : '#f87171') + ';font-size:10px">' + (lastYrDelta >= 0 ? '▲ +' : '▼ ') + Math.abs(lastYrDelta).toFixed(1) + '%</span></div>';
-          const groupRows = Object.entries(cur.groups || {}).sort(function(a, b) { return b[1].orderQty - a[1].orderQty; }).slice(0, 6);
-          if (groupRows.length > 0) {
-            html += '<div style="border-top:1px solid #334155;padding-top:4px;margin-top:4px;font-size:10px;color:#94a3b8">客户组细分：</div>';
-            groupRows.forEach(function(g) {
-              const gr = g[1].orderQty > 0 ? (g[1].firstQty / g[1].orderQty * 100).toFixed(1) : '0.0';
-              html += '<div style="font-size:11px">' + g[0] + '：' + formatNum(g[1].orderQty) + ' <span style="color:#94a3b8;font-size:10px">(' + gr + '%)</span></div>';
-            });
-          }
+        trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+        formatter: function(p) {
+          const info = chMap[p.name] || { orderQty: p.value, groups: {} };
+          const groupRows = Object.entries(info.groups || {}).sort((a,b) => b[1].orderQty - a[1].orderQty).slice(0, 8);
+          let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + p.name + '（总量：' + formatNum(p.value) + '支）</div>';
+          html += '<table style="font-size:11px;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid #334155"><td style="padding:2px 6px;color:#94a3b8">客户组</td><td style="padding:2px 6px;text-align:right;color:#94a3b8">订单量</td><td style="padding:2px 6px;text-align:right;color:#94a3b8">日满足率</td></tr>';
+          groupRows.forEach(([cg, g]) => {
+            const rate = g.orderQty > 0 ? (g.firstQty / g.orderQty * 100).toFixed(1) : '0.0';
+            html += '<tr><td style="padding:2px 6px">' + cg + '</td><td style="padding:2px 6px;text-align:right">' + formatNum(g.orderQty) + '</td><td style="padding:2px 6px;text-align:right">' + rate + '%</td></tr>';
+          });
+          html += '</table>';
           return html;
         },
-        extraCssText: 'max-width:380px;box-shadow:0 2px 12px rgba(0,0,0,.4);border-radius:8px;padding:10px 12px'
+        extraCssText: 'max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.4);border-radius:8px;padding:10px 12px'
       },
-      legend: { data: [_selMonth + ' 当月', _prevYM + ' 环比', _lastYrYM + ' 同比'], textStyle: { color: '#cbd5e1', fontSize: 11 }, top: 6, itemGap: 14 },
-      grid: { left: 60, right: 20, top: 50, bottom: 40 },
-      xAxis: { type: 'category', data: allChannels, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#cbd5e1', fontSize: 11 } },
-      yAxis: { type: 'value', name: '订单量（支）', nameTextStyle: { color: '#94a3b8', fontSize: 10 }, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: function(v) { return v >= 1000 ? (v/1000).toFixed(1) + 'k' : v; } } },
-      series: [
-        { name: _selMonth + ' 当月', type: 'bar', data: curData, itemStyle: { color: '#60a5fa', borderRadius: [4, 4, 0, 0] } },
-        { name: _prevYM + ' 环比', type: 'bar', data: prevData, itemStyle: { color: '#94a3b8', borderRadius: [4, 4, 0, 0] } },
-        { name: _lastYrYM + ' 同比', type: 'bar', data: lastYrData, itemStyle: { color: '#f97316', borderRadius: [4, 4, 0, 0] } }
-      ]
+      legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { color: '#cbd5e1', fontSize: 11 }, itemWidth: 12, itemHeight: 12 },
+      series: [{
+        type: 'pie',
+        radius: ['45%', '70%'],
+        center: ['38%', '50%'],
+        label: { color: '#e2e8f0', formatter: '{b}\n{d}%', fontSize: 11 },
+        labelLine: { lineStyle: { color: '#475569' } },
+        itemStyle: { borderColor: '#0a0e27', borderWidth: 2 },
+        data: channelData.map(d => ({ ...d, itemStyle: { color: channelColors[d.name] || '#a78bfa' } }))
+      }]
     });
   }
 
@@ -2656,19 +2622,17 @@ function renderFulfillmentHistoryCharts() {
     });
   }
 
-  // KPI overview (1~最新月 同比)，与折线图 months 保持一致
+  // KPI overview（v57：改为只显示当月 环比/同比，去掉 1-X月累计列）
   const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
-  // 关键修复：monthIdx 用 histIdx（实际月份-1），不用 months 数组索引
   const monthIdx = monthsData.map(function(d) { return d.histIdx; });
   const lastIdx = monthIdx[monthIdx.length - 1];
-  // latestMonthLabel 已在函数顶部定义，KPI 块复用（用 lastLabel/fullLabel/lastMonthNum 派生）
+  const prevIdx = monthIdx.length >= 2 ? monthIdx[monthIdx.length - 2] : null; // 上一月 idx
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
     rdcList.forEach(r => { idxs.forEach(i => {
       const v = H[year][type][r] && H[year][type][r][i];
       if (v != null) { s += v; c++; }
       else if (year === '2026') {
-        // history.json 仅含 1-6 月数据，缺数据的月份回退实时聚合（与 getDailyRate 一致）
         const ym = '2026-' + String(i + 1).padStart(2, '0');
         const live = liveMonthlyFulfillment(r, ym);
         if (live != null) { s += live; c++; }
@@ -2676,45 +2640,34 @@ function renderFulfillmentHistoryCharts() {
     }); });
     return c ? s / c : 0;
   }
-  // 1~最新月 累计均值（与折线图同期对齐；history 缺数据的月份自动跳过）
-  const full_26 = avgOf('monthly', '2026', monthIdx), full_25 = avgOf('monthly', '2025', monthIdx);
+  // 当月（选中月）：环比 vs 上一月 / 同比 vs 2025 同期
   const last_26 = avgOf('monthly', '2026', [lastIdx]), last_25 = avgOf('monthly', '2025', [lastIdx]);
-  const full_26d = avgOf('daily', '2026', monthIdx), full_25d = avgOf('daily', '2025', monthIdx);
   const last_26d = avgOf('daily', '2026', [lastIdx]), last_25d = avgOf('daily', '2025', [lastIdx]);
+  const prev_26 = prevIdx !== null ? avgOf('monthly', '2026', [prevIdx]) : 0;
+  const prev_26d = prevIdx !== null ? avgOf('daily', '2026', [prevIdx]) : 0;
   function pp(cur, prev) { const d = cur - prev; return { color: d >= 0 ? 'var(--color-green)' : 'var(--color-red)', txt: (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp' }; }
-  const a1 = pp(full_26, full_25), a2 = pp(last_26, last_25);
-  const a1d = pp(full_26d, full_25d), a2d = pp(last_26d, last_25d);
-  let improved = 0, declined = 0;
-  rdcList.forEach(r => monthIdx.forEach(i => { const v26 = H['2026'].monthly[r][i], v25 = H['2025'].monthly[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improved++; else declined++; } }));
-  let improvedD = 0, declinedD = 0;
-  rdcList.forEach(r => monthIdx.forEach(i => { const v26 = H['2026'].daily[r][i], v25 = H['2025'].daily[r][i]; if (v26 != null && v25 != null) { if (v26 >= v25) improvedD++; else declinedD++; } }));
-  const totalCells = rdcList.length * monthIdx.length;
-  const fullLabel = '1-' + latestMonthLabel;
-  // 用"X月份"避免"8月月均"读起来像"月月"的视觉歧义
+  const aMom = pp(last_26, prev_26), aYoy = pp(last_26, last_25);
+  const aMomD = pp(last_26d, prev_26d), aYoyD = pp(last_26d, last_25d);
   const lastLabel = latestMonthLabel + '份';
-  // 对比标题：2025 年同月（用月份号而非索引）
   const lastMonthNum = parseInt(String(latestMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
-  // 4 列指标 + 改善/下滑计数（横向平铺，避免右侧换行拥挤）
-  const kpiCell = function(label, value, yoy, yoyColor, prevLabel, prevValue) {
-    return '<div style="flex:1;padding:10px 16px;border-right:1px solid var(--border-card);min-width:0">' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + label + '">' + label + '</div>' +
-      '<div style="display:flex;align-items:baseline;gap:8px">' +
-      '<span style="font-size:22px;font-weight:700;line-height:1">' + value + '%</span>' +
-      '<span style="font-size:12px;font-weight:600;color:' + yoyColor + '">同比 ' + yoy + '</span>' +
+  const prevLabel = prevIdx !== null ? (prevIdx + 1) + '月份' : '上月';
+  // 单列 KPI：双对比（环比上月 + 同比去年同月）
+  const kpiCell = function(label, value, mom, momColor, yoy, yoyColor, momLabel, momVal, yoyLabel, yoyVal) {
+    return '<div style="flex:1;padding:14px 18px;border-right:1px solid var(--border-card);min-width:0">' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + label + '</div>' +
+      '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">' +
+        '<span style="font-size:26px;font-weight:700;line-height:1">' + value + '%</span>' +
       '</div>' +
-      '<div style="font-size:11px;color:var(--text-tertiary);margin-top:4px">vs ' + prevLabel + ' ' + prevValue + '%</div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px;font-size:11px">' +
+        '<span style="color:' + momColor + '">▲ 环比 <b>' + mom + '</b> vs ' + momLabel + ' <span style="color:var(--text-tertiary)">' + momVal + '%</span></span>' +
+        '<span style="color:' + yoyColor + '">▼ 同比 <b>' + yoy + '</b> vs ' + yoyLabel + ' <span style="color:var(--text-tertiary)">' + yoyVal + '%</span></span>' +
+      '</div>' +
     '</div>';
   };
   const kpiHtml = '<div style="padding:0">' +
     '<div style="display:flex;border-bottom:1px solid var(--border-card)">' +
-      kpiCell(fullLabel + '月均满足率', (full_26 * 100).toFixed(1), a1.txt, a1.color, '2025 ' + fullLabel, (full_25 * 100).toFixed(1)) +
-      kpiCell(lastLabel + '月均满足率', (last_26 * 100).toFixed(1), a2.txt, a2.color, '2025年' + lastMonthNum + '月', (last_25 * 100).toFixed(1)) +
-      kpiCell(fullLabel + '日满足率', (full_26d * 100).toFixed(1), a1d.txt, a1d.color, '2025 ' + fullLabel, (full_25d * 100).toFixed(1)) +
-      kpiCell(lastLabel + '日满足率', (last_26d * 100).toFixed(1), a2d.txt, a2d.color, '2025年' + lastMonthNum + '月', (last_25d * 100).toFixed(1)).replace('border-right:1px solid', 'border-right:none') +
-    '</div>' +
-    '<div style="display:flex;padding:10px 16px;gap:24px;font-size:12px;color:var(--text-secondary)">' +
-      '<span><b style="color:var(--text-primary)">月均满足率</b> ' + totalCells + ' 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improved + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declined + ' 下滑</span></span>' +
-      '<span><b style="color:var(--text-primary)">日满足率</b> ' + totalCells + ' 个「RDC×月」中：<span style="color:var(--color-green);font-weight:600">↑ ' + improvedD + ' 改善</span> · <span style="color:var(--color-red);font-weight:600">↓ ' + declinedD + ' 下滑</span></span>' +
+      kpiCell(lastLabel + '月均满足率', (last_26 * 100).toFixed(1), aMom.txt, aMom.color, aYoy.txt, aYoy.color, prevLabel, (prev_26 * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25 * 100).toFixed(1)) +
+      kpiCell(lastLabel + '日满足率', (last_26d * 100).toFixed(1), aMomD.txt, aMomD.color, aYoyD.txt, aYoyD.color, prevLabel, (prev_26d * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25d * 100).toFixed(1)).replace('border-right:1px solid', 'border-right:none') +
     '</div>' +
     '</div>';
   document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
