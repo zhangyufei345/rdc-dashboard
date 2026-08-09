@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 46; // v46: 中期补货策略两个表（分仓需求调整/安全库存调整）加SKU名称列+全部数据左对齐；SKU名称从orderData/skuNameMap读取（fallback shortageData）
+const DB_VERSION = 47; // v47: 性能优化——bootLoad后台化（IDB缓存秒开首屏，数据更新检测放requestIdleCallback不阻塞交互）；库存结构页加sessionStorage派生缓存（HTML+图表数据，切TAB秒开）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8287,63 +8287,78 @@ function init() {
       if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
       if (restored) renderAll();
 
-      // 检测缓存异常：bizDemand 仅有单月数据时，清除哈希缓存强制全量重拉（修复 replace 清空归档的旧 bug）
-      if (restored && dataStore.bizDemand && dataStore.bizDemand.length > 0) {
-        var bizMonths = {};
-        dataStore.bizDemand.forEach(function(d) { if (d.dateStr) bizMonths[d.dateStr.slice(0,7)] = true; });
-        if (Object.keys(bizMonths).length <= 1) {
-          console.warn('缓存中 bizDemand 仅有单月数据(' + (Object.keys(bizMonths)[0] || '无') + ')，怀疑缓存异常，强制全量重拉');
-          try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+      // === 后台刷新逻辑（不阻塞首屏交互；数据变更检测 + 拉取 + 应用都放到后台） ===
+      async function refreshFromManifest() {
+        // 检测缓存异常：bizDemand 仅有单月数据时，清除哈希缓存强制全量重拉（修复 replace 清空归档的旧 bug）
+        if (restored && dataStore.bizDemand && dataStore.bizDemand.length > 0) {
+          var bizMonths = {};
+          dataStore.bizDemand.forEach(function(d) { if (d.dateStr) bizMonths[d.dateStr.slice(0,7)] = true; });
+          if (Object.keys(bizMonths).length <= 1) {
+            console.warn('缓存中 bizDemand 仅有单月数据(' + (Object.keys(bizMonths)[0] || '无') + ')，怀疑缓存异常，强制全量重拉');
+            try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+          }
         }
+
+        // manifest 变更检测：仅拉取哈希变化的文件
+        if (manifest && manifest.files) {
+          const stored = getStoredHashes() || {};
+          let changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
+          // 旧缓存没有 boxSpecMap 时，强制拉取一次 data.json 以补全箱规数据（一次性兼容）
+          if ((!window._boxSpec || Object.keys(window._boxSpec).length === 0) && !changed.includes('data.json')) {
+            changed.push('data.json');
+          }
+          // data.json 替换加载后会清空全量数据，若归档文件(5月/6月)哈希未变则不被重载导致数据丢失，故强制一并重载
+          if (changed.includes('data.json')) {
+            Object.keys(manifest.files).forEach(function(f) { if (f.indexOf('data-') === 0 && changed.indexOf(f) < 0) changed.push(f); });
+          }
+          // history.json 不走 IDB 缓存：每次重新 fetch，保证 KPI 用最新历史数据（避免 IDB 缓存旧 7/8 月数据）
+          if (!changed.includes('history.json')) changed.push('history.json');
+          if (restored && changed.length === 0) {
+            if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
+            showToast('已加载本地缓存（数据未更新）');
+            return;
+          }
+          const ordered = changed.slice().sort((a, b) => fileOrderKey(a) - fileOrderKey(b));
+          try {
+            for (const f of ordered) {
+              const j = await (await fetch('./' + f, { cache: 'no-cache' })).json();
+              applyPreparsed(f, j);
+            }
+            if (dataStore.shortage.length === 0 && dataStore.orderDetail.length === 0 && !dataStore.inventory) {
+              throw new Error('JSON 解析结果为空');
+            }
+            setStoredHashes(manifest.files);
+            detectAllMonths();
+            if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
+            saveToIDB().catch(() => {});
+            showToast('已更新 ' + ordered.length + ' 个数据文件（JSON 快速加载）');
+            renderAll();
+            return;
+          } catch (e) {
+            console.warn('JSON 快速加载失败，回退 Excel：', e);
+            showToast('JSON 加载异常，已回退 Excel 加载', true);
+          }
+        }
+
+        // 回退：原始 xlsx 流程（全量重新解析）
+        const loaded = await autoLoadData();
+        detectAllMonths();
+        if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
+        renderAll();
+        return loaded;
       }
 
-      // 3) manifest 变更检测：仅拉取哈希变化的文件
-      if (manifest && manifest.files) {
-        const stored = getStoredHashes() || {};
-        let changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== stored[f]);
-        // 旧缓存没有 boxSpecMap 时，强制拉取一次 data.json 以补全箱规数据（一次性兼容）
-        if ((!window._boxSpec || Object.keys(window._boxSpec).length === 0) && !changed.includes('data.json')) {
-          changed.push('data.json');
+      // 有缓存：先秒开展示，数据更新检测放后台（requestIdleCallback 空闲时执行，不阻塞交互）
+      if (restored) {
+        if (typeof window.requestIdleCallback === 'function') {
+          requestIdleCallback(function() { refreshFromManifest(); }, { timeout: 3000 });
+        } else {
+          setTimeout(refreshFromManifest, 50);
         }
-        // data.json 替换加载后会清空全量数据，若归档文件(5月/6月)哈希未变则不被重载导致数据丢失，故强制一并重载
-        if (changed.includes('data.json')) {
-          Object.keys(manifest.files).forEach(function(f) { if (f.indexOf('data-') === 0 && changed.indexOf(f) < 0) changed.push(f); });
-        }
-        // history.json 不走 IDB 缓存：每次重新 fetch，保证 KPI 用最新历史数据（避免 IDB 缓存旧 7/8 月数据）
-        if (!changed.includes('history.json')) changed.push('history.json');
-        if (restored && changed.length === 0) {
-          if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
-          showToast('已加载本地缓存（数据未更新）');
-          return;
-        }
-        const ordered = changed.slice().sort((a, b) => fileOrderKey(a) - fileOrderKey(b));
-        try {
-          for (const f of ordered) {
-            const j = await (await fetch('./' + f, { cache: 'no-cache' })).json();
-            applyPreparsed(f, j);
-          }
-          if (dataStore.shortage.length === 0 && dataStore.orderDetail.length === 0 && !dataStore.inventory) {
-            throw new Error('JSON 解析结果为空');
-          }
-          setStoredHashes(manifest.files);
-          detectAllMonths();
-          if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
-          saveToIDB().catch(() => {});
-          showToast('已更新 ' + ordered.length + ' 个数据文件（JSON 快速加载）');
-          renderAll();
-          return;
-        } catch (e) {
-          console.warn('JSON 快速加载失败，回退 Excel：', e);
-          showToast('JSON 加载异常，已回退 Excel 加载', true);
-        }
+        return;
       }
-
-      // 4) 回退：原始 xlsx 流程（全量重新解析）
-      const loaded = await autoLoadData();
-      detectAllMonths();
-      if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
-      renderAll();
-      return loaded;
+      // 无缓存：正常全量加载
+      return refreshFromManifest();
     }
 
     bootLoad().then(loaded => {
@@ -8371,6 +8386,137 @@ function onGlobalMonthChange(val) {
     if (latest) filters.overviewDate = latest;
   }
   renderAll();
+}
+
+// ============ INVENTORY STRUCTURE CACHE (sessionStorage) ============
+// 库存结构页派生缓存：HTML + 图表纯数据，切 TAB 秒开（避免重遍历 cov5/cov6 + 重拼 HTML）
+// key 含 DB_VERSION + 全部筛选状态；数据源哈希变化或筛选变化自动换 key
+const STRUCT_CACHE_PREFIX = 'rdc_is_' + DB_VERSION + '_';
+function structCacheKey() {
+  return [
+    window._invHainan || 'all',
+    window._isRdc || 'all',
+    window._invStatus || 'all',
+    (window._covSelectedRdcs || []).join(',')
+  ].join('|');
+}
+function getStructCache() {
+  try {
+    const s = sessionStorage.getItem(STRUCT_CACHE_PREFIX + structCacheKey());
+    return s ? JSON.parse(s) : null;
+  } catch (e) { return null; }
+}
+function setStructCache(payload) {
+  try {
+    const key = STRUCT_CACHE_PREFIX + structCacheKey();
+    // 只保留本筛选 key 的最新一份，清理同版本其他 key，防止 sessionStorage 塞满
+    try {
+      Object.keys(sessionStorage).forEach(k => {
+        if (k.indexOf('rdc_is_' + DB_VERSION + '_') === 0 && k !== key) sessionStorage.removeItem(k);
+      });
+    } catch (e) {}
+    sessionStorage.setItem(key, JSON.stringify(payload));
+  } catch (e) { /* 存储满或不可用则跳过，不影响功能 */ }
+}
+
+// 4状态堆叠图（从缓存数据重建，含风险占比折线）
+function renderStackedChartFromData(monthLabels, totals) {
+  const stackedEl = document.getElementById('chart-is-stacked');
+  if (!stackedEl) return;
+  const c = initChart('chart-is-stacked');
+  const STATUS_META = [
+    { key: 'orange', name: '橙色预警', sub: '淘汰品、退货品', color: '#F97316' },
+    { key: 'red',    name: '红色预警', sub: '残次品、效期品<1/3', color: '#EF4444' },
+    { key: 'yellow', name: '黄色预警', sub: '效期品1/3<效期<1/2', color: '#FACC15' },
+    { key: 'safe',   name: '非风险库存', sub: '计划可用库存', color: '#10B981' }
+  ];
+  const riskRatioData = (totals || []).map(t => {
+    if (!t) return null;
+    const risk = (t.orange || 0) + (t.red || 0) + (t.yellow || 0);
+    const total = risk + (t.safe || 0);
+    return total > 0 ? +(risk / total * 100).toFixed(1) : null;
+  });
+  const latestSum = (totals[5] || { orange:0, red:0, yellow:0, safe:0 });
+  const maxTot = Math.max.apply(null, (totals || []).map(t => t ? ((t.orange||0)+(t.red||0)+(t.yellow||0)+(t.safe||0)) / 10000 : 0));
+  c.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        let h = '<strong>' + params[0].axisValue + '</strong>';
+        let sum = 0; let ratioShown = null;
+        params.forEach(p => {
+          if (p.seriesType === 'line') { ratioShown = p.value; return; }
+          sum += (p.value || 0);
+          h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : (p.value).toLocaleString() + ' 万');
+        });
+        h += '<br/><strong style="color:#1E293B">合计：' + sum.toLocaleString() + ' 万</strong>';
+        if (ratioShown != null) h += '<br/>📍 风险库存占比：<strong style="color:#DC2626">' + ratioShown + '%</strong>';
+        return h;
+      }
+    },
+    legend: { data: STATUS_META.map(s => s.name).concat(['风险库存占比']), top: 0, left: 'center', textStyle: { fontSize: 11 } },
+    grid: { left: 70, right: 70, top: 40, bottom: 30 },
+    xAxis: { type: 'category', data: monthLabels, axisLabel: { fontSize: 11 } },
+    yAxis: [
+      { type: 'value', name: '万元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, max: Math.max(1, maxTot) * 1.25 },
+      { type: 'value', name: '风险占比%', nameTextStyle: { fontSize: 10, color: '#DC2626' }, axisLabel: { fontSize: 10, color: '#DC2626', formatter: '{value}%' }, min: 0, max: 70, splitLine: { show: false } }
+    ],
+    series: STATUS_META.map(s => ({
+      name: s.name, type: 'bar', stack: 'total',
+      data: (totals || []).map(t => t ? Math.round(t[s.key] / 10000) : null),
+      color: s.color,
+      itemStyle: { borderRadius: 0 },
+      emphasis: { focus: 'series' }
+    })).concat([{
+      name: '风险库存占比', type: 'line', yAxisIndex: 1,
+      data: riskRatioData,
+      color: '#DC2626', smooth: true, symbol: 'circle', symbolSize: 8,
+      lineStyle: { width: 2 },
+      itemStyle: { color: '#DC2626' },
+      label: { show: true, position: 'top', fontSize: 10, color: '#DC2626', formatter: '{c}%' },
+      z: 10
+    }])
+  });
+}
+
+// 库存覆盖堆叠柱状图（从缓存数据重建）
+function renderCovChartFromData(covDisplayRdcs, covLabels, covAgg) {
+  const covChartEl = document.getElementById('chart-cov-stacked');
+  if (!covChartEl) return;
+  const rdcColors = ['#EF4444','#F97316','#FACC15','#10B981','#3B82F6','#8B5CF6','#06B6D4'];
+  function covKey(cov, l) { return cov[l] ? l : (l === '≤1个月' && cov['0~1个月'] ? '0~1个月' : null); }
+  const c2 = initChart('chart-cov-stacked');
+  c2.setOption({
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
+      formatter: function(params) {
+        let h = '<strong>' + params[0].axisValue + '</strong> <span style="color:#9aa7b4;font-size:10px">(点击下钻SKU)</span>';
+        const sorted = params.slice().sort((a, b) => (b.value || 0) - (a.value || 0));
+        let sum = 0;
+        sorted.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
+        h += '<br/><strong style="color:#1E293B">合计：' + Math.round(sum).toLocaleString() + ' 元</strong>';
+        return h;
+      }
+    },
+    legend: { show: false },
+    grid: { left: 70, right: 30, top: 50, bottom: 45 },
+    xAxis: { type: 'category', data: covLabels, axisLabel: { fontSize: 10, rotate: 30, interval: 0 } },
+    yAxis: { type: 'value', name: '元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : v } },
+    series: (covDisplayRdcs || []).map((rdc, idx) => ({
+      name: rdc, type: 'bar', stack: 'cov',
+      data: (covLabels || []).map(l => {
+        const cov = (covAgg && covAgg[rdc]) || {};
+        const key = covKey(cov, l);
+        return key ? (cov[key] || 0) : 0;
+      }),
+      color: rdcColors[idx % rdcColors.length],
+      cursor: 'pointer',
+      itemStyle: { borderRadius: 0 },
+      emphasis: { focus: 'series' }
+    }))
+  });
+  c2.on('click', function(p) {
+    if (!p || !p.seriesName || p.value == null) return;
+    drillRdcPeriodCovDetail(p.seriesName, p.name);
+  });
 }
 
 // ============ INVENTORY STRUCTURE ANALYSIS ============
@@ -8971,6 +9117,15 @@ function renderInventoryStructure() {
   const page = document.getElementById('page-inventory-structure');
   if (!page) return;
 
+  // 缓存命中：直接渲染缓存的 HTML + 重建两个图表（避免重遍历 + 重拼 HTML）
+  const structCache = getStructCache();
+  if (structCache && structCache.html) {
+    page.innerHTML = structCache.html;
+    if (structCache.stacked) renderStackedChartFromData(structCache.stacked.monthLabels, structCache.stacked.totals);
+    if (structCache.cov) renderCovChartFromData(structCache.cov.covDisplayRdcs, structCache.cov.covLabels, structCache.cov.covAgg);
+    return;
+  }
+
   if (!dataStore.inventory) {
     page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📊</div><div>请先上传库存分析Excel文件</div><div style="font-size:12px;margin-top:8px">前往 <a href="javascript:navigateTo(\'data\')" style="color:var(--color-blue)">数据管理</a> 页面导入</div></div>';
     return;
@@ -9267,6 +9422,15 @@ function renderInventoryStructure() {
       '</div>' +
       '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">口径：同一 SKU 跨 RDC 聚合；「上涨」= 6月风险金额 − 5月风险金额（红色），「下降」= 5月 − 6月（绿色）。点击行查看该 SKU 在 5月/6月 的 RDC 明细。</div>' +
       '</div>';
+
+    // 写入派生缓存（HTML + 图表纯数据），下次切换秒开
+    try {
+      setStructCache({
+        html: page.innerHTML,
+        stacked: { monthLabels: monthLabels.slice(), totals: totals },
+        cov: { covDisplayRdcs: covDisplayRdcs.slice(), covLabels: covLabels.slice(), covAgg: covAgg }
+      });
+    } catch (e) { /* 缓存失败不影响展示 */ }
 
     // 4状态堆叠柱状图
     const stackedEl = document.getElementById('chart-is-stacked');
