@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 60; // v60: (1) 品牌×RDC 矩阵由点击弹框改为 hover tooltip 自动显示 TOP5 缺货SKU；(2) 拉回数据 sheet 识别增强（精确匹配/trim/更多列头关键词）并加 0行回退+诊断日志，避免"未找到 sheet"误判
+const DB_VERSION = 62; // v61: 日订单满足率趋势全部/单个RDC均显示KA+经销商双曲线，趋势图与RDC缺货金额图增加hover TOP5缺货SKU tooltip，品牌矩阵tooltip增加表头；v62: 拉回数据解析增强（日期/RDC/数量容错、列头关键词扩充、诊断日志），修复13868行解析为0的问题
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1655,6 +1655,39 @@ function renderOverview() {
   const monthFulfillRate = totalOrderAll > 0 ? totalFulfillAll / totalOrderAll : 0;
   const dayRate = totalOrderAll > 0 ? totalFirstAll / totalOrderAll : 0;
 
+  // 当前月份（用于各图表 tooltip 的 TOP5 缺货 SKU）
+  const heatMonth = (filters.dataMonth && filters.dataMonth !== 'all')
+    ? filters.dataMonth
+    : ((window._availableMonths && window._availableMonths.length > 0)
+      ? window._availableMonths.filter(m => m.indexOf('2026-') === 0).pop() || '2026-08'
+      : '2026-08');
+
+  // 通用 TOP5 缺货 SKU tooltip HTML 构造
+  function buildTop5TooltipHtml(top5, title) {
+    if (!top5 || top5.length === 0) return '<div style="font-size:11px;color:#64748b;margin-top:4px">' + title + '<br/>暂无 TOP5 缺货 SKU</div>';
+    let html = '<div style="font-size:11px;color:#93c5fd;margin:6px 0 4px;border-top:1px solid rgba(148,163,184,0.3);padding-top:4px">' + title + '</div>' +
+      '<div style="display:flex;font-size:10px;color:#94a3b8;margin-bottom:2px;padding:0 2px">' +
+        '<span style="width:18px">#</span>' +
+        '<span style="flex:1;min-width:90px">物料 / 品名</span>' +
+        '<span style="width:48px;text-align:right">缺货箱</span>' +
+        '<span style="width:48px;text-align:right">在途箱</span>' +
+        '<span style="width:40px;text-align:center">供应</span>' +
+      '</div>';
+    top5.forEach((d, i) => {
+      const supplyTxt = String(d.dcSupply || '');
+      const supplyColor = supplyTxt.indexOf('紧张') >= 0 ? '#fca5a5' : (supplyTxt.indexOf('缺货') >= 0 ? '#fdba74' : '#86efac');
+      const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
+      html += '<div style="display:flex;font-size:11px;line-height:1.5;padding:1px 2px">' +
+        '<span style="width:18px;color:#94a3b8">' + (i+1) + '</span>' +
+        '<span style="flex:1;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:#e2e8f0">' + d.materialCode + '</span> <span style="color:#64748b">' + (d.materialName || '').slice(0,10) + '</span></span>' +
+        '<span style="width:48px;text-align:right;color:#fca5a5;font-weight:600">' + formatNum(d.boxes) + '</span>' +
+        '<span style="width:48px;text-align:right;color:#e2e8f0">' + formatNum(d.transit) + '</span>' +
+        '<span style="width:40px;text-align:center;color:' + supplyColor + '">' + supplyLabel + '</span>' +
+      '</div>';
+    });
+    return html;
+  }
+
   const dateLabel = filters.overviewDate || '最新日期';
 
   // 日期选项
@@ -2013,9 +2046,23 @@ function renderOverview() {
         { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
         { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
       ];
+      const trendTop5 = getTopShortageSKUsByMonth('all', trendRdc, heatMonth, 5);
       chartTrend.setOption({
         title: { text: trendRdc === 'all' ? '全部 RDC 聚合' : trendRdc, left: 'center', top: 0, textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 'normal' } },
-        tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+          formatter: function(params) {
+            const dateStr = params[0] && params[0].name ? params[0].name : '';
+            let html = '<div style="font-weight:600;margin-bottom:4px">' + dateStr + '</div>';
+            params.forEach(p => {
+              const color = p.seriesName === 'KA 满足率' ? '#60a5fa' : '#34d399';
+              html += '<div style="display:flex;align-items:center;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';margin-right:6px"></span>' +
+                '<span style="flex:1">' + p.seriesName + '</span>' +
+                '<span style="font-weight:600">' + (p.value != null ? (p.value * 100).toFixed(1) + '%' : '-') + '</span></div>';
+            });
+            html += buildTop5TooltipHtml(trendTop5, (trendRdc === 'all' ? '全部 RDC' : trendRdc) + ' · ' + heatMonth + ' · TOP 5 缺货 SKU');
+            return html;
+          }
+        },
         legend: { data: legendData, textStyle: { color: '#94a3b8', fontSize: 11 }, top: 18 },
         grid: { left: 50, right: 20, top: 50, bottom: 30 },
         xAxis: { type: 'category', data: trendLast7.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
@@ -2033,10 +2080,24 @@ function renderOverview() {
       return sum + d.rdcShortAmount * ratio;
     }, 0);
   });
+  const rdcTop5Map = {};
+  RDC_LIST.forEach(r => { rdcTop5Map[r] = getTopShortageSKUsByMonth('all', r, heatMonth, 5); });
   const chartRdc = initChart('chart-rdc');
   if (chartRdc) {
     chartRdc.setOption({
-      tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+      tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+        formatter: function(params) {
+          const p = params[0];
+          const shortRdc = p && p.name ? p.name : '';
+          const fullRdc = shortRdc ? shortRdc + 'RDC' : '';
+          const val = p && p.value != null ? p.value : 0;
+          const top5 = fullRdc ? (rdcTop5Map[fullRdc] || []) : [];
+          let html = '<div style="font-weight:600;margin-bottom:4px">' + (fullRdc || shortRdc) + ' 缺货金额</div>' +
+            '<div style="margin-bottom:4px">¥' + (val / 10000).toFixed(2) + '万</div>';
+          html += buildTop5TooltipHtml(top5, fullRdc + ' · ' + heatMonth + ' · TOP 5 缺货 SKU');
+          return html;
+        }
+      },
       grid: { left: 60, right: 30, top: 10, bottom: 30 },
       xAxis: { type: 'value', axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => '¥'+(v/10000).toFixed(0)+'万' } },
       yAxis: { type: 'category', data: RDC_LIST.map(r => r.replace('RDC','')), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#cbd5e1', fontSize: 11 } },
@@ -2113,11 +2174,6 @@ function renderOverview() {
     const rate = (d && d.orderQty > 0) ? d.fulfillQty / d.orderQty : 0;
     heatData.push([ri, bi, rate]);
   }));
-  const heatMonth = (filters.dataMonth && filters.dataMonth !== 'all')
-    ? filters.dataMonth
-    : ((window._availableMonths && window._availableMonths.length > 0)
-      ? window._availableMonths.filter(m => m.indexOf('2026-') === 0).pop() || '2026-08'
-      : '2026-08');
   // v60: 预计算每个品牌×RDC 的 TOP5 缺货 SKU，供 hover tooltip 直接展示
   const brandRdcTop5Map = {};
   heatBrands.forEach(b => {
@@ -2135,11 +2191,25 @@ function renderOverview() {
           const top5 = brandRdcTop5Map[brand + '|' + rdc] || [];
           let html = rdc + ' · ' + brand + '<br/>月满足率：<b>' + (p.value[2]*100).toFixed(1) + '%</b>';
           if (top5.length > 0) {
-            html += '<br/><div style="margin:6px 0 4px;border-top:1px solid rgba(148,163,184,0.3);"></div><div style="font-size:11px;color:#93c5fd;margin-bottom:4px">TOP ' + top5.length + ' 缺货 SKU</div>';
+            html += '<br/><div style="margin:6px 0 4px;border-top:1px solid rgba(148,163,184,0.3);"></div><div style="font-size:11px;color:#93c5fd;margin-bottom:4px">TOP ' + top5.length + ' 缺货 SKU</div>' +
+              '<div style="display:flex;font-size:10px;color:#94a3b8;margin-bottom:2px;padding:0 2px">' +
+                '<span style="width:18px">#</span>' +
+                '<span style="flex:1;min-width:90px">物料 / 品名</span>' +
+                '<span style="width:48px;text-align:right">缺货箱</span>' +
+                '<span style="width:48px;text-align:right">在途箱</span>' +
+                '<span style="width:40px;text-align:center">供应</span>' +
+              '</div>';
             top5.forEach((d, i) => {
               const supplyTxt = String(d.dcSupply || '');
+              const supplyColor = supplyTxt.indexOf('紧张') >= 0 ? '#fca5a5' : (supplyTxt.indexOf('缺货') >= 0 ? '#fdba74' : '#86efac');
               const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
-              html += '<div style="font-size:11px;line-height:1.5">' + (i+1) + '. <span style="color:#e2e8f0">' + d.materialCode + '</span> ' + (d.materialName || '').slice(0,10) + ' · 缺货<b style="color:#fca5a5">' + formatNum(d.boxes) + '</b>箱 · 在途' + formatNum(d.transit) + '箱 · ' + supplyLabel + '</div>';
+              html += '<div style="display:flex;font-size:11px;line-height:1.5;padding:1px 2px">' +
+                '<span style="width:18px;color:#94a3b8">' + (i+1) + '</span>' +
+                '<span style="flex:1;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:#e2e8f0">' + d.materialCode + '</span> <span style="color:#64748b">' + (d.materialName || '').slice(0,10) + '</span></span>' +
+                '<span style="width:48px;text-align:right;color:#fca5a5;font-weight:600">' + formatNum(d.boxes) + '</span>' +
+                '<span style="width:48px;text-align:right;color:#e2e8f0">' + formatNum(d.transit) + '</span>' +
+                '<span style="width:40px;text-align:center;color:' + supplyColor + '">' + supplyLabel + '</span>' +
+              '</div>';
             });
           } else {
             html += '<br/><span style="color:#64748b;font-size:11px">该品牌×RDC 当月无缺货 SKU</span>';
@@ -9160,40 +9230,67 @@ function parseInventoryExcel(rawData) {
       const _header = pullbackArr[0] || [];
       const _hLower = _header.map(function(h) { return String(h || '').replace(/\s+/g, '').toLowerCase(); });
       function _findCol(kws) { for (let _i = 0; _i < _hLower.length; _i++) { if (kws.some(function(k) { return _hLower[_i].indexOf(k) >= 0; })) return _i; } return -1; }
-      const _dateCol = _findCol(['日期', '发货日期', '拉回日期', '出库日期', '创建日期', 'date']);
+      const _dateCol = _findCol(['日期', '发货日期', '拉回日期', '出库日期', '创建日期', '过账日期', 'date']);
       if (_dateCol >= 0) _pbCol.date = _dateCol;
-      const _rdcCol = _findCol(['发货rdc', '发货仓', '发货区域', '出库rdc', 'rdc']);
+      const _rdcCol = _findCol(['发货rdc', '发货仓', '发货区域', '出库rdc', '发货仓库', '调出仓', '调出区域', '出库仓库', '调出rdc', 'rdc']);
       if (_rdcCol >= 0) _pbCol.rdc = _rdcCol;
-      const _skuCol = _findCol(['sku编码', 'sku', '物料编码', '物料号', '商品编码']);
+      const _skuCol = _findCol(['sku编码', 'sku', '物料编码', '物料号', '商品编码', '物料']);
       if (_skuCol >= 0) _pbCol.sku = _skuCol;
-      const _nameCol = _findCol(['物料名称', '物料描述', '名称', '商品名称', 'name']);
+      const _nameCol = _findCol(['物料名称', '物料描述', '名称', '商品名称', 'name', '品名']);
       if (_nameCol >= 0) _pbCol.name = _nameCol;
-      const _qtyCol = _findCol(['数量', '箱数', '件数', '发货数量', '出库数量', 'qty']);
+      const _qtyCol = _findCol(['数量', '箱数', '件数', '发货数量', '出库数量', 'qty', '基本数量', '数量（件）']);
       if (_qtyCol >= 0) _pbCol.qty = _qtyCol;
-      const _unitCol = _findCol(['单位', '计量单位', 'unit']);
+      const _unitCol = _findCol(['单位', '计量单位', 'unit', '件']);
       if (_unitCol >= 0) _pbCol.unit = _unitCol;
-      const _recCol = _findCol(['收货方', '收货', '目标仓', '目标', '收货区域', 'rec']);
+      const _recCol = _findCol(['收货方', '收货', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', 'rec']);
       if (_recCol >= 0) _pbCol.rec = _recCol;
       const _brandCol = _findCol(['品牌', 'brand']);
       if (_brandCol >= 0) _pbCol.brand = _brandCol;
       console.log('[拉回分析] sheet 名:', pullbackSheetName, '行数:', pullbackArr.length - 1, '探测列映射:', _pbCol, '表头:', _header.slice(0, 12));
     }
 
-    // v59/v60: 结构化行数据，避免 TAB 端硬编码列索引
+    // v59/v60/v62: 结构化行数据，避免 TAB 端硬编码列索引；增强日期/RDC/数量解析与诊断
     const pullbackRows = [];
-    function parsePullbackWithCols(pbCols) {
+    function normalizePullbackRDC(n) {
+      const s = String(n || '').trim().replace(/仓$/g, '').replace(/RDC$/g, '');
+      const m = { '华南':'华南RDC','华北':'华北RDC','东北':'东北RDC','西北':'西北RDC','华中':'华中RDC','西南':'西南RDC','华东':'华东RDC' };
+      return m[s] ? m[s] : (s + 'RDC');
+    }
+    function parsePullDate(v) {
+      if (v == null) return null;
+      if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+      if (typeof v === 'number') {
+        if (v > 30000 && v < 100000) return new Date((v - 25569) * 86400 * 1000); // Excel Windows epoch
+        if (v > 1000000000000) return new Date(v); // timestamp ms
+        if (v > 1000000000) return new Date(v * 1000); // timestamp s
+        return null;
+      }
+      const s = String(v).trim();
+      if (!s) return null;
+      // 尝试多种中文/标准日期格式
+      const d = new Date(s.replace(/年|月/g, '-').replace(/日/g, '').replace(/\\/g, '-'));
+      if (!isNaN(d.getTime())) return d;
+      return null;
+    }
+    function parsePullQty(v) {
+      if (v == null) return 0;
+      if (typeof v === 'number') return v;
+      const n = Number(String(v).replace(/,/g, '').trim());
+      return isNaN(n) ? 0 : n;
+    }
+    function parsePullbackWithCols(pbCols, logDiag) {
       const rows = [];
       if (!pullbackArr) return rows;
+      let failMissingDate = 0, failDateInvalid = 0, failRdcEmpty = 0;
       for (let i = 1; i < pullbackArr.length; i++) {
-        const r = pullbackArr[i]; if (!r || !r[pbCols.date]) continue;
-        const dt0 = r[pbCols.date];
-        let dt = null;
-        if (typeof dt0 === 'number' && dt0 > 1000) dt = new Date((dt0 - 25569) * 86400 * 1000);
-        else if (typeof dt0 === 'string' && dt0.length >= 7) dt = new Date(dt0);
-        if (!dt || isNaN(dt.getTime())) continue;
+        const r = pullbackArr[i]; if (!r) continue;
+        if (!r[pbCols.date]) { failMissingDate++; continue; }
+        const dt = parsePullDate(r[pbCols.date]);
+        if (!dt) { failDateInvalid++; continue; }
         const ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth() + 1).toString().padStart(2, '0');
-        const rdcRaw = String(r[pbCols.rdc] || '').trim().replace('仓','RDC');
-        if (!rdcRaw) continue;
+        let rdcRaw = String(r[pbCols.rdc] || '').trim();
+        if (!rdcRaw) { failRdcEmpty++; continue; }
+        rdcRaw = normalizePullbackRDC(rdcRaw);
         const sku = String(r[pbCols.sku] || '').trim();
         const name = String(r[pbCols.name] || '').trim();
         const brand = String(r[pbCols.brand] || '').trim() || '未知';
@@ -9202,10 +9299,11 @@ function parseInventoryExcel(rawData) {
         const cost = master ? master.cost : 0;
         const spec = master ? master.spec : 0;
         const unit = String(r[pbCols.unit] || '').trim();
-        const qty = Number(r[pbCols.qty]) || 0;
+        const qty = parsePullQty(r[pbCols.qty]);
         let qtyBox = 0;
         if (unit === '箱') qtyBox = qty;
         else if (spec > 0) qtyBox = qty / spec;
+        else qtyBox = qty; // 无箱规时按原数量处理
         const amt = qty * cost;
         if (!pullbackByRdcMonth[rdcRaw]) pullbackByRdcMonth[rdcRaw] = {};
         if (!pullbackByRdcMonth[rdcRaw][ym]) pullbackByRdcMonth[rdcRaw][ym] = { qty: 0, amt: 0 };
@@ -9213,16 +9311,34 @@ function parseInventoryExcel(rawData) {
         pullbackByRdcMonth[rdcRaw][ym].amt += amt;
         rows.push({ date: dt, ym: ym, rdc: rdcRaw, sku: sku, name: name, brand: brand, rec: rec, qty: qty, unit: unit, boxQty: qtyBox, amount: amt });
       }
+      if (logDiag) {
+        console.log('[拉回分析] 诊断：缺日期=' + failMissingDate + ', 日期无效=' + failDateInvalid + ', RDC为空=' + failRdcEmpty + ', 成功=' + rows.length);
+      }
       return rows;
     }
     // 先用探测到的列解析
-    let _parsed = parsePullbackWithCols(_pbCol);
+    let _parsed = parsePullbackWithCols(_pbCol, true);
     // v60 fallback: 若探测列未解析出有效行，回退到默认列位置再试一次
     if (_parsed.length === 0 && pullbackArr && pullbackArr.length > 1) {
       console.log('[拉回分析] 探测列未解析出有效行，回退默认列位置:', _pbColDefault);
-      _parsed = parsePullbackWithCols(_pbColDefault);
+      _parsed = parsePullbackWithCols(_pbColDefault, true);
     }
     pullbackRows.push(..._parsed);
+    // 增强诊断：输出表头、前3行原始值、样本日期/RDC值
+    if (pullbackArr && pullbackArr.length > 0) {
+      const _h = pullbackArr[0] || [];
+      console.log('[拉回分析] 表头:', JSON.stringify(_h.slice(0, 12)));
+      for (let i = 1; i < Math.min(4, pullbackArr.length); i++) {
+        const r = pullbackArr[i] || [];
+        console.log('[拉回分析] 样例行' + i + ':', JSON.stringify(r.slice(0, 12)));
+      }
+      const _sample = [];
+      for (let i = 1; i < Math.min(6, pullbackArr.length); i++) {
+        const r = pullbackArr[i] || [];
+        _sample.push({ date: r[_pbCol.date], rdc: r[_pbCol.rdc], qty: r[_pbCol.qty], unit: r[_pbCol.unit] });
+      }
+      console.log('[拉回分析] 探测列样例值(date/rdc/qty/unit):', JSON.stringify(_sample));
+    }
     console.log('[拉回分析] 最终有效结构化行数:', pullbackRows.length, 'sheetFound:', pullbackSheetFound);
 
     // ===== 7月新模板：库存金额 sheet（左表=金额趋势 4透视块；右表=库存结构分析 4种状态） =====
