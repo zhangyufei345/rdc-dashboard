@@ -257,17 +257,17 @@ a { color: var(--color-blue); text-decoration: none; }
 #page-overview .center-stat .v { font-size: 18px; font-weight: 700; line-height: 1; }
 #page-overview .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
 #page-overview .center-rings { position: relative; width: 240px; height: 240px; margin: 0 auto; }
-/* 6 个 RDC 满足率标签（HTML 外置于环图四周，不被遮挡） */
+/* 6 个 RDC 满足率标签（HTML 外置于环图四周，v54：左3右3对称环绕） */
 #page-overview .rdc-label {
   position: absolute; font-size: 11px; font-weight: 700; line-height: 1;
   white-space: nowrap; pointer-events: none;
 }
-#page-overview .rdc-label-tl { left: 0; top: -4px; }
-#page-overview .rdc-label-tr { right: 0; top: -4px; }
-#page-overview .rdc-label-tt { left: 50%; top: -14px; transform: translateX(-50%); }
-#page-overview .rdc-label-bl { left: 0; bottom: -4px; }
-#page-overview .rdc-label-br { right: 0; bottom: -4px; }
-#page-overview .rdc-label-rm { right: -22px; top: 50%; transform: translateY(-50%); }
+#page-overview .rdc-label-tl { left: -8px; top: 8px; }
+#page-overview .rdc-label-ml { left: -18px; top: 50%; transform: translateY(-50%); }
+#page-overview .rdc-label-bl { left: -8px; bottom: 8px; }
+#page-overview .rdc-label-tr { right: -8px; top: 8px; }
+#page-overview .rdc-label-mr { right: -18px; top: 50%; transform: translateY(-50%); }
+#page-overview .rdc-label-br { right: -8px; bottom: 8px; }
 @media (max-width: 900px) {
   #page-overview .center-3col { grid-template-columns: 1fr; }
   #page-overview .center-rings { margin: 0 auto 12px; }
@@ -305,7 +305,7 @@ a { color: var(--color-blue); text-decoration: none; }
 #page-overview .chart-area { width: 100%; height: 220px; }
 
 /* 底部 2 列网格 */
-#page-overview .bottom-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
+#page-overview .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
 @media (max-width: 1100px) { #page-overview .bottom-grid { grid-template-columns: 1fr; } }
 
 /* 表格深色 */
@@ -625,7 +625,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 53; // v53: 总览页 mindmap-center 微调——删除底部 alert-strip（紧急缺货预警条）；center-3col 改为固定 186/240/186+space-between（两侧列缩到约2/3宽且紧贴左右边缘，环形居中）；6个RDC满足率标签从 ECharts graphic 改为 HTML 外置（.rdc-label-tl/tr/tt/bl/br/rm）以避免被环图遮挡
+const DB_VERSION = 54; // v54: 总览页四象限微调——(1) 6 个 RDC 满足率标签改为左3右3对称环绕（tl/ml/bl/tr/mr/br，负 offset 贴环图外缘）；(2) 趋势图 y 轴 min: 0.7→0（显示 0-100%）；加 RDC 下拉筛选，默认"全部"显示 KA+经销商，单选 RDC 显示该 RDC 单线；(3) Top 5 mini 紧凑化：SKU 代码与品名同一行（flex + ellipsis）；(4) Top 20 加 4 个排序按钮（缺货箱数/金额/涉及RDC/大仓供应，按"紧张>缺货>正常"优先级排）+ "显示全部缺货信息"按钮；(5) bottom-grid 改 1fr 1fr（左右等宽）、heatmap 高度 280→220 与 Top 20 视觉平衡
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1698,13 +1698,32 @@ function renderOverview() {
   const top5Skus = [...window._overviewShortList].sort((a,b) => b.rdcShortAmount - a.rdcShortAmount).slice(0, 5);
   const top5RowHtml = top5Skus.map(d => {
     const pillCls = d.rdcShortBoxes >= 400 ? 'red' : (d.rdcShortBoxes >= 200 ? 'orange' : 'green');
-    return '<tr><td style="text-align:left"><div>' + d.materialCode + '</div><div style="font-size:10px;color:#94a3b8;margin-top:2px">' + (d.materialName || '') + '</div></td>' +
+    return '<tr><td style="text-align:left;max-width:0"><div style="display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:#93c5fd;flex-shrink:0;font-weight:600">' + d.materialCode + '</span><span style="font-size:11px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</span></div></td>' +
            '<td class="num"><span class="pill ' + pillCls + '">' + formatNum(d.rdcShortBoxes) + '</span></td>' +
            '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
            '<td>' + d.rdcCount + '</td></tr>';
   }).join('');
-  const top20Skus = [...window._overviewShortList].sort((a,b) => b.rdcShortAmount - a.rdcShortAmount).slice(0, 20);
-  const top20RowHtml = top20Skus.map(d => {
+
+  // Top 20 排序逻辑（v54：支持 缺货箱数/金额/涉及RDC/大仓供应 四种排序；大仓供应按「紧张>缺货>正常」优先级）
+  const _sortKey = window._overviewShortSort || 'amount';
+  const _sortLabels = { boxes: '缺货箱数', amount: '缺货金额', rdcCount: '涉及RDC数', dcSupply: '大仓供应' };
+  let _top20List = [...window._overviewShortList];
+  if (_sortKey === 'boxes') _top20List.sort((a,b) => b.rdcShortBoxes - a.rdcShortBoxes);
+  else if (_sortKey === 'amount') _top20List.sort((a,b) => b.rdcShortAmount - a.rdcShortAmount);
+  else if (_sortKey === 'rdcCount') _top20List.sort((a,b) => b.rdcCount - a.rdcCount || b.rdcShortBoxes - a.rdcShortBoxes);
+  else if (_sortKey === 'dcSupply') {
+    const _supplyRank = s => {
+      const v = (s || '').toString();
+      if (v.indexOf('紧张') >= 0) return 0;
+      if (v.indexOf('缺货') >= 0) return 1;
+      return 2;
+    };
+    _top20List.sort((a,b) => _supplyRank(a.dcSupply) - _supplyRank(b.dcSupply) || b.rdcShortBoxes - a.rdcShortBoxes);
+  }
+  _top20List = _top20List.slice(0, 20);
+  const _sortBtnsHtml = ['boxes','amount','rdcCount','dcSupply'].map(k => '<button class="btn-export" style="font-size:11px;padding:3px 8px;' + (_sortKey===k?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':'background:rgba(99,179,237,0.15);color:#93c5fd;border:1px solid rgba(99,179,237,0.3);') + '" onclick="window._overviewShortSort=\'' + k + '\';renderOverview()">' + _sortLabels[k] + '</button>').join('');
+  const _showAllHtml = '<button class="btn-export" style="font-size:11px;padding:3px 10px;margin-left:8px;background:rgba(249,115,22,0.2);color:#fdba74;border:1px solid rgba(249,115,22,0.4)" onclick="window._showAllShortage=!window._showAllShortage;renderOverview()">' + (window._showAllShortage?'返回 Top 20':'显示全部缺货信息') + '</button>';
+  const top20RowHtml = _top20List.map(d => {
     const rdcPillCls = d.rdcCount >= 4 ? 'red' : (d.rdcCount >= 2 ? 'orange' : 'green');
     const supplyTxt = String(d.dcSupply || '');
     const supplyPillCls = supplyTxt.indexOf('紧张') >= 0 ? 'red' : (supplyTxt.indexOf('缺货') >= 0 ? 'orange' : 'green');
@@ -1778,7 +1797,13 @@ function renderOverview() {
     <div class="mindmap-grid">
       <!-- 左：满足率趋势 -->
       <div class="card">
-        <div class="card-title">📈 日订单满足率趋势<span class="card-sub">近 7 个工作日</span></div>
+        <div class="card-header" style="display:flex;align-items:center">
+          <span class="card-title">📈 日订单满足率趋势<span class="card-sub">近 7 个工作日</span></span>
+          <select id="trend-rdc-filter" onchange="window._trendRdc=this.value;renderOverview()" style="margin-left:auto;padding:4px 8px;background:rgba(15,23,42,0.7);color:#e2e8f0;border:1px solid rgba(99,179,237,0.3);border-radius:6px;font-size:11px;outline:none">
+            <option value="all" ${(window._trendRdc||'all')==='all'?'selected':''}>全部RDC（KA/经销商）</option>
+            ${RDC_LIST.map(r => '<option value="'+r+'"' + ((window._trendRdc||'')===r?' selected':'') + '>'+r+'</option>').join('')}
+          </select>
+        </div>
         <div id="chart-trend" class="chart-area" style="height:240px"></div>
       </div>
 
@@ -1820,7 +1845,7 @@ function renderOverview() {
               <div class="big">${(dayRate*100).toFixed(1)}%</div>
               <div class="lbl">日满足率</div>
             </div>
-            ${rdcRateLabel.map((it, i) => '<div class="rdc-label rdc-label-' + ['tl','tr','tt','bl','br','rm'][i] + '" style="color:' + getRDCColor(it.rdc) + '">' + it.rdc.replace('RDC','') + ' ' + (it.rate == null ? '—' : (it.rate*100).toFixed(0) + '%') + '</div>').join('')}
+            ${rdcRateLabel.map((it, i) => '<div class="rdc-label rdc-label-' + ['tl','ml','bl','tr','mr','br'][i] + '" style="color:' + getRDCColor(it.rdc) + '">' + it.rdc.replace('RDC','') + ' ' + (it.rate == null ? '—' : (it.rate*100).toFixed(0) + '%') + '</div>').join('')}
           </div>
 
           <!-- 右列：客户/库存 4 个数据点（2×2 网格） -->
@@ -1879,12 +1904,17 @@ function renderOverview() {
     <!-- 品牌 × RDC 热力图 -->
     <div class="card">
       <div class="card-title">🌡️ 品牌 × RDC 月度满足率矩阵</div>
-      <div id="chart-heat" class="chart-area" style="height:280px"></div>
+      <div id="chart-heat" class="chart-area" style="height:220px"></div>
     </div>
 
     <!-- 底部 Top 20 物料 -->
     <div class="card">
-      <div class="card-title">📋 Top 20 缺货物料（订单核心）</div>
+      <div class="card-header" style="display:flex;align-items:center;gap:8px">
+        <span class="card-title">📋 Top 20 缺货物料（订单核心）</span>
+        <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
+          ${_sortBtnsHtml}${_showAllHtml}
+        </div>
+      </div>
       <table>
         <thead><tr>
           <th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th>
@@ -1892,7 +1922,7 @@ function renderOverview() {
           <th class="num">缺货金额</th><th class="num">涉及RDC</th><th>大仓供应</th>
         </tr></thead>
         <tbody>
-          ${top20Skus.length > 0 ? top20RowHtml : '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
+          ${_top20List.length > 0 ? top20RowHtml : '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -1935,35 +1965,49 @@ function renderOverview() {
     });
   }
 
-  // 2. 日订单满足率趋势（近 7 个工作日，KA + 经销商）
+  // 2. 日订单满足率趋势（近 7 个工作日；默认"全部"显示 KA+经销商，单选 RDC 显示该 RDC 单线，v54）
+  const trendRdc = window._trendRdc || 'all';
   const trendDayMap = {};
   monthOrders.forEach(d => {
-    if (!d.dateStr || !d.channel) return;
-    if (d.channel !== 'KA' && d.channel !== '经销商') return;
+    if (!d.dateStr || !d.warehouse) return;
     if (!isWorkday(d.dateStr)) return;
+    if (trendRdc !== 'all' && d.warehouse !== trendRdc) return;
     const key = d.dateStr;
-    if (!trendDayMap[key]) trendDayMap[key] = { ka: { orderQty: 0, firstQty: 0 }, jx: { orderQty: 0, firstQty: 0 } };
-    const bucket = d.channel === 'KA' ? trendDayMap[key].ka : trendDayMap[key].jx;
-    bucket.orderQty += d.orderQty || 0;
-    bucket.firstQty += d.firstDayQty || 0;
+    if (!trendDayMap[key]) trendDayMap[key] = { ka: { orderQty: 0, firstQty: 0 }, jx: { orderQty: 0, firstQty: 0 }, rdc: { orderQty: 0, firstQty: 0 } };
+    trendDayMap[key].rdc.orderQty += d.orderQty || 0;
+    trendDayMap[key].rdc.firstQty += d.firstDayQty || 0;
+    if (d.channel === 'KA' || d.channel === '经销商') {
+      const bucket = d.channel === 'KA' ? trendDayMap[key].ka : trendDayMap[key].jx;
+      bucket.orderQty += d.orderQty || 0;
+      bucket.firstQty += d.firstDayQty || 0;
+    }
   });
   const trendDates = Object.keys(trendDayMap).sort();
   const trendLast7 = trendDates.slice(-7);
   if (trendLast7.length > 0) {
     const chartTrend = initChart('chart-trend');
     if (chartTrend) {
-      const kaData = trendLast7.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
-      const jxData = trendLast7.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
-      chartTrend.setOption({
-        tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
-        legend: { data: ['KA 满足率', '经销商 满足率'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0 },
-        grid: { left: 50, right: 20, top: 35, bottom: 30 },
-        xAxis: { type: 'category', data: trendLast7.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
-        yAxis: { type: 'value', min: 0.7, max: 1, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => (v*100).toFixed(0)+'%' } },
-        series: [
+      let legendData, seriesData;
+      if (trendRdc === 'all') {
+        legendData = ['KA 满足率', '经销商 满足率'];
+        const kaData = trendLast7.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
+        const jxData = trendLast7.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
+        seriesData = [
           { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
           { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
-        ]
+        ];
+      } else {
+        legendData = [trendRdc + ' 满足率'];
+        const rdcData = trendLast7.map(d => trendDayMap[d].rdc.orderQty > 0 ? trendDayMap[d].rdc.firstQty / trendDayMap[d].rdc.orderQty : null);
+        seriesData = [{ name: trendRdc + ' 满足率', type: 'line', smooth: true, data: rdcData, lineStyle: { width: 3, color: getRDCColor(trendRdc), shadowBlur: 8, shadowColor: 'rgba(99,179,237,0.5)' }, itemStyle: { color: getRDCColor(trendRdc) }, symbol: 'circle', symbolSize: 8 }];
+      }
+      chartTrend.setOption({
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+        legend: { data: legendData, textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0 },
+        grid: { left: 50, right: 20, top: 35, bottom: 30 },
+        xAxis: { type: 'category', data: trendLast7.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
+        yAxis: { type: 'value', min: 0, max: 1.03, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => (v*100).toFixed(0)+'%' } },
+        series: seriesData
       });
     }
   }
