@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 72; // v72: 恢复 2025 年转储数据（从 git 历史 data.xlsx 提取 2025 年转储数据合并进 transship.xlsx， regenerate transship.json/manifest.json），使「2025 H1 vs 2026 H1」对比图正常显示 2025 数据；v71: 总览「Top 20 缺货物料」的「显示全部缺货信息」按钮改为展示 SKU×RDC 明细
+const DB_VERSION = 73; // v73: 总览中央面板4项微调——①订单流「订单箱数」改名为「订单数量」；②异常流改为「缺货无在途」箱数（新算 noTransitShortBoxes = sData 中 rdcTransitTotal=0 的 rdcShortBoxes 合计）；③客户/库存 panel 标题改为「客户/缺货」；④渠道订单量饼图对比色调整（KA 蓝→经销商橙，新渠道紫）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1641,6 +1641,8 @@ function renderOverview() {
   const totalShortAmount = sData.reduce((s,d) => s + d.rdcShortAmount, 0);
   const totalShortBoxes = sData.reduce((s,d) => s + d.rdcShortBoxes, 0);
   const totalTransitBoxes = sData.reduce((s,d) => s + d.rdcTransitTotal, 0);
+  // v73: 缺货无在途箱数（异常流核心指标：缺货且无在途补货的箱数，优先级最高的真正"卡死"库存）
+  const noTransitShortBoxes = sData.filter(d => !(d.rdcTransitTotal > 0)).reduce((s,d) => s + d.rdcShortBoxes, 0);
   const rdcNamesForKpi = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
   const rdcKeysForKpi = ['huananShort','huabeiShort','dongbeiShort','xibeiShort','huazhongShort','xinanShort'];
   const affectedRdcs = rdcNamesForKpi.filter((rdc, i) => sData.some(d => d[rdcKeysForKpi[i]] > 0)).length;
@@ -1915,7 +1917,7 @@ function renderOverview() {
             <div class="center-stats">
               <div class="center-stat">
                 <div class="v" style="color:#60a5fa">${formatNum(Math.round(orderBoxes))}</div>
-                <div class="l">订单箱数</div>
+                <div class="l">订单数量</div>
               </div>
               <div class="center-stat">
                 <div class="v" style="color:#34d399">${formatNum(Math.round(firstBoxes))}</div>
@@ -1948,7 +1950,7 @@ function renderOverview() {
 
           <!-- 右列：客户/库存 4 个数据点（2×2 网格） -->
           <div class="center-side">
-            <div class="center-side-title">🌐 客户/库存</div>
+            <div class="center-side-title">🌐 客户/缺货</div>
             <div class="center-stats">
               <div class="center-stat" style="background:rgba(96,165,250,0.08)">
                 <div class="v" style="color:#93c5fd">${custSet.size}</div>
@@ -1968,8 +1970,8 @@ function renderOverview() {
               </div>
             </div>
             <div style="margin-top:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(239,68,68,0.15),rgba(239,68,68,0.04));border-left:3px solid #ef4444;border-radius:6px">
-              <div style="font-size:10px;color:#fca5a5;letter-spacing:1px">↘ 异常流（缺货金额）</div>
-              <div style="font-size:16px;color:#ef4444;font-weight:700;margin-top:2px">${formatMoney(totalShortAmount)}</div>
+              <div style="font-size:10px;color:#fca5a5;letter-spacing:1px">↘ 异常流（缺货无在途）</div>
+              <div style="font-size:16px;color:#ef4444;font-weight:700;margin-top:2px">${formatNum(Math.round(noTransitShortBoxes))}<span style="font-size:11px;color:#fca5a5;margin-left:2px">箱</span></div>
             </div>
           </div>
         </div>
@@ -2174,7 +2176,7 @@ function renderOverview() {
     chMap[ch].groups[cg].firstQty += d.firstDayQty || 0;
   });
   const channelData = Object.entries(chMap).map(([name, info]) => ({ name, value: info.orderQty }));
-  const channelColors = { 'KA': '#60a5fa', 'KA直营': '#60a5fa', '经销商': '#34d399', '新渠道': '#f97316' };
+  const channelColors = { 'KA': '#60a5fa', 'KA直营': '#60a5fa', '经销商': '#fb923c', '新渠道': '#a78bfa' };
   const chartChannel = initChart('chart-channel');
   if (chartChannel) {
     chartChannel.setOption({
