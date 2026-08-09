@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 71; // v71: 总览「Top 20 缺货物料」的「显示全部缺货信息」按钮改为展示 SKU×RDC 明细（各RDC缺货箱数/在途箱数/缺货金额）；v70: 拉回分析收货仓列探测+金额换算修复
+const DB_VERSION = 72; // v72: 恢复 2025 年转储数据（从 git 历史 data.xlsx 提取 2025 年转储数据合并进 transship.xlsx， regenerate transship.json/manifest.json），使「2025 H1 vs 2026 H1」对比图正常显示 2025 数据；v71: 总览「Top 20 缺货物料」的「显示全部缺货信息」按钮改为展示 SKU×RDC 明细
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
