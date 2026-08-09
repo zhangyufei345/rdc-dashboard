@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 67; // v67: 拉回分析品牌优先从「基础数据」productMaster 抓取（解决新模板无品牌列导致全显示「未知」）；新增 recRdcMap（基础数据 col14收货库位→col19 RDC）精确映射，按收货仓表格 RDC 不再全显示「其他」
+const DB_VERSION = 68; // v68: 拉回分析 RDC 直接取「发货工厂」列(H列,如华东仓→华东RDC,7个全有)，收货仓直接取「大仓收货仓」列(C列,4类)；删除 base data recRdcMap(仅7行→大量「其他」)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6415,25 +6415,16 @@ function renderPullbackAnalysis(page) {
       '<div class="card"><div class="card-header"><span class="card-title">📊 品牌×RDC分布(TOP10)' + suf + '</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand-rdc"></div></div>' +
       '<div class="card"><div class="card-header"><span class="card-title">🏷️ 品牌TOP10' + suf + '</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand"></div></div>' +
     '</div>' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓' + suf + '</span></div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
+    '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓（大仓收货仓）' + suf + '</span></div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">收货仓取自拉回数据「大仓收货仓」列（C列）；RDC 维度见上方「各RDC拉回」饼图（取自「发货工厂」列 H列，无需映射）</div>' +
+      '<div class="table-wrap"><table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
       (function() {
-        // v67: 优先使用基础数据中的 收货库位→RDC 映射表，回退到前缀规则
-        var recRdcMap = (dataStore.inventory && dataStore.inventory.recRdcMap) || {};
-        var factoryM = { '20':'东北','40':'华南','60':'西北','70':'华中','80':'西南','90':'华北' };
+        // v68: 收货仓直接取 C列「大仓收货仓」（聚合维度 r.rec），不再用 base data 的 recRdcMap（仅7行，覆盖不全→大量「其他」）
         return Object.entries(agg.rec).map(function(e) { return { name: e[0], box: e[1].box, amt: e[1].amt }; }).sort(function(a, b) { return valOf(b) - valOf(a); }).map(function(r) {
-          var rdcLabel = '其他';
-          if (recRdcMap[r.name]) {
-            var raw = String(recRdcMap[r.name]).trim().replace(/仓$/g, '');
-            rdcLabel = raw + 'RDC';
-          } else {
-            var locMatch = r.name.match(/^(\d{2})/) || r.name.match(/^P?(\d{2})/);
-            if (locMatch && factoryM[locMatch[1]]) rdcLabel = factoryM[locMatch[1]] + 'RDC';
-          }
-          return '<tr><td style="text-align:left;color:#93c5fd">' + rdcLabel + '</td><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
+          return '<tr><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
         }).join('');
       })() +
-      (Object.keys(agg.rec).length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
+      (Object.keys(agg.rec).length === 0 ? '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
       '</tbody></table></div></div>';
 
   // 9. 绘制图表
@@ -9319,7 +9310,7 @@ function parseInventoryExcel(rawData) {
       if (_qtyCol >= 0) _pbCol.qty = _qtyCol;
       const _unitCol = _findCol(['单位', '计量单位', 'unit', '件']);
       if (_unitCol >= 0) _pbCol.unit = _unitCol;
-      const _recCol = _findCol(['收货方', '收货', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', 'rec', '库位', '收货库位']);
+      const _recCol = _findCol(['大仓收货仓', '收货仓', '收货方', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', '收货库位', '库位', 'rec']);
       if (_recCol >= 0) _pbCol.rec = _recCol;
       const _brandCol = _findCol(['品牌', 'brand']);
       if (_brandCol >= 0) _pbCol.brand = _brandCol;
