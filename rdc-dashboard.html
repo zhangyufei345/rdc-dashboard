@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 73; // v73: 总览中央面板4项微调——①订单流「订单箱数」改名为「订单数量」；②异常流改为「缺货无在途」箱数（新算 noTransitShortBoxes = sData 中 rdcTransitTotal=0 的 rdcShortBoxes 合计）；③客户/库存 panel 标题改为「客户/缺货」；④渠道订单量饼图对比色调整（KA 蓝→经销商橙，新渠道紫）
+const DB_VERSION = 74; // v74: 转储数据页删除「2025上半年 vs 2026上半年」H1 对比图（chart-trans-h1-compare 区块与对应初始化逻辑）；transship.xlsx 仅保留 2026 年数据（已剔除 2025 共 44885 行，文件从 76MB 降至 37MB，加载更快）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -6067,11 +6067,7 @@ function renderTransship() {
 
     <!-- Free transshipment unit breakdown（已按用户要求下线）-->
 
-    <!-- H1 YoY comparison -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><span class="card-title">2025上半年 vs 2026上半年 转储量对比（按RDC）</span></div>
-      <div class="chart-container" id="chart-trans-h1-compare"></div>
-    </div>
+    <!-- H1 YoY comparison（v74：按用户要求删除 25 vs 26 对比，不再保留历史月份转储数据）-->
 
     <!-- Monthly trend chart with RDC checkboxes -->
     <div class="card" style="margin-bottom:16px">
@@ -6142,36 +6138,7 @@ function renderTransship() {
 
   // ====== CHARTS ======
 
-  // 0. H1 YoY comparison by RDC
-  const h1Months25 = ['2025-01','2025-02','2025-03','2025-04','2025-05','2025-06'];
-  const h1Months26 = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-  function sumRdcByMonths(months) {
-    const m = {};
-    RDC_LIST.forEach(r => { m[r] = 0; });
-    data.forEach(d => {
-      const mstr = d.dateStr.slice(0,7);
-      if (months.includes(mstr) && m[d.rdc] !== undefined) m[d.rdc] += d.invoiceQty;
-    });
-    return RDC_LIST.map(r => m[r]);
-  }
-  const h1_25 = sumRdcByMonths(h1Months25);
-  const h1_26 = sumRdcByMonths(h1Months26);
-  const chart0 = initChart('chart-trans-h1-compare');
-  chart0.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true, textStyle: { fontSize: 11 }, formatter: params => {
-      let html = '<strong>' + params[0].axisValue + '</strong>';
-      params.forEach(p => { html += '<br/>' + p.marker + p.seriesName + '：' + formatNum(p.value) + '箱'; });
-      return html;
-    }},
-    legend: { data: ['2025 H1', '2026 H1'], top: 5, left: 10, textStyle: { fontSize: 11 } },
-    grid: { left: 55, right: 20, top: 40, bottom: 30 },
-    xAxis: { type: 'category', data: RDC_LIST, axisLabel: { fontSize: 11 } },
-    yAxis: { type: 'value', axisLabel: { formatter: v => formatNum(v) } },
-    series: [
-      { name: '2025 H1', type: 'bar', data: h1_25, color: '#94a3b8', barWidth: '28%' },
-      { name: '2026 H1', type: 'bar', data: h1_26, color: '#2563EB', barWidth: '28%' }
-    ]
-  });
+  // 0. H1 YoY comparison by RDC（v74：按用户要求删除——不再保留历史月份转储数据）
 
   // 1. Monthly Trend - Line chart with RDC checkboxes
   const chart1 = initChart('chart-trans-monthly-trend');
