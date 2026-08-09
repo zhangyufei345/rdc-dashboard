@@ -127,27 +127,7 @@ a { color: var(--color-blue); text-decoration: none; }
 .row-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
 
 /* 总览驾驶舱（v49） */
-.cockpit-card { overflow: hidden; }
-.cockpit-3col { display: grid; grid-template-columns: minmax(0, 1fr) 260px minmax(0, 1fr); gap: 16px; align-items: center; }
-.cockpit-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.cockpit-side-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
-.cockpit-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.cockpit-stat { background: var(--border-light); border: 1px solid var(--border-card); border-radius: 10px; padding: 10px 12px; text-align: left; }
-.cockpit-stat .v { font-size: 19px; font-weight: 700; line-height: 1.2; }
-.cockpit-stat .l { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
-.cockpit-flow { font-size: 12px; color: var(--text-secondary); padding: 8px 12px; border: 1px dashed var(--border-card); border-radius: 8px; background: var(--border-light); }
-.cockpit-flow b { color: var(--text-primary); }
-.cockpit-center { text-align: center; }
-.cockpit-center-title { font-size: 12px; color: var(--text-secondary); letter-spacing: 2px; margin-bottom: 6px; }
-.cockpit-center-legend { display: flex; justify-content: center; gap: 18px; margin-top: 6px; font-size: 11px; color: var(--text-secondary); flex-wrap: wrap; }
-.cockpit-center-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
-.cockpit-alert { margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 12px; border: 1px solid; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cockpit-alert.warn { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.35); color: var(--color-red); }
-.cockpit-alert.ok { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.35); color: var(--color-green); }
-.cockpit-alert b { font-weight: 700; }
-@media (max-width: 1100px) { .cockpit-3col { grid-template-columns: 1fr; } .cockpit-center { order: -1; } }
-
-/* 总览页驾驶舱深色主题（v50，仅作用于 #page-overview，与其它页面隔离） */
+/* ========== 总览页驾驶舱深色主题（v51 彻底重建：统一作用域 #page-overview，纯深色） ========== */
 #page-overview {
   color: #cbd5e1;
   background:
@@ -156,36 +136,48 @@ a { color: var(--color-blue); text-decoration: none; }
     linear-gradient(135deg, #0a0e27 0%, #131a3b 50%, #0a0e27 100%);
   padding: 16px;
   border-radius: 14px;
+  min-height: calc(100vh - 120px);
 }
-#page-overview .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 18px; }
+
+/* ===== KPI 6 卡（带图标+发光+hover上浮） ===== */
+#page-overview .kpi-row {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 18px;
+}
 #page-overview .kpi-card {
   position: relative; padding: 18px 16px;
   background: linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
   border: 1px solid rgba(99,179,237,0.2);
   border-radius: 12px; overflow: hidden;
-  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
   display: flex; flex-direction: column; gap: 6px;
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
 #page-overview .kpi-card::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
   background: linear-gradient(90deg, transparent, var(--accent, #60a5fa), transparent);
   opacity: 0.6;
 }
-#page-overview .kpi-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px var(--accent-glow); }
+#page-overview .kpi-card:hover {
+  transform: translateY(-3px); border-color: var(--accent);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px var(--accent-glow);
+}
 #page-overview .kpi-card.blue { --accent: #60a5fa; --accent-glow: rgba(96,165,250,0.3); }
 #page-overview .kpi-card.green { --accent: #34d399; --accent-glow: rgba(52,211,153,0.3); }
 #page-overview .kpi-card.red { --accent: #ef4444; --accent-glow: rgba(239,68,68,0.3); }
 #page-overview .kpi-card.orange { --accent: #f97316; --accent-glow: rgba(249,115,22,0.3); }
 #page-overview .kpi-card.teal { --accent: #2dd4bf; --accent-glow: rgba(45,212,191,0.3); }
 #page-overview .kpi-card.purple { --accent: #c084fc; --accent-glow: rgba(192,132,252,0.3); }
-#page-overview .kpi-card .kpi-label { font-size: 12px; color: #94a3b8; letter-spacing: 0.5px; margin-bottom: 4px; }
+#page-overview .kpi-card .kpi-label {
+  font-size: 12px; color: #94a3b8; letter-spacing: 0.5px; margin-bottom: 4px; padding-right: 36px;
+}
 #page-overview .kpi-card .kpi-value {
   font-size: 28px; font-weight: 700; line-height: 1;
-  color: var(--accent) !important;
+  color: var(--accent);
   text-shadow: 0 0 20px var(--accent-glow);
   font-family: 'Helvetica Neue', Arial, sans-serif;
 }
-#page-overview .kpi-card .kpi-unit { font-size: 14px; font-weight: 500; color: var(--accent); opacity: 0.85; margin-left: 2px; }
+#page-overview .kpi-card .kpi-unit {
+  font-size: 14px; font-weight: 500; color: var(--accent); opacity: 0.85; margin-left: 2px;
+}
 #page-overview .kpi-card .kpi-trend { font-size: 11px; display: flex; align-items: center; gap: 4px; margin-top: 2px; }
 #page-overview .kpi-card .kpi-trend.up { color: #34d399; }
 #page-overview .kpi-card .kpi-trend.down { color: #f87171; }
@@ -197,64 +189,232 @@ a { color: var(--color-blue); text-decoration: none; }
   display: flex; align-items: center; justify-content: center;
   font-size: 16px;
 }
+
+/* ===== Card 玻璃质感 ===== */
 #page-overview .card {
-  background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45)) !important;
-  border: 1px solid rgba(99,179,237,0.18) !important;
+  background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45));
+  border: 1px solid rgba(99,179,237,0.18);
   color: #cbd5e1;
   box-shadow: 0 4px 20px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
   backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
 }
-#page-overview .card-header { border-bottom: 1px solid rgba(99,179,237,0.15); padding-bottom: 10px; margin-bottom: 12px; }
-#page-overview .card-title { font-size: 14px; font-weight: 600; color: #e2e8f0; }
-#page-overview .card-title::before { background: linear-gradient(180deg, #60a5fa, #a78bfa); }
-#page-overview .card-sub { color: #94a3b8; }
-#page-overview .card-title-prefix { color: #94a3b8; }
-#page-overview .data-table { font-size: 12px; }
+#page-overview .card-header {
+  border-bottom: 1px solid rgba(99,179,237,0.15);
+  padding-bottom: 10px; margin-bottom: 12px;
+  display: flex; align-items: center;
+}
+#page-overview .card-title {
+  font-size: 14px; font-weight: 600; color: #e2e8f0;
+  display: flex; align-items: center; gap: 8px;
+}
+#page-overview .card-title::before {
+  content: ''; width: 3px; height: 14px;
+  background: linear-gradient(180deg, #60a5fa, #a78bfa);
+  border-radius: 2px;
+}
+#page-overview .card-sub {
+  font-size: 11px; color: #94a3b8; margin-left: auto; font-weight: 400;
+}
+
+/* ===== 驾驶舱 hero 核心卡片（玻璃质感 + 蓝紫光晕） ===== */
+#page-overview .cockpit-card {
+  position: relative; padding: 20px 14px 16px;
+  background:
+    radial-gradient(ellipse 60% 80% at 50% 50%, rgba(59,130,246,0.12), transparent 70%),
+    linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
+  border: 1px solid rgba(99,179,237,0.25);
+  border-radius: 14px;
+  box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+#page-overview .cockpit-3col {
+  display: grid; grid-template-columns: 280px 240px 280px; justify-content: space-between;
+  gap: 18px; align-items: start; width: 100%;
+}
+#page-overview .cockpit-side {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+#page-overview .cockpit-side-title {
+  font-size: 11px; color: #94a3b8; letter-spacing: 1px;
+  margin-bottom: 2px; text-align: left;
+  display: flex; align-items: center; gap: 6px;
+}
+#page-overview .cockpit-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+}
+#page-overview .cockpit-stat {
+  padding: 10px 6px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(99,179,237,0.08);
+  border-radius: 8px;
+  text-align: center;
+  transition: background 0.2s, border-color 0.2s;
+}
+#page-overview .cockpit-stat:hover {
+  background: rgba(99,179,237,0.08);
+  border-color: rgba(99,179,237,0.2);
+}
+#page-overview .cockpit-stat .v {
+  font-size: 16px; font-weight: 700; line-height: 1.2;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  text-shadow: 0 0 12px currentColor;
+}
+#page-overview .cockpit-stat .l {
+  font-size: 9px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px;
+}
+#page-overview .cockpit-flow {
+  font-size: 12px; color: #cbd5e1;
+  padding: 8px 10px;
+  background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04));
+  border-left: 3px solid #34d399;
+  border-radius: 6px;
+}
+#page-overview .cockpit-flow b { color: #34d399; font-weight: 700; }
+#page-overview .cockpit-center { text-align: center; position: relative; }
+#page-overview .cockpit-center-title {
+  font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 12px;
+}
+#page-overview .cockpit-center-legend {
+  display: flex; justify-content: center; gap: 18px; margin-top: 8px;
+  font-size: 11px; color: #94a3b8; flex-wrap: wrap;
+}
+#page-overview .cockpit-center-legend i {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin-right: 4px; vertical-align: -1px;
+}
+/* 中央大数字（环图正中） */
+#page-overview .center-metric {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; pointer-events: none;
+}
+#page-overview .center-metric .big {
+  font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: -1px;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 0 30px rgba(96,165,250,0.5);
+}
+#page-overview .center-metric .lbl {
+  font-size: 11px; color: #94a3b8; margin-top: 6px; letter-spacing: 1px;
+}
+/* 紧急预警条 */
+#page-overview .cockpit-alert {
+  margin-top: 14px; padding: 10px 14px;
+  border-radius: 6px; font-size: 12px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+#page-overview .cockpit-alert.warn {
+  background: linear-gradient(90deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05));
+  border-left: 3px solid #ef4444;
+  color: #fca5a5;
+}
+#page-overview .cockpit-alert.warn b { color: #ef4444; font-weight: 700; font-size: 16px; }
+#page-overview .cockpit-alert.ok {
+  background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04));
+  border-left: 3px solid #34d399;
+  color: #6ee7b7;
+}
+#page-overview .cockpit-alert.ok b { color: #34d399; font-weight: 700; }
+
+/* ===== 数据表格深色 ===== */
+#page-overview .data-table { font-size: 12px; width: 100%; border-collapse: separate; border-spacing: 0; }
 #page-overview .data-table th {
-  background: rgba(15,23,42,0.5) !important;
-  color: #94a3b8 !important;
-  border-bottom: 1px solid rgba(99,179,237,0.15) !important;
+  background: transparent; padding: 10px 12px; text-align: left; font-weight: 500;
+  color: #94a3b8; border-bottom: 1px solid rgba(99,179,237,0.15);
+  font-size: 11px; letter-spacing: 0.5px; white-space: nowrap;
 }
-#page-overview .data-table td { border-bottom: 1px solid rgba(255,255,255,0.04) !important; color: #cbd5e1; }
+#page-overview .data-table td {
+  padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #cbd5e1;
+}
 #page-overview .data-table tr:hover td { background: rgba(99,179,237,0.06); }
-#page-overview .data-table .num { font-variant-numeric: tabular-nums; }
+#page-overview .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 #page-overview .data-table .rate-good { color: #34d399 !important; font-weight: 600; }
 #page-overview .data-table .rate-warn { color: #fbbf24 !important; font-weight: 600; }
 #page-overview .data-table .rate-bad { color: #f87171 !important; font-weight: 600; }
+
+/* ===== Badge 深色 ===== */
 #page-overview .badge.badge-red { background: rgba(239,68,68,0.2); color: #fca5a5; }
 #page-overview .badge.badge-orange { background: rgba(249,115,22,0.2); color: #fdba74; }
 #page-overview .badge.badge-green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
+
+/* ===== Filter bar 深色 ===== */
 #page-overview .filter-bar {
   background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45));
   border: 1px solid rgba(99,179,237,0.18);
   padding: 12px 16px; border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
   margin-bottom: 16px;
 }
 #page-overview .filter-bar select, #page-overview .filter-bar input {
-  background: rgba(15,23,42,0.7) !important;
-  border: 1px solid rgba(99,179,237,0.25) !important;
-  color: #e2e8f0 !important;
+  background: rgba(15,23,42,0.7);
+  border: 1px solid rgba(99,179,237,0.25);
+  color: #e2e8f0;
+  padding: 6px 12px; border-radius: 6px;
+  font-size: 12px; outline: none;
 }
-#page-overview .filter-bar label { color: #94a3b8; }
+#page-overview .filter-bar label { color: #94a3b8; font-size: 12px; }
+
+/* ===== Button 深色 ===== */
 #page-overview .btn-export {
-  background: rgba(99,179,237,0.15) !important; color: #93c5fd !important;
+  background: rgba(99,179,237,0.15) !important;
+  color: #93c5fd !important;
   border: 1px solid rgba(99,179,237,0.3) !important;
 }
-#page-overview .btn-export:hover { background: rgba(99,179,237,0.25) !important; border-color: rgba(99,179,237,0.5) !important; }
-/* 思维导图 3 列网格（驾驶舱核心布局） */
-#page-overview .mindmap-grid { display: grid; grid-template-columns: 360px 1fr 360px; gap: 16px; margin-bottom: 18px; }
-@media (max-width: 1400px) { #page-overview .mindmap-grid { grid-template-columns: 1fr 1fr; } #page-overview .mindmap-center-slot { grid-column: 1 / -1; order: -1; } }
-/* 底部 2 列网格（渠道 + Top5 mini） */
-#page-overview .bottom-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
-@media (max-width: 1100px) { #page-overview .bottom-grid { grid-template-columns: 1fr; } }
-/* Top5 mini 表紧凑样式 */
+#page-overview .btn-export:hover {
+  background: rgba(99,179,237,0.25) !important;
+  border-color: rgba(99,179,237,0.5) !important;
+}
+
+/* ===== Mindmap 3 列网格 ===== */
+#page-overview .mindmap-grid {
+  display: grid; grid-template-columns: 360px 1fr 360px; gap: 16px; margin-bottom: 18px;
+}
+
+/* ===== Bottom 2 列网格 ===== */
+#page-overview .bottom-grid {
+  display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px;
+}
+
+/* ===== Top 5 mini 表 pill 深色 ===== */
 #page-overview .top5-table td { padding: 8px 10px; font-size: 11px; }
-#page-overview .top5-table .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+#page-overview .top5-table .pill {
+  display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
+}
 #page-overview .top5-table .pill.red { background: rgba(239,68,68,0.2); color: #fca5a5; }
 #page-overview .top5-table .pill.orange { background: rgba(249,115,22,0.2); color: #fdba74; }
 #page-overview .top5-table .pill.green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
-/* 已删 weekday 卡 — 不再使用；空状态兜底 */
+
+/* ===== RDC 选择器 chip 深色 ===== */
+#page-overview .rdc-checkbox-chip {
+  background: rgba(15,23,42,0.5) !important;
+  border: 1px solid rgba(99,179,237,0.25) !important;
+  color: #94a3b8 !important;
+}
+#page-overview .rdc-checkbox-chip:hover { border-color: #60a5fa !important; color: #e2e8f0 !important; }
+
+/* ===== Chart 容器 ===== */
+#page-overview .chart-container { background: transparent; }
+
+/* ===== 响应式 ===== */
+@media (max-width: 1400px) {
+  #page-overview .mindmap-grid { grid-template-columns: 1fr 1fr; }
+  #page-overview .mindmap-center-slot { grid-column: 1 / -1; order: -1; }
+}
+@media (max-width: 1100px) {
+  #page-overview .cockpit-3col { grid-template-columns: 1fr; }
+  #page-overview .cockpit-center { order: -1; }
+  #page-overview .mindmap-grid, #page-overview .bottom-grid { grid-template-columns: 1fr; }
+  #page-overview .kpi-row { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 700px) {
+  #page-overview .kpi-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* 已删 weekday 卡兜底 */
 #page-overview #chart-fulfill-weekday { display: none; }
 
 /* Table */
@@ -555,7 +715,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 50; // v50: 总览页完全迁移到驾驶舱深色视觉方案（深色背景/径向渐变/KPI 发光/卡片玻璃质感/表格深色）；布局重构为 mindmap-grid(趋势|hero|RDC对比)+bottom-grid(渠道|Top5)+品牌×RDC热力图+Top20表；删除 weekday 卡；图表全部启用 darkMode
+const DB_VERSION = 51; // v51: 总览页驾驶舱样式彻底重建——删除 v49 全局 cockpit-*（浅色 var(--bg-card)残留导致白底）+ 删除 v50 不完整 #page-overview 覆盖，重写为单一作用域深色 CSS；新增 .center-metric 环图中央大数字
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1677,7 +1837,13 @@ function renderOverview() {
           </div>
           <div class="cockpit-center">
             <div class="cockpit-center-title">全国订单满足率</div>
-            <div id="chart-cockpit-core" style="width:100%;max-width:250px;height:250px;margin:0 auto"></div>
+            <div style="position:relative;display:inline-block;width:100%;max-width:250px">
+              <div id="chart-cockpit-core" style="width:100%;max-width:250px;height:250px;margin:0 auto"></div>
+              <div class="center-metric">
+                <div class="big">${(dayRate*100).toFixed(1)}%</div>
+                <div class="lbl">日满足率</div>
+              </div>
+            </div>
             <div class="cockpit-center-legend">
               <span><i style="background:#60a5fa"></i>月满足率 ${(monthFulfillRate*100).toFixed(1)}%</span>
               <span><i style="background:#34d399"></i>日满足率 ${(dayRate*100).toFixed(1)}%</span>
