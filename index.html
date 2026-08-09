@@ -424,7 +424,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 47; // v47: 性能优化——bootLoad后台化（IDB缓存秒开首屏，数据更新检测放requestIdleCallback不阻塞交互）；库存结构页加sessionStorage派生缓存（HTML+图表数据，切TAB秒开）
+const DB_VERSION = 48; // v48: 恢复「库存规模年度对比」区块的2个图表（库存金额趋势/出货成本趋势），v41已删KPI不再恢复；renderInventoryTurnoverHistoryCharts函数体恢复，去掉KPI渲染
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8016,15 +8016,36 @@ function getHainanAdjustedAmount(year, rdc, monthIdx) {
   return hainanFilter === 'yes' ? hainanAmt : Math.max(0, baseAll - hainanAmt);
 }
 
-// 库存规模年度对比卡片（HTML 部分）- v42 已删除（KPI+图表整块不再展示）
+// 库存规模年度对比卡片（HTML 部分）- v48 恢复：仅图表（库存金额趋势 + 出货成本趋势），不含 KPI（v41 已删）
 function renderInventoryTurnoverHistory() {
-  return '';
+  if (!dataStore.history || !dataStore.history.inventory) return '';
+  const rdcSel = getInvRdcSelection();
+  const rdcLabel = rdcSel.isAll ? '全部RDC' : (rdcSel.selected.length > 3 ? rdcSel.selected.length + '个RDC' : rdcSel.selected.join('、'));
+  const hainanSel = window._invHainan || 'all';
+  const statusSel = window._invStatus || 'all';
+  const hainanDropdown = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px">海南花露水：</label>' +
+    '<select onchange="window._invHainan=this.value;renderInventoryTurnover()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+      '<option value="all" ' + (hainanSel==='all'?'selected':'') + '>全部</option>' +
+      '<option value="yes" ' + (hainanSel==='yes'?'selected':'') + '>仅海南花露水</option>' +
+      '<option value="no" ' + (hainanSel==='no'?'selected':'') + '>不含海南花露水</option>' +
+    '</select>';
+  const statusDropdown = '<label style="font-size:12px;color:var(--text-secondary);margin-right:6px;margin-left:10px">状态：</label>' +
+    '<select onchange="window._invStatus=this.value;renderInventoryTurnover()" style="min-width:110px;font-size:12px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' +
+      '<option value="all" ' + (statusSel==='all'?'selected':'') + '>全部状态</option>' +
+      '<option value="非风险库存" ' + (statusSel==='非风险库存'?'selected':'') + '>仅非风险库存</option>' +
+    '</select>';
+  return '' +
+    '<div class="card" style="margin-bottom:16px;background:#F8FAFC;border-color:#E2E8F0">' +
+      '<div class="card-header" style="display:flex;align-items:center"><span class="card-title">📊 库存规模年度对比（2025 vs 2026）— ' + rdcLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">单位：千元 · 7大RDC口径（不含总仓）· 数据源：库存金额表</span></div>' +
+      '<div class="row-2" style="margin-top:8px">' +
+        '<div class="card" style="background:var(--bg-card)"><div class="card-header" style="display:flex;align-items:center"><span class="card-title">库存金额趋势（2025 vs 2026）</span><div style="margin-left:auto;display:flex;align-items:center">' + hainanDropdown + statusDropdown + '</div></div><div class="chart-container" style="height:260px" id="chart-inv-history-amount"></div></div>' +
+        '<div class="card" style="background:var(--bg-card)"><div class="card-header"><span class="card-title">出货成本趋势（2025 vs 2026）</span></div><div class="chart-container" style="height:260px" id="chart-inv-history-ship"></div></div>' +
+      '</div>' +
+    '</div>';
 }
 
-// 库存规模年度对比卡片（图表 + KPI 渲染），随 RDC 下拉联动 - v42 已删除整体区块，函数禁用避免 null.innerHTML 报错
+// 库存规模年度对比卡片（图表渲染）- v48 恢复图表，去除 KPI 渲染（v41 已删 KPI）
 function renderInventoryTurnoverHistoryCharts() {
-  return;
-  /* eslint-disable */
   if (!dataStore.history || !dataStore.history.inventory) return;
   const INV = dataStore.history.inventory;
   const rdcSel = getInvRdcSelection();
@@ -8043,7 +8064,7 @@ function renderInventoryTurnoverHistoryCharts() {
   const EXCLUDE_KEYS = ['总仓'];
   function sumSelected(map, i) { let s = 0; selectedRdcs.forEach(k => { if (EXCLUDE_KEYS.indexOf(k) >= 0) return; const v = valOrNull(map, k, i); if (v != null) s += v; }); return s; }
 
-  // 库存金额：改用 7月新模板「库存金额」sheet（跟随 海南+状态 筛选），单位千元；2026 仅 1-6月（7月未更新，按断点处理）
+  // 库存金额：7月新模板「库存金额」sheet（跟随 海南+状态 筛选），单位千元；2026 仅 1-6月
   const invTurn = dataStore.inventoryTurnover;
   function sumShipTurnByRdc(rdc, i) {
     if (!invTurn || !invTurn.shipmentCost) return null;
@@ -8052,7 +8073,6 @@ function renderInventoryTurnoverHistoryCharts() {
     const arr = invTurn.shipmentCost[key];
     return (arr && arr[i]) || null; // 千元
   }
-  // 7月出货成本从2026周转sheet 兜底读取（出货成本右表有 1-7月 7 列）
   function sumShipJul() {
     let s = 0, any = false;
     selectedRdcs.forEach(r => {
@@ -8065,36 +8085,12 @@ function renderInventoryTurnoverHistoryCharts() {
   const ship26Jul = sumShipJul();
   const amt25 = months12.map((_, i) => amountAtRdcs('2025', i + 1, selectedRdcs) / 1000);
   const amt26 = months12.map((_, i) => (i < 6 ? amountAtRdcs('2026', i + 1, selectedRdcs) / 1000 : null));
-  // 出货成本图不跟随海南花露水筛选（出货成本无海南花露水维度数据，按库存占比估算意义不大）
   const ship25 = months12.map((_, i) => sumSelected(INV['2025'].shipmentCost, i));
   const ship26 = months12.map((_, i) => {
     if (i < months.length) return sumSelected(INV['2026'].shipmentCost, i);
-    if (i === 6) return ship26Jul; // 7月兜底
+    if (i === 6) return ship26Jul;
     return null;
   });
-
-  // 上半年合计对比
-  let h1_26 = 0; for (let i = 0; i < months.length; i++) h1_26 += (ship26[i] || 0);
-  let h1_25 = 0; for (let i = 0; i < months.length; i++) h1_25 += (ship25[i] || 0);
-  const shipYoY = h1_25 > 0 ? (h1_26 - h1_25) / h1_25 : 0;
-
-  // 上半年月均库存金额对比
-  let sumAmt25 = 0, cntAmt25 = 0, sumAmt26 = 0, cntAmt26 = 0;
-  for (let i = 0; i < months.length; i++) {
-    if (amt25[i] != null) { sumAmt25 += amt25[i]; cntAmt25++; }
-    if (amt26[i] != null) { sumAmt26 += amt26[i]; cntAmt26++; }
-  }
-  const avgAmt25 = cntAmt25 > 0 ? sumAmt25 / cntAmt25 : 0;
-  const avgAmt26 = cntAmt26 > 0 ? sumAmt26 / cntAmt26 : 0;
-  const amtYoY = avgAmt25 > 0 ? (avgAmt26 - avgAmt25) / avgAmt25 : 0;
-
-  function fmtK(n) { return (n / 10000).toFixed(1) + '万'; }
-  function chgColor(d) { return d >= 0 ? 'var(--color-red)' : 'var(--color-green)'; }
-  const kpiHtml = '<div class="kpi-row" style="padding:0 12px 8px">' +
-    '<div class="kpi-card orange"><div class="kpi-label">2026上半年' + rdcLabel + '出货成本</div><div class="kpi-value">' + fmtK(h1_26) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">2025上半年：' + fmtK(h1_25) + '千 · 同比 <span style="color:' + chgColor(shipYoY) + '">' + (shipYoY >= 0 ? '+' : '') + (shipYoY * 100).toFixed(1) + '%</span></div></div>' +
-    '<div class="kpi-card blue"><div class="kpi-label">' + rdcLabel + '月均库存金额（上半年）</div><div class="kpi-value">' + fmtK(avgAmt26) + '<span class="kpi-unit">千</span></div><div style="font-size:11px">2025上半年：' + fmtK(avgAmt25) + '千 · 同比 <span style="color:' + chgColor(amtYoY) + '">' + (amtYoY >= 0 ? '+' : '') + (amtYoY * 100).toFixed(1) + '%</span></div></div>' +
-    '</div>';
-  document.getElementById('kpi-inv-history').innerHTML = kpiHtml;
 
   function lineChart(elId, title25, title26, arr25, arr26) {
     const c = initChart(elId);

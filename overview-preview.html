@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>总览驾驶舱 v0.1 预览 · RDC运营数据看板</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 10%, rgba(59,130,246,0.18), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 80% 90%, rgba(168,85,247,0.18), transparent 60%),
+      linear-gradient(135deg, #0a0e27 0%, #131a3b 50%, #0a0e27 100%);
+    min-height: 100vh;
+    color: #e2e8f0;
+    padding: 24px;
+  }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.75));
+    border: 1px solid rgba(99,179,237,0.25);
+    border-radius: 14px;
+    padding: 16px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(12px);
+  }
+  .header h1 { margin: 0; font-size: 22px; font-weight: 700;
+    background: linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    letter-spacing: 1px;
+  }
+  .header .sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .badge { padding: 4px 12px; border-radius: 999px; font-size: 11px;
+    background: rgba(99,179,237,0.15); color: #93c5fd; border: 1px solid rgba(99,179,237,0.3);
+  }
+  .btn-close {
+    padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5;
+    font-size: 13px; transition: all 0.2s;
+  }
+  .btn-close:hover { background: rgba(239,68,68,0.3); }
+
+  /* KPI 行 - 6 张发光卡 */
+  .kpi-row {
+    display: grid; grid-template-columns: repeat(6, 1fr);
+    gap: 14px; margin-bottom: 18px;
+  }
+  .kpi-card {
+    position: relative; padding: 18px 16px;
+    background: linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
+    border: 1px solid rgba(99,179,237,0.2);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  }
+  .kpi-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent, #60a5fa), transparent);
+    opacity: 0.6;
+  }
+  .kpi-card:hover { transform: translateY(-3px); border-color: var(--accent, #60a5fa); box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px var(--accent-glow, rgba(96,165,250,0.3)); }
+  .kpi-card.blue { --accent: #60a5fa; --accent-glow: rgba(96,165,250,0.3); }
+  .kpi-card.green { --accent: #34d399; --accent-glow: rgba(52,211,153,0.3); }
+  .kpi-card.red { --accent: #ef4444; --accent-glow: rgba(239,68,68,0.3); }
+  .kpi-card.orange { --accent: #f97316; --accent-glow: rgba(249,115,22,0.3); }
+  .kpi-card.teal { --accent: #2dd4bf; --accent-glow: rgba(45,212,191,0.3); }
+  .kpi-card.purple { --accent: #c084fc; --accent-glow: rgba(192,132,252,0.3); }
+  .kpi-icon {
+    position: absolute; top: 14px; right: 14px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .kpi-label { font-size: 12px; color: #94a3b8; margin-bottom: 10px; letter-spacing: 0.5px; }
+  .kpi-value { font-size: 32px; font-weight: 700; line-height: 1; color: var(--accent);
+    text-shadow: 0 0 20px var(--accent-glow);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .kpi-unit { font-size: 16px; font-weight: 500; color: var(--accent); opacity: 0.85; margin-left: 2px; }
+  .kpi-trend { margin-top: 10px; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+  .kpi-trend.up { color: #34d399; }
+  .kpi-trend.down { color: #f87171; }
+  .kpi-trend.flat { color: #94a3b8; }
+
+  /* 思维导图核心区 */
+  .mindmap-grid {
+    display: grid;
+    grid-template-columns: 360px 1fr 360px;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 1400px) {
+    .mindmap-grid { grid-template-columns: 1fr 1fr; }
+    .mindmap-center { grid-column: 1 / -1; order: -1; }
+  }
+  .card {
+    background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45));
+    border: 1px solid rgba(99,179,237,0.18);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
+    backdrop-filter: blur(8px);
+  }
+  .card-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title::before { content: ''; width: 3px; height: 14px;
+    background: linear-gradient(180deg, #60a5fa, #a78bfa); border-radius: 2px;
+  }
+  .card-sub { font-size: 11px; color: #94a3b8; margin-left: auto; font-weight: 400; }
+
+  /* 中央订单流核心 */
+  .mindmap-center {
+    position: relative; padding: 24px 16px 20px;
+    background:
+      radial-gradient(ellipse 60% 80% at 50% 50%, rgba(59,130,246,0.12), transparent 70%),
+      linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
+    border: 1px solid rgba(99,179,237,0.25);
+    border-radius: 14px;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  .center-title { font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 16px; }
+  .center-rings { position: relative; width: 220px; height: 220px; margin: 0 auto 18px; }
+  .ring-label { position: absolute; font-size: 11px; color: #94a3b8; }
+  .ring-label.tl { top: -2px; left: 50%; transform: translateX(-50%); }
+  .ring-label.tr { top: 50%; right: -8px; transform: translateY(-50%); }
+  .ring-label.br { bottom: -2px; left: 50%; transform: translateX(-50%); }
+  .ring-label.bl { top: 50%; left: -8px; transform: translateY(-50%); }
+  .center-metric { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+  .center-metric .big { font-size: 44px; font-weight: 800;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    line-height: 1; letter-spacing: -1px;
+    text-shadow: 0 0 30px rgba(96,165,250,0.5);
+  }
+  .center-metric .lbl { font-size: 11px; color: #94a3b8; margin-top: 6px; letter-spacing: 1px; }
+
+  .center-divider { height: 1px; margin: 14px -16px; background: linear-gradient(90deg, transparent, rgba(99,179,237,0.25), transparent); }
+  .center-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .center-stat { padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center; }
+  .center-stat .v { font-size: 18px; font-weight: 700; }
+  .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
+
+  .alert-strip {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: linear-gradient(90deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05));
+    border-left: 3px solid #ef4444;
+    border-radius: 6px;
+    font-size: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .alert-strip .num { color: #ef4444; font-weight: 700; font-size: 16px; }
+  .alert-strip.green { background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04)); border-left-color: #34d399; }
+  .alert-strip.green .num { color: #34d399; }
+
+  /* 图表容器 */
+  .chart-area { width: 100%; height: 220px; }
+
+  /* 底部表格 */
+  .bottom-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
+  @media (max-width: 1100px) { .bottom-grid { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 10px 12px; font-weight: 500; color: #94a3b8;
+    border-bottom: 1px solid rgba(99,179,237,0.15); font-size: 11px; letter-spacing: 0.5px;
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #cbd5e1; }
+  tbody tr:hover { background: rgba(99,179,237,0.06); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+  .pill.red { background: rgba(239,68,68,0.2); color: #fca5a5; }
+  .pill.orange { background: rgba(249,115,22,0.2); color: #fdba74; }
+  .pill.green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
+  .pill.blue { background: rgba(96,165,250,0.2); color: #93c5fd; }
+
+  .note {
+    background: rgba(245,158,11,0.1); border-left: 3px solid #f59e0b;
+    padding: 12px 16px; border-radius: 8px; font-size: 12px; color: #fbbf24;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>🚀 补货驾驶舱 · 总览 v0.1 预览</h1>
+    <div class="sub">以订单数据为核心 · 深色驾驶舱风格 · 思维导图放射式信息架构</div>
+  </div>
+  <div class="header-right">
+    <span class="badge">预览模式（非正式版）</span>
+    <button class="btn-close" onclick="if(window.history.length>1) window.history.back(); else alert('预览页，请直接关闭')">关闭预览</button>
+  </div>
+</div>
+
+<div class="note">
+  ⚠ 这是临时预览页，用于确认视觉风格。确认后再应用到主项目 renderOverview。当前所有数据均为 mock 示例值。
+</div>
+
+<!-- 6 个 KPI 卡 -->
+<div class="kpi-row">
+  <div class="kpi-card blue">
+    <div class="kpi-icon">📈</div>
+    <div class="kpi-label">月度订单满足率（MTD）</div>
+    <div class="kpi-value">80.1<span class="kpi-unit">%</span></div>
+    <div class="kpi-trend up">▲ 环比 +2.3%</div>
+  </div>
+  <div class="kpi-card green">
+    <div class="kpi-icon">⚡</div>
+    <div class="kpi-label">日订单满足率（MTD）</div>
+    <div class="kpi-value">78.0<span class="kpi-unit">%</span></div>
+    <div class="kpi-trend up">▲ 环比 +1.5%</div>
+  </div>
+  <div class="kpi-card red">
+    <div class="kpi-icon">💰</div>
+    <div class="kpi-label">缺货总金额</div>
+    <div class="kpi-value">¥52.7<span class="kpi-unit">万</span></div>
+    <div class="kpi-trend down">▼ 环比 -5.8%</div>
+  </div>
+  <div class="kpi-card orange">
+    <div class="kpi-icon">📦</div>
+    <div class="kpi-label">缺货总箱数</div>
+    <div class="kpi-value">6,973<span class="kpi-unit">箱</span></div>
+    <div class="kpi-trend up">▲ 环比 +12%</div>
+  </div>
+  <div class="kpi-card teal">
+    <div class="kpi-icon">🚚</div>
+    <div class="kpi-label">在途总箱数</div>
+    <div class="kpi-value">9,644<span class="kpi-unit">箱</span></div>
+    <div class="kpi-trend down">▼ 环比 -3.2%</div>
+  </div>
+  <div class="kpi-card purple">
+    <div class="kpi-icon">🌐</div>
+    <div class="kpi-label">涉及 RDC 数</div>
+    <div class="kpi-value">6<span class="kpi-unit">个</span></div>
+    <div class="kpi-trend flat">— 与昨日持平</div>
+  </div>
+</div>
+
+<!-- 思维导图核心：订单流中央 + 4 个放射分支 -->
+<div class="mindmap-grid">
+
+  <!-- 左：满足率趋势 -->
+  <div class="card">
+    <div class="card-title">📈 日订单满足率趋势<span class="card-sub">近 7 个工作日</span></div>
+    <div id="chart-trend" class="chart-area" style="height:240px"></div>
+  </div>
+
+  <!-- 中央：订单流核心（雷达/同心圆） -->
+  <div class="mindmap-center">
+    <div class="center-title">订 单 流 核 心</div>
+    <div class="center-rings">
+      <div id="chart-core" style="width:220px;height:220px"></div>
+    </div>
+    <div class="center-divider"></div>
+    <div class="center-stats">
+      <div class="center-stat">
+        <div class="v" style="color:#60a5fa">3,256</div>
+        <div class="l">订单箱数</div>
+      </div>
+      <div class="center-stat">
+        <div class="v" style="color:#34d399">2,539</div>
+        <div class="l">首日已发</div>
+      </div>
+      <div class="center-stat">
+        <div class="v" style="color:#f97316">847</div>
+        <div class="l">待发</div>
+      </div>
+      <div class="center-stat">
+        <div class="v" style="color:#ef4444">5</div>
+        <div class="l">紧急SKU</div>
+      </div>
+    </div>
+    <div class="alert-strip">
+      <span>🔥 紧急缺货预警</span>
+      <span class="num">5 个 SKU</span>
+    </div>
+  </div>
+
+  <!-- 右：RDC 缺货金额对比 -->
+  <div class="card">
+    <div class="card-title">🏢 RDC 缺货金额对比<span class="card-sub">截至 2026-08-05</span></div>
+    <div id="chart-rdc" class="chart-area" style="height:240px"></div>
+  </div>
+
+</div>
+
+<!-- 第二排：渠道 + 品牌矩阵 -->
+<div class="bottom-grid">
+  <div class="card">
+    <div class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">MTD 累计</span></div>
+    <div id="chart-channel" class="chart-area" style="height:280px"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">🔥 Top 5 缺货 SKU（点击下钻）</div>
+    <table>
+      <thead><tr><th style="text-align:left">物料</th><th class="num">缺货箱</th><th class="num">缺货金额</th><th>RDC</th></tr></thead>
+      <tbody>
+        <tr><td>40241<br/><span style="font-size:10px;color:#94a3b8">家安 洁厕液</span></td><td class="num"><span class="pill red">487</span></td><td class="num">¥12.8万</td><td>4</td></tr>
+        <tr><td>30102<br/><span style="font-size:10px;color:#94a3b8">启初 婴儿沐浴露</span></td><td class="num"><span class="pill orange">356</span></td><td class="num">¥9.2万</td><td>3</td></tr>
+        <tr><td>50218<br/><span style="font-size:10px;color:#94a3b8">六神 花露水</span></td><td class="num"><span class="pill orange">298</span></td><td class="num">¥7.4万</td><td>5</td></tr>
+        <tr><td>67890<br/><span style="font-size:10px;color:#94a3b8">美加净 护手霜</span></td><td class="num"><span class="pill orange">241</span></td><td class="num">¥6.1万</td><td>3</td></tr>
+        <tr><td>11245<br/><span style="font-size:10px;color:#94a3b8">佰草集 面膜</span></td><td class="num"><span class="pill green">189</span></td><td class="num">¥4.8万</td><td>2</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 品牌 × RDC 热力图 -->
+<div class="card" style="margin-bottom:18px">
+  <div class="card-title">🌡️ 品牌 × RDC 月度满足率矩阵</div>
+  <div id="chart-heat" class="chart-area" style="height:280px"></div>
+</div>
+
+<!-- 底部 Top 物料 -->
+<div class="card">
+  <div class="card-title">📋 Top 20 缺货物料（订单核心）</div>
+  <table>
+    <thead><tr>
+      <th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th>
+      <th class="num">缺货箱数</th><th class="num">在途箱数</th>
+      <th class="num">缺货金额</th><th class="num">涉及RDC</th><th>大仓供应</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>40241</td><td>家安 洁厕液 500g</td><td>家安</td><td>A</td><td class="num">487</td><td class="num">620</td><td class="num">¥12.8万</td><td class="num"><span class="pill red">4</span></td><td><span class="pill red">紧张</span></td></tr>
+      <tr><td>30102</td><td>启初 婴儿沐浴露 200ml</td><td>启初</td><td>A</td><td class="num">356</td><td class="num">412</td><td class="num">¥9.2万</td><td class="num"><span class="pill red">4</span></td><td><span class="pill orange">缺货</span></td></tr>
+      <tr><td>50218</td><td>六神 花露水 180ml</td><td>六神</td><td>A</td><td class="num">298</td><td class="num">385</td><td class="num">¥7.4万</td><td class="num"><span class="pill orange">3</span></td><td><span class="pill orange">缺货</span></td></tr>
+      <tr><td>67890</td><td>美加净 护手霜 75g</td><td>美加净</td><td>B</td><td class="num">241</td><td class="num">298</td><td class="num">¥6.1万</td><td class="num"><span class="pill orange">3</span></td><td><span class="pill green">正常</span></td></tr>
+      <tr><td>11245</td><td>佰草集 面膜 5片装</td><td>佰草集</td><td>B</td><td class="num">189</td><td class="num">234</td><td class="num">¥4.8万</td><td class="num"><span class="pill orange">2</span></td><td><span class="pill green">正常</span></td></tr>
+      <tr><td>33456</td><td>启初 婴儿润肤乳</td><td>启初</td><td>A</td><td class="num">167</td><td class="num">201</td><td class="num">¥4.2万</td><td class="num"><span class="pill orange">2</span></td><td><span class="pill green">正常</span></td></tr>
+      <tr><td>78901</td><td>六神 驱蚊花露水</td><td>六神</td><td>B</td><td class="num">142</td><td class="num">189</td><td class="num">¥3.7万</td><td class="num"><span class="pill green">1</span></td><td><span class="pill green">正常</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  // 模拟 ECharts darkMode
+  const baseTextStyle = { color: '#cbd5e1', fontSize: 11 };
+
+  // 1. 订单流核心：环形 + 雷达 混合
+  echarts.init(document.getElementById('chart-core')).setOption({
+    tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+    series: [{
+      type: 'pie',
+      radius: ['60%', '85%'],
+      startAngle: 90,
+      label: { show: false },
+      data: [
+        { value: 80, name: '月满足率', itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 1, colorStops: [{ offset: 0, color: '#60a5fa' }, { offset: 1, color: '#a78bfa' }] } },
+        { value: 20, name: '缺口', itemStyle: { color: 'rgba(99,179,237,0.08)' } }
+      ],
+      emphasis: { scale: true, scaleSize: 8, itemStyle: { shadowBlur: 30, shadowColor: 'rgba(96,165,250,0.6)' } }
+    }]
+  });
+
+  // 2. 日订单满足率趋势
+  const dates = ['07-30','07-31','08-01','04','05'];
+  echarts.init(document.getElementById('chart-trend')).setOption({
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+    legend: { data: ['KA 满足率', '经销商 满足率'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0 },
+    grid: { left: 50, right: 20, top: 35, bottom: 30 },
+    xAxis: { type: 'category', data: dates, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
+    yAxis: { type: 'value', min: 0.7, max: 1, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => (v*100).toFixed(0)+'%' } },
+    series: [
+      { name: 'KA 满足率', type: 'line', smooth: true, data: [0.86, 0.89, 0.91, 0.88, 0.85], lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
+      { name: '经销商 满足率', type: 'line', smooth: true, data: [0.79, 0.81, 0.83, 0.80, 0.78], lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
+    ]
+  });
+
+  // 3. RDC 缺货金额对比
+  const rdcs = ['华南','华北','东北','西北','华中','西南'];
+  echarts.init(document.getElementById('chart-rdc')).setOption({
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+    grid: { left: 60, right: 30, top: 10, bottom: 30 },
+    xAxis: { type: 'value', axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => '¥'+(v/10000).toFixed(0)+'万' } },
+    yAxis: { type: 'category', data: rdcs, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#cbd5e1', fontSize: 11 } },
+    series: [{
+      type: 'bar',
+      data: [168000, 142000, 98000, 72000, 58000, 39000].map(v => ({
+        value: v,
+        itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: '#7f1d1d' }, { offset: 1, color: '#ef4444' }] }, borderRadius: [0, 4, 4, 0] }
+      })),
+      label: { show: true, position: 'right', color: '#fca5a5', fontSize: 11, formatter: p => '¥'+(p.value/10000).toFixed(1)+'万' }
+    }]
+  });
+
+  // 4. 渠道订单结构（环形饼图）
+  echarts.init(document.getElementById('chart-channel')).setOption({
+    tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+    legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { color: '#cbd5e1', fontSize: 11 }, itemWidth: 12, itemHeight: 12 },
+    series: [{
+      type: 'pie',
+      radius: ['45%', '70%'],
+      center: ['38%', '50%'],
+      label: { color: '#e2e8f0', formatter: '{b}\n{d}%', fontSize: 11 },
+      labelLine: { lineStyle: { color: '#475569' } },
+      itemStyle: { borderColor: '#0a0e27', borderWidth: 2 },
+      data: [
+        { value: 1820, name: 'KA直营', itemStyle: { color: '#60a5fa' } },
+        { value: 980, name: '经销商', itemStyle: { color: '#34d399' } },
+        { value: 456, name: '新渠道', itemStyle: { color: '#f97316' } }
+      ]
+    }]
+  });
+
+  // 5. 品牌 × RDC 热力图
+  const brands = ['家安', '启初', '六神', '美加净', '佰草集'];
+  const rdcNames = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
+  const heatData = [];
+  brands.forEach((b, bi) => rdcNames.forEach((r, ri) => {
+    heatData.push([ri, bi, +(0.7 + Math.random() * 0.3).toFixed(2)]);
+  }));
+  echarts.init(document.getElementById('chart-heat')).setOption({
+    tooltip: { position: 'top', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+      formatter: p => rdcNames[p.value[0]] + ' · ' + brands[p.value[1]] + '<br/>月满足率：<b>' + (p.value[2]*100).toFixed(1) + '%</b>' },
+    grid: { left: 70, right: 30, top: 30, bottom: 50 },
+    xAxis: { type: 'category', data: rdcNames, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11, rotate: 15 } },
+    yAxis: { type: 'category', data: brands, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
+    visualMap: { min: 0.7, max: 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 5, textStyle: { color: '#94a3b8', fontSize: 10 }, inRange: { color: ['#ef4444', '#f97316', '#facc15', '#84cc16', '#34d399'] }, formatter: v => (v*100).toFixed(0)+'%' },
+    series: [{ type: 'heatmap', data: heatData, label: { show: true, color: '#fff', fontSize: 11, formatter: p => (p.value[2]*100).toFixed(0)+'%' }, itemStyle: { borderColor: '#0a0e27', borderWidth: 1 } }]
+  });
+</script>
+
+</body>
+</html>
