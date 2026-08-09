@@ -187,7 +187,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   .center-metric .lbl { font-size: 11px; color: #94a3b8; margin-top: 6px; letter-spacing: 1px; }
 
   .center-divider { height: 1px; margin: 14px -16px; background: linear-gradient(90deg, transparent, rgba(99,179,237,0.25), transparent); }
-  .center-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .center-stats { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 10px; }
   .center-stat { padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center; }
   .center-stat .v { font-size: 18px; font-weight: 700; }
   .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
@@ -304,7 +304,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
       <div id="chart-core" style="width:240px;height:240px"></div>
     </div>
     <div class="center-divider"></div>
-    <!-- 4 个核心数据点（按订单流优先级排） -->
+    <!-- 4 个核心数据点（按订单流优先级排，2×2 网格） -->
     <div class="center-stats">
       <div class="center-stat">
         <div class="v" style="color:#60a5fa">3,256</div>
@@ -323,7 +323,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
         <div class="l">紧急SKU</div>
       </div>
     </div>
-    <!-- 新增 4 个数据点：客户/品牌/缺货/在途 -->
+    <!-- 新增 4 个数据点：客户/品牌/缺货/在途（2×2 网格） -->
     <div class="center-stats" style="margin-top:10px">
       <div class="center-stat" style="background:rgba(96,165,250,0.08)">
         <div class="v" style="color:#93c5fd">128</div>
@@ -430,22 +430,23 @@ if (!window.__echartsOk) {
 // 模拟 ECharts darkMode
   const baseTextStyle = { color: '#cbd5e1', fontSize: 11 };
 
-  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）+ 6个RDC辐射柱
+  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）+ 6个RDC文字标签环外
   echarts.init(document.getElementById('chart-core')).setOption({
     tooltip: {
       trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
       formatter: function(p) {
-        if (p.seriesType === 'pie') {
-          return '<div style="font-weight:600">' + p.name + '</div>' +
-                 '<div style="margin-top:4px">数值：' + p.value + (p.name.includes('率') ? '%' : '') + '</div>';
-        }
-        if (p.seriesType === 'bar' && p.seriesName === 'RDC 满足率') {
-          return '<div style="font-weight:600">' + p.name + '</div>' +
-                 '<div style="margin-top:4px">满足率：' + (p.value*100).toFixed(1) + '%</div>';
-        }
-        return p.name + ': ' + p.value;
+        return '<div style="font-weight:600">' + p.name + '</div>' +
+               '<div style="margin-top:4px">数值：' + p.value + (p.name.indexOf('率') >= 0 ? '%' : '') + '</div>';
       }
     },
+    graphic: [
+      { type: 'text', left: '4%', top: '6%', style: { text: '华南 85%', fill: '#60a5fa', font: 'bold 12px sans-serif' } },
+      { type: 'text', right: '4%', top: '6%', style: { text: '华北 72%', fill: '#a78bfa', font: 'bold 12px sans-serif' } },
+      { type: 'text', left: '50%', top: '2%', style: { text: '华中 78%', fill: '#c084fc', font: 'bold 12px sans-serif' } },
+      { type: 'text', left: '4%', bottom: '6%', style: { text: '东北 91%', fill: '#34d399', font: 'bold 12px sans-serif' } },
+      { type: 'text', right: '4%', bottom: '6%', style: { text: '西南 83%', fill: '#2dd4bf', font: 'bold 12px sans-serif' } },
+      { type: 'text', right: '4%', top: '50%', style: { text: '西北 68%', fill: '#f97316', font: 'bold 12px sans-serif' } }
+    ],
     series: [
       // 0: 外环 - 月满足率 80%
       {
@@ -480,24 +481,6 @@ if (!window.__echartsOk) {
         data: [
           { value: 1, name: '核心背景', itemStyle: { color: 'rgba(15,23,42,0.4)' } }
         ]
-      },
-      // 3: 6个RDC辐射柱（围绕环形外围）
-      {
-        type: 'bar',
-        coordinateSystem: 'polar',
-        radius: ['108%', '128%'],
-        center: ['50%', '50%'],
-        barWidth: 8,
-        data: [
-          { value: 0.85, name: '华南', itemStyle: { color: '#60a5fa' } },
-          { value: 0.72, name: '华北', itemStyle: { color: '#a78bfa' } },
-          { value: 0.91, name: '东北', itemStyle: { color: '#34d399' } },
-          { value: 0.68, name: '西北', itemStyle: { color: '#f97316' } },
-          { value: 0.78, name: '华中', itemStyle: { color: '#c084fc' } },
-          { value: 0.83, name: '西南', itemStyle: { color: '#2dd4bf' } }
-        ].map(function(d) { return { name: d.name, value: d.value, itemStyle: d.itemStyle }; }),
-        itemStyle: { borderRadius: 4 },
-        label: { show: true, position: 'middle', color: '#e2e8f0', fontSize: 9, formatter: function(p) { return p.name; } }
       }
     ]
   });
