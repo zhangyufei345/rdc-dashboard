@@ -8021,8 +8021,10 @@ function renderInventoryTurnoverHistory() {
   return '';
 }
 
-// 库存规模年度对比卡片（图表 + KPI 渲染），随 RDC 下拉联动
+// 库存规模年度对比卡片（图表 + KPI 渲染），随 RDC 下拉联动 - v42 已删除整体区块，函数禁用避免 null.innerHTML 报错
 function renderInventoryTurnoverHistoryCharts() {
+  return;
+  /* eslint-disable */
   if (!dataStore.history || !dataStore.history.inventory) return;
   const INV = dataStore.history.inventory;
   const rdcSel = getInvRdcSelection();
