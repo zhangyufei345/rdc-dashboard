@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 70; // v70: ①修复收货仓列探测被B列「收货库位」截胡的问题，确保 rec 取C列「大仓收货仓」；②修复金额换算：单位「箱」时先乘箱规转实际件数再×单件成本价
+const DB_VERSION = 71; // v71: 总览「Top 20 缺货物料」的「显示全部缺货信息」按钮改为展示 SKU×RDC 明细（各RDC缺货箱数/在途箱数/缺货金额）；v70: 拉回分析收货仓列探测+金额换算修复
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1752,36 +1752,88 @@ function renderOverview() {
   // Top 20 排序逻辑（v54：支持 缺货箱数/金额/涉及RDC/大仓供应 四种排序；大仓供应按「紧张>缺货>正常」优先级）
   const _sortKey = window._overviewShortSort || 'amount';
   const _sortLabels = { boxes: '缺货箱数', amount: '缺货金额', rdcCount: '涉及RDC数', dcSupply: '大仓供应' };
-  let _top20List = [...window._overviewShortList];
-  if (_sortKey === 'boxes') _top20List.sort((a,b) => b.rdcShortBoxes - a.rdcShortBoxes);
-  else if (_sortKey === 'amount') _top20List.sort((a,b) => b.rdcShortAmount - a.rdcShortAmount);
-  else if (_sortKey === 'rdcCount') _top20List.sort((a,b) => b.rdcCount - a.rdcCount || b.rdcShortBoxes - a.rdcShortBoxes);
-  else if (_sortKey === 'dcSupply') {
-    const _supplyRank = s => {
-      const v = (s || '').toString();
-      if (v.indexOf('紧张') >= 0) return 0;
-      if (v.indexOf('缺货') >= 0) return 1;
-      return 2;
-    };
-    _top20List.sort((a,b) => _supplyRank(a.dcSupply) - _supplyRank(b.dcSupply) || b.rdcShortBoxes - a.rdcShortBoxes);
+  const _showDetail = window._showRdcShortageDetail;
+  let _displayList = [], _displayHeader = '', _displayRowHtml = '', _tableColspan = 9;
+
+  if (!_showDetail) {
+    // 默认 / 显示全部：SKU 聚合视图
+    let _top20List = [...window._overviewShortList];
+    if (_sortKey === 'boxes') _top20List.sort((a,b) => b.rdcShortBoxes - a.rdcShortBoxes);
+    else if (_sortKey === 'amount') _top20List.sort((a,b) => b.rdcShortAmount - a.rdcShortAmount);
+    else if (_sortKey === 'rdcCount') _top20List.sort((a,b) => b.rdcCount - a.rdcCount || b.rdcShortBoxes - a.rdcShortBoxes);
+    else if (_sortKey === 'dcSupply') {
+      const _supplyRank = s => {
+        const v = (s || '').toString();
+        if (v.indexOf('紧张') >= 0) return 0;
+        if (v.indexOf('缺货') >= 0) return 1;
+        return 2;
+      };
+      _top20List.sort((a,b) => _supplyRank(a.dcSupply) - _supplyRank(b.dcSupply) || b.rdcShortBoxes - a.rdcShortBoxes);
+    }
+    // v63: 「显示全部缺货信息」按钮：展开时展示全部，按默认排序
+    if (!window._showAllShortage) _top20List = _top20List.slice(0, 20);
+    _displayList = _top20List;
+    _displayHeader = '<th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th><th class="num">缺货箱数</th><th class="num">在途箱数</th><th class="num">缺货金额</th><th class="num">涉及RDC</th><th>大仓供应</th>';
+    _displayRowHtml = _top20List.map(d => {
+      const rdcPillCls = d.rdcCount >= 4 ? 'red' : (d.rdcCount >= 2 ? 'orange' : 'green');
+      const supplyTxt = String(d.dcSupply || '');
+      const supplyPillCls = supplyTxt.indexOf('紧张') >= 0 ? 'red' : (supplyTxt.indexOf('缺货') >= 0 ? 'orange' : 'green');
+      const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
+      return '<tr><td>' + d.materialCode + '</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</td>' +
+             '<td>' + (d.brand || '') + '</td><td>' + (d.abcClass || '') + '</td>' +
+             '<td class="num">' + formatNum(d.rdcShortBoxes) + '</td>' +
+             '<td class="num">' + formatNum(d.rdcTransitTotal || 0) + '</td>' +
+             '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
+             '<td class="num"><span class="pill ' + rdcPillCls + '">' + d.rdcCount + '</span></td>' +
+             '<td><span class="pill ' + supplyPillCls + '">' + supplyLabel + '</span></td></tr>';
+    }).join('');
+  } else {
+    // v71: 点击「显示全部缺货信息」后展示 SKU × RDC 明细（各RDC缺货/在途）
+    const rdcKeys = [
+      { rdc: '华北RDC', short: 'huabeiShort', transit: 'huabeiTransit' },
+      { rdc: '西南RDC', short: 'xinanShort', transit: 'xinanTransit' },
+      { rdc: '东北RDC', short: 'dongbeiShort', transit: 'dongbeiTransit' },
+      { rdc: '华中RDC', short: 'huazhongShort', transit: 'huazhongTransit' },
+      { rdc: '华南RDC', short: 'huananShort', transit: 'huananTransit' },
+      { rdc: '华东RDC', short: 'huadongShort', transit: 'huadongTransit' },
+      { rdc: '西北RDC', short: 'xibeiShort', transit: 'xibeiTransit' }
+    ];
+    let _detailList = [];
+    window._overviewShortList.forEach(sku => {
+      const recs = sData.filter(d => d.materialCode === sku.materialCode);
+      if (!recs.length) return;
+      const r = recs[0];
+      rdcKeys.forEach(k => {
+        const boxes = r[k.short] || 0;
+        const transit = r[k.transit] || 0;
+        if (boxes <= 0 && transit <= 0) return; // 只展示有缺货或在途的 RDC
+        const amount = r.rdcShortBoxes > 0 ? (r.rdcShortAmount * boxes / r.rdcShortBoxes) : 0;
+        _detailList.push({
+          materialCode: sku.materialCode, materialName: sku.materialName, brand: sku.brand, abcClass: sku.abcClass,
+          rdc: k.rdc, rdcShortBoxes: boxes, rdcTransitTotal: transit, rdcShortAmount: amount, dcSupply: r.dcSupply
+        });
+      });
+    });
+    if (_sortKey === 'boxes') _detailList.sort((a,b) => b.rdcShortBoxes - a.rdcShortBoxes);
+    else if (_sortKey === 'amount') _detailList.sort((a,b) => b.rdcShortAmount - a.rdcShortAmount);
+    else _detailList.sort((a,b) => b.rdcShortAmount - a.rdcShortAmount); // rdcCount/dcSupply 在明细模式下按金额排
+    _displayList = _detailList;
+    _displayHeader = '<th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th><th>RDC</th><th class="num">缺货箱数</th><th class="num">在途箱数</th><th class="num">缺货金额</th><th>大仓供应</th>';
+    _displayRowHtml = _detailList.map(d => {
+      const supplyTxt = String(d.dcSupply || '');
+      const supplyPillCls = supplyTxt.indexOf('紧张') >= 0 ? 'red' : (supplyTxt.indexOf('缺货') >= 0 ? 'orange' : 'green');
+      const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
+      return '<tr><td>' + d.materialCode + '</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</td>' +
+             '<td>' + (d.brand || '') + '</td><td>' + (d.abcClass || '') + '</td><td>' + d.rdc + '</td>' +
+             '<td class="num">' + formatNum(d.rdcShortBoxes) + '</td>' +
+             '<td class="num">' + formatNum(d.rdcTransitTotal || 0) + '</td>' +
+             '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
+             '<td><span class="pill ' + supplyPillCls + '">' + supplyLabel + '</span></td></tr>';
+    }).join('');
   }
-  // v63: 「显示全部缺货信息」按钮：展开时展示全部，按默认排序
-  if (!window._showAllShortage) _top20List = _top20List.slice(0, 20);
+
   const _sortBtnsHtml = ['boxes','amount','rdcCount','dcSupply'].map(k => '<button class="btn-export" style="font-size:11px;padding:3px 8px;' + (_sortKey===k?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':'background:rgba(99,179,237,0.15);color:#93c5fd;border:1px solid rgba(99,179,237,0.3);') + '" onclick="window._overviewShortSort=\'' + k + '\';renderOverview()">' + _sortLabels[k] + '</button>').join('');
-  const _showAllHtml = '<button class="btn-export" style="font-size:11px;padding:3px 10px;margin-left:8px;background:rgba(249,115,22,0.2);color:#fdba74;border:1px solid rgba(249,115,22,0.4)" onclick="window._showAllShortage=!window._showAllShortage;renderOverview()">' + (window._showAllShortage?'返回 Top 20':'显示全部缺货信息') + '</button>';
-  const top20RowHtml = _top20List.map(d => {
-    const rdcPillCls = d.rdcCount >= 4 ? 'red' : (d.rdcCount >= 2 ? 'orange' : 'green');
-    const supplyTxt = String(d.dcSupply || '');
-    const supplyPillCls = supplyTxt.indexOf('紧张') >= 0 ? 'red' : (supplyTxt.indexOf('缺货') >= 0 ? 'orange' : 'green');
-    const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
-    return '<tr><td>' + d.materialCode + '</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</td>' +
-           '<td>' + (d.brand || '') + '</td><td>' + (d.abcClass || '') + '</td>' +
-           '<td class="num">' + formatNum(d.rdcShortBoxes) + '</td>' +
-           '<td class="num">' + formatNum(d.rdcTransitTotal || 0) + '</td>' +
-           '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
-           '<td class="num"><span class="pill ' + rdcPillCls + '">' + d.rdcCount + '</span></td>' +
-           '<td><span class="pill ' + supplyPillCls + '">' + supplyLabel + '</span></td></tr>';
-  }).join('');
+  const _showAllHtml = '<button class="btn-export" style="font-size:11px;padding:3px 10px;margin-left:8px;background:rgba(249,115,22,0.2);color:#fdba74;border:1px solid rgba(249,115,22,0.4)" onclick="window._showRdcShortageDetail=!window._showRdcShortageDetail;renderOverview()">' + (window._showRdcShortageDetail?'返回 Top 20':'显示全部缺货信息（RDC明细）') + '</button>';
 
   page.innerHTML = `
     <!-- 顶部 header -->
@@ -1962,13 +2014,9 @@ function renderOverview() {
         </div>
       </div>
       <table>
-        <thead><tr>
-          <th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th>
-          <th class="num">缺货箱数</th><th class="num">在途箱数</th>
-          <th class="num">缺货金额</th><th class="num">涉及RDC</th><th>大仓供应</th>
-        </tr></thead>
+        <thead><tr>${_displayHeader}</tr></thead>
         <tbody>
-          ${_top20List.length > 0 ? top20RowHtml : '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
+          ${_displayList.length > 0 ? _displayRowHtml : '<tr><td colspan="' + _tableColspan + '" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
         </tbody>
       </table>
     </div>
