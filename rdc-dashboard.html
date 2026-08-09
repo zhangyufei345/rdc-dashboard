@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 69; // v68: 拉回 RDC 取 H列(发货工厂)、收货仓取 C列(大仓收货仓)；v69: 新增回退——两者缺失时按基础数据「收货库位→RDC/收货仓」映射(recRdcMap/recWhMap)匹配，normalizePullbackRDC 兜底
+const DB_VERSION = 70; // v70: ①修复收货仓列探测被B列「收货库位」截胡的问题，确保 rec 取C列「大仓收货仓」；②修复金额换算：单位「箱」时先乘箱规转实际件数再×单件成本价
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9320,7 +9320,15 @@ function parseInventoryExcel(rawData) {
       if (_qtyCol >= 0) _pbCol.qty = _qtyCol;
       const _unitCol = _findCol(['单位', '计量单位', 'unit', '件']);
       if (_unitCol >= 0) _pbCol.unit = _unitCol;
-      const _recCol = _findCol(['大仓收货仓', '收货仓', '收货方', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', '收货库位', '库位', 'rec']);
+      // v70 fix: _findCol 按列顺序扫描，B列「收货库位」因包含「收货仓」会被先命中，导致 rec 错指 B列。
+      // 收货仓需精确优先匹配「大仓收货仓」或「收货仓」（但不含「库位」）。
+      let _recCol = -1;
+      for (let _i = 0; _i < _hLower.length; _i++) {
+        const h = _hLower[_i];
+        if (h === '大仓收货仓' || h.indexOf('大仓收货仓') >= 0) { _recCol = _i; break; }
+        if ((h === '收货仓' || h.indexOf('收货仓') >= 0) && h.indexOf('库位') < 0 && h.indexOf('位置') < 0 && h.indexOf('编码') < 0) { _recCol = _i; break; }
+      }
+      if (_recCol < 0) _recCol = _findCol(['收货方', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', '收货库位', '库位', 'rec']);
       if (_recCol >= 0) _pbCol.rec = _recCol;
       // v69: 收货库位列（具体库位码，如 T8A8）—— 用于 H/C 列缺失时回退到 基础数据 映射
       const _recLocCol = _findCol(['收货库位', '具体库位', '实际库位', '库位']);
@@ -9417,11 +9425,21 @@ function parseInventoryExcel(rawData) {
         const brand = String(r[pbCols.brand] || '').trim() || (master ? master.brand : '') || '未知';
         const unit = String(r[pbCols.unit] || '').trim();
         const qty = parsePullQty(r[pbCols.qty]);
-        let qtyBox = 0;
-        if (unit === '箱') qtyBox = qty;
-        else if (spec > 0) qtyBox = qty / spec;
-        else qtyBox = qty; // 无箱规时按原数量处理
-        const amt = qty * cost;
+        // v70 fix: 金额换算按「实际件数 × 单件成本价」。
+        // 发货单数量单位若是「箱」，要先乘箱规得到实际件数；非箱单位则数量本身就是件数。
+        // 接收箱数仍然统一换算成箱：箱直接为箱数，非箱除以箱规。
+        let qtyBox = 0, pieces = 0;
+        if (unit === '箱') {
+          qtyBox = qty;
+          pieces = spec > 0 ? qty * spec : qty; // 无箱规时 fallback 按原数量×成本
+        } else if (spec > 0) {
+          qtyBox = qty / spec;
+          pieces = qty;
+        } else {
+          qtyBox = qty;
+          pieces = qty;
+        }
+        const amt = pieces * cost;
         if (!pullbackByRdcMonth[rdcRaw]) pullbackByRdcMonth[rdcRaw] = {};
         if (!pullbackByRdcMonth[rdcRaw][ym]) pullbackByRdcMonth[rdcRaw][ym] = { qty: 0, amt: 0 };
         pullbackByRdcMonth[rdcRaw][ym].qty += qtyBox;
