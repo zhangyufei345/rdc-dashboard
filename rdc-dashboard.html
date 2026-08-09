@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 64; // v61: 日订单满足率趋势全部/单个RDC均显示KA+经销商双曲线，趋势图与RDC缺货金额图增加hover TOP5缺货SKU tooltip，品牌矩阵tooltip增加表头；v62: 拉回数据解析增强（日期/RDC/数量容错、列头关键词扩充、诊断日志），修复13868行解析为0的问题；v63: 品牌矩阵弹框缺货箱数改为取最新日期（非跨日累计）；总览「Top 20 缺货物料」的「显示全部缺货信息」按钮修复（之前 _top20List 始终 slice(0,20) 导致按钮无效）；v64: 拉回数据表头行自动识别（前15行找含最多列名关键词的行）+ 空态页面直接展示诊断信息（表头/样例行/失败计数）
+const DB_VERSION = 65; // v64: 拉回数据表头行自动识别（前15行找含最多列名关键词的行）+ 空态页面直接展示诊断信息；v65: RDC/rec/名称/qty 列头关键词扩充（增加「工厂/发货工厂/库位/收货库位/短文本/发货单数量」），空白行跳过不计失败
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9249,11 +9249,12 @@ function parseInventoryExcel(rawData) {
     // v64: 表头行自动识别——扫描前 15 行找含最多列名关键词的行作为表头
     function detectPullbackHeaderRow(arr) {
       if (!arr || arr.length === 0) return 0;
-      const dateKws = ['日期', 'date', '过账', '创建'];
-      const rdcKws = ['rdc', '仓库', '区域'];
+      const dateKws = ['日期', 'date', '过账', '创建', '业务', '单据'];
+      const rdcKws = ['rdc', '仓库', '区域', '工厂', '库位'];
       const skuKws = ['sku', '物料', '商品', '编码'];
       const qtyKws = ['数量', '箱数', '件数', 'qty'];
-      const allKws = [...dateKws, ...rdcKws, ...skuKws, ...qtyKws];
+      const otherKws = ['单位', '品牌', '短文本', '名称', 'unit', 'brand'];
+      const allKws = [...dateKws, ...rdcKws, ...skuKws, ...qtyKws, ...otherKws];
       let bestRow = 0, bestScore = -1;
       const scan = Math.min(15, arr.length);
       for (let i = 0; i < scan; i++) {
@@ -9282,17 +9283,17 @@ function parseInventoryExcel(rawData) {
       function _findCol(kws) { for (let _i = 0; _i < _hLower.length; _i++) { if (kws.some(function(k) { return _hLower[_i].indexOf(k) >= 0; })) return _i; } return -1; }
       const _dateCol = _findCol(['日期', '发货日期', '拉回日期', '出库日期', '创建日期', '过账日期', '业务日期', '单据日期', 'date']);
       if (_dateCol >= 0) _pbCol.date = _dateCol;
-      const _rdcCol = _findCol(['发货rdc', '发货仓', '发货区域', '出库rdc', '发货仓库', '调出仓', '调出区域', '出库仓库', '调出rdc', '调拨仓库', '调拨方', '来源仓', '出库方', '调出', 'rdc']);
+      const _rdcCol = _findCol(['发货rdc', '发货仓', '发货区域', '出库rdc', '发货仓库', '调出仓', '调出区域', '出库仓库', '调出rdc', '调拨仓库', '调拨方', '来源仓', '出库方', '调出', 'rdc', '工厂', '发货工厂', '发货库位', '工厂库位']);
       if (_rdcCol >= 0) _pbCol.rdc = _rdcCol;
       const _skuCol = _findCol(['sku编码', 'sku', '物料编码', '物料号', '商品编码', '物料']);
       if (_skuCol >= 0) _pbCol.sku = _skuCol;
-      const _nameCol = _findCol(['物料名称', '物料描述', '名称', '商品名称', 'name', '品名']);
+      const _nameCol = _findCol(['物料名称', '物料描述', '名称', '商品名称', 'name', '品名', '短文本']);
       if (_nameCol >= 0) _pbCol.name = _nameCol;
-      const _qtyCol = _findCol(['数量', '箱数', '件数', '发货数量', '出库数量', 'qty', '基本数量', '数量（件）']);
+      const _qtyCol = _findCol(['数量', '箱数', '件数', '发货数量', '出库数量', 'qty', '基本数量', '数量（件）', '发货单数量']);
       if (_qtyCol >= 0) _pbCol.qty = _qtyCol;
       const _unitCol = _findCol(['单位', '计量单位', 'unit', '件']);
       if (_unitCol >= 0) _pbCol.unit = _unitCol;
-      const _recCol = _findCol(['收货方', '收货', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', 'rec']);
+      const _recCol = _findCol(['收货方', '收货', '目标仓', '目标', '收货区域', '收货仓库', '调入仓', 'rec', '库位', '收货库位']);
       if (_recCol >= 0) _pbCol.rec = _recCol;
       const _brandCol = _findCol(['品牌', 'brand']);
       if (_brandCol >= 0) _pbCol.brand = _brandCol;
@@ -9345,6 +9346,9 @@ function parseInventoryExcel(rawData) {
       const startIdx = _headerRowIdx + 1;
       for (let i = startIdx; i < pullbackArr.length; i++) {
         const r = pullbackArr[i]; if (!r) continue;
+        // v65: 跳过完全空白的行（不计入失败）
+        const _isBlank = r.every(c => c == null || String(c).trim() === '');
+        if (_isBlank) continue;
         if (!r[pbCols.date]) { failMissingDate++; continue; }
         const dt = parsePullDate(r[pbCols.date]);
         if (!dt) { failDateInvalid++; continue; }
