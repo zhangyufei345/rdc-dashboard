@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 57; // v57: 总览驾驶舱微调——(1) RDC 标签 ml/mr 从 -18px 拉远到 -36px 避免与环图重叠；(2) 渠道订单图改回 donut + MTD累计（移除月份下拉和 grouped bar）；(3) 订单满足模块「年度同比概览」改为只显示当月（X月份）2 列 KPI，含环比 vs 上月 + 同比 vs 2025年同月，去掉 1-X月累计列
+const DB_VERSION = 58; // v58: 订单满足模块「年度同比概览」KPI 改为表格（指标/当月值/环比/同比/操作）；RDC 下拉从卡片标题右移到表格上方；每行末尾加「查看 TOP5」按钮，点击弹模态框显示当月（受全局 RDC 联动）的 TOP 5 缺货SKU（按缺货箱数从大到小），含物料号/品名/品牌/缺货箱/在途/大仓供应 pill；模态框点击遮罩或✕关闭
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2487,9 +2487,10 @@ function renderFulfillmentHistory() {
     '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 日订单满足率同比对比（2025 vs 2026）</span>' +
       '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，1 位小数百分比，2026年当月按订单数据实时聚合</span>' +
     '</div><div id="chart-fulfill-history-grid"></div></div>' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title" id="kpi-fulfill-history-title">年度同比概览（截至 ' + latestMonthLabel + '）</span>' +
-      '<select onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select>' +
-    '</div><div id="kpi-fulfill-history"></div></div>';
+    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title" id="kpi-fulfill-history-title">年度同比概览（截至 ' + latestMonthLabel + '）</span><span style="font-size:11px;color:var(--text-secondary)">每行点击「查看 TOP5」看当月缺货SKU明细</span>' +
+    '</div>' +
+    '<div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--text-secondary);margin-right:8px">RDC：</span><select id="ful-history-rdc-select" onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select></div>' +
+    '<div id="kpi-fulfill-history"></div></div>';
 }
 
 // 订单满足率历史同比（矩阵 + 年度概览，不含月度折线）
@@ -2651,27 +2652,101 @@ function renderFulfillmentHistoryCharts() {
   const lastLabel = latestMonthLabel + '份';
   const lastMonthNum = parseInt(String(latestMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
   const prevLabel = prevIdx !== null ? (prevIdx + 1) + '月份' : '上月';
-  // 单列 KPI：双对比（环比上月 + 同比去年同月）
-  const kpiCell = function(label, value, mom, momColor, yoy, yoyColor, momLabel, momVal, yoyLabel, yoyVal) {
-    return '<div style="flex:1;padding:14px 18px;border-right:1px solid var(--border-card);min-width:0">' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + label + '</div>' +
-      '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">' +
-        '<span style="font-size:26px;font-weight:700;line-height:1">' + value + '%</span>' +
-      '</div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px;font-size:11px">' +
-        '<span style="color:' + momColor + '">▲ 环比 <b>' + mom + '</b> vs ' + momLabel + ' <span style="color:var(--text-tertiary)">' + momVal + '%</span></span>' +
-        '<span style="color:' + yoyColor + '">▼ 同比 <b>' + yoy + '</b> vs ' + yoyLabel + ' <span style="color:var(--text-tertiary)">' + yoyVal + '%</span></span>' +
-      '</div>' +
-    '</div>';
+  // 单行 KPI：指标 / 当月值 / 环比 / 同比 / 操作（v58：表格化 + 弹框按钮）
+  const kpiRow = function(type, label, value, mom, momColor, yoy, yoyColor, momLabel, momVal, yoyLabel, yoyVal, month) {
+    return '<tr>' +
+      '<td style="padding:14px;font-weight:600;color:#e2e8f0;white-space:nowrap">' + label + '</td>' +
+      '<td style="padding:14px;text-align:right;font-size:20px;font-weight:700;color:' + (type === 'monthly' ? '#60a5fa' : '#34d399') + '">' + value + '%</td>' +
+      '<td style="padding:14px;font-size:11px;white-space:nowrap">' +
+        '<span style="color:' + momColor + '">▲ ' + mom + '</span> <span style="color:#94a3b8">vs ' + momLabel + ' ' + momVal + '%</span>' +
+      '</td>' +
+      '<td style="padding:14px;font-size:11px;white-space:nowrap">' +
+        '<span style="color:' + yoyColor + '">▼ ' + yoy + '</span> <span style="color:#94a3b8">vs ' + yoyLabel + ' ' + yoyVal + '%</span>' +
+      '</td>' +
+      '<td style="padding:14px;text-align:right;white-space:nowrap">' +
+        '<button class="btn-export" style="font-size:11px;padding:4px 10px" onclick="window._showTop5SkuPopup(\'' + month + '\',\'' + type + '\')">📊 查看 TOP5</button>' +
+      '</td>' +
+    '</tr>';
   };
-  const kpiHtml = '<div style="padding:0">' +
-    '<div style="display:flex;border-bottom:1px solid var(--border-card)">' +
-      kpiCell(lastLabel + '月均满足率', (last_26 * 100).toFixed(1), aMom.txt, aMom.color, aYoy.txt, aYoy.color, prevLabel, (prev_26 * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25 * 100).toFixed(1)) +
-      kpiCell(lastLabel + '日满足率', (last_26d * 100).toFixed(1), aMomD.txt, aMomD.color, aYoyD.txt, aYoyD.color, prevLabel, (prev_26d * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25d * 100).toFixed(1)).replace('border-right:1px solid', 'border-right:none') +
-    '</div>' +
-    '</div>';
-  document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
+  const _curMonth = lastIdx >= 0 ? lastIdx + 1 : ''; const _curMonthStr = _curMonth >= 1 ? '2026-' + String(_curMonth).padStart(2, '0') : '';
+  const kpiHtml = '<table class="data-table" style="width:100%"><thead><tr style="background:rgba(15,23,42,0.4)">' +
+    '<th style="text-align:left;padding:10px 14px;color:#94a3b8;width:24%">指标</th>' +
+    '<th style="text-align:right;padding:10px 14px;color:#94a3b8;width:14%">当月值</th>' +
+    '<th style="text-align:left;padding:10px 14px;color:#94a3b8;width:24%">环比（vs ' + prevLabel + '）</th>' +
+    '<th style="text-align:left;padding:10px 14px;color:#94a3b8;width:24%">同比（vs 2025年' + lastMonthNum + '月）</th>' +
+    '<th style="text-align:right;padding:10px 14px;color:#94a3b8;width:14%">操作</th>' +
+    '</tr></thead><tbody>' +
+    kpiRow('monthly', lastLabel + '月均满足率', (last_26 * 100).toFixed(1), aMom.txt, aMom.color, aYoy.txt, aYoy.color, prevLabel, (prev_26 * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25 * 100).toFixed(1), _curMonthStr) +
+    kpiRow('daily', lastLabel + '日满足率', (last_26d * 100).toFixed(1), aMomD.txt, aMomD.color, aYoyD.txt, aYoyD.color, prevLabel, (prev_26d * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25d * 100).toFixed(1), _curMonthStr) +
+    '</tbody></table>';
+  document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml + window._top5ModalHtml;
 }
+
+// TOP 5 缺货 SKU 弹框（v58：按缺货箱数从大到小，含物料/品名/缺货箱/在途/大仓供应）
+function getTop5ShortageSku(month, rdcFilter) {
+  const arr = (dataStore.shortage || []).filter(d => d && d.dateStr && d.dateStr.startsWith(month));
+  const rdcKeyMap = { '华南RDC': 'huananShort', '华北RDC': 'huabeiShort', '东北RDC': 'dongbeiShort', '西北RDC': 'xibeiShort', '华中RDC': 'huazhongShort', '西南RDC': 'xinanShort' };
+  const skuMap = {};
+  arr.forEach(d => {
+    if (!d.materialCode) return;
+    let qty = 0, transit = 0;
+    if (rdcFilter === 'all' || !rdcFilter) {
+      qty = d.rdcShortBoxes || 0;
+      transit = d.rdcTransitTotal || 0;
+    } else {
+      const key = rdcKeyMap[rdcFilter];
+      if (!key) return;
+      qty = d[key] || 0;
+      if (qty <= 0) return;
+      transit = d.rdcTransitTotal || 0;
+    }
+    if (qty <= 0) return;
+    if (!skuMap[d.materialCode]) {
+      skuMap[d.materialCode] = { materialCode: d.materialCode, materialName: d.materialName || '', brand: d.brand || '', rdcShortBoxes: 0, rdcTransitTotal: 0, dcSupply: d.dcSupply || '' };
+    }
+    skuMap[d.materialCode].rdcShortBoxes += qty;
+    skuMap[d.materialCode].rdcTransitTotal = Math.max(skuMap[d.materialCode].rdcTransitTotal, transit);
+  });
+  return Object.values(skuMap).sort((a, b) => b.rdcShortBoxes - a.rdcShortBoxes).slice(0, 5);
+}
+window._top5ModalHtml = '<div id="top5-sku-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:10000;justify-content:center;align-items:center;cursor:pointer" onclick="if(event.target===this)window._closeTop5Modal()"><div style="background:#1e293b;border-radius:12px;padding:20px 24px;max-width:820px;width:92%;max-height:80vh;overflow:auto;color:#e2e8f0;box-shadow:0 20px 60px rgba(0,0,0,0.5);cursor:default" onclick="event.stopPropagation()"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #334155"><h3 id="top5-sku-title" style="margin:0;font-size:16px;color:#e2e8f0"></h3><button onclick="window._closeTop5Modal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;padding:0 4px">✕</button></div><div id="top5-sku-content"></div></div></div>';
+window._showTop5SkuPopup = function(month, type) {
+  const rdc = window._fulHtyRdc || 'all';
+  const top5 = getTop5ShortageSku(month, rdc);
+  const typeLabel = type === 'monthly' ? '月均满足率' : '日满足率';
+  const rdcLabel = rdc === 'all' ? '全部 RDC' : rdc;
+  document.getElementById('top5-sku-title').innerHTML = '📊 ' + month + ' ' + typeLabel + ' · ' + rdcLabel + ' · TOP 5 缺货 SKU';
+  let html = '<table class="data-table" style="width:100%"><thead><tr style="background:rgba(15,23,42,0.4)">' +
+    '<th style="text-align:left;padding:10px;color:#94a3b8;width:8%">#</th>' +
+    '<th style="text-align:left;padding:10px;color:#94a3b8">物料 / 品名</th>' +
+    '<th style="text-align:left;padding:10px;color:#94a3b8;width:12%">品牌</th>' +
+    '<th style="text-align:right;padding:10px;color:#94a3b8;width:12%">缺货箱</th>' +
+    '<th style="text-align:right;padding:10px;color:#94a3b8;width:12%">在途</th>' +
+    '<th style="text-align:left;padding:10px;color:#94a3b8;width:14%">大仓供应</th>' +
+    '</tr></thead><tbody>';
+  if (top5.length === 0) {
+    html += '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:32px">该月份' + (rdc === 'all' ? '' : ' ' + rdc) + '暂无缺货数据</td></tr>';
+  } else {
+    top5.forEach((d, i) => {
+      const supplyTxt = String(d.dcSupply || '');
+      const supplyPillCls = supplyTxt.indexOf('紧张') >= 0 ? 'red' : (supplyTxt.indexOf('缺货') >= 0 ? 'orange' : 'green');
+      const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
+      html += '<tr>' +
+        '<td style="padding:10px;color:#94a3b8;font-weight:600">' + (i + 1) + '</td>' +
+        '<td style="padding:10px"><div style="color:#93c5fd;font-weight:600">' + d.materialCode + '</div><div style="font-size:10px;color:#94a3b8;margin-top:2px">' + d.materialName + '</div></td>' +
+        '<td style="padding:10px">' + d.brand + '</td>' +
+        '<td style="padding:10px;text-align:right;font-weight:600;color:#fca5a5">' + formatNum(d.rdcShortBoxes) + '</td>' +
+        '<td style="padding:10px;text-align:right">' + formatNum(d.rdcTransitTotal) + '</td>' +
+        '<td style="padding:10px"><span class="pill ' + supplyPillCls + '">' + supplyLabel + '</span></td>' +
+      '</tr>';
+    });
+  }
+  html += '</tbody></table>' +
+    '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #334155;font-size:11px;color:#94a3b8;text-align:right">按缺货箱数从大到小排列 · 展示 ' + month + (rdc === 'all' ? ' 全部 RDC' : ' ' + rdc) + ' TOP 5 缺货SKU</div>';
+  document.getElementById('top5-sku-content').innerHTML = html;
+  document.getElementById('top5-sku-modal').style.display = 'flex';
+};
+window._closeTop5Modal = function() { document.getElementById('top5-sku-modal').style.display = 'none'; };
 
 // ============ 订单数据洞察（普通 / 特殊价格 / 免费单，品牌×客户×RDC 环比） ============
 // 数据源：
