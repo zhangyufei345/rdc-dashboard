@@ -322,6 +322,18 @@ a { color: var(--color-blue); text-decoration: none; }
 #page-overview .pill.green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
 #page-overview .pill.blue { background: rgba(96,165,250,0.2); color: #93c5fd; }
 
+/* Top 5 mini 表（v55：table-layout:fixed + 显式四列宽度，让商品名称显示） */
+#page-overview .top5-mini-table { table-layout: fixed; width: 100%; }
+#page-overview .top5-mini-table th:nth-child(1),
+#page-overview .top5-mini-table td:nth-child(1) { width: 50%; }
+#page-overview .top5-mini-table th:nth-child(2),
+#page-overview .top5-mini-table td:nth-child(2) { width: 18%; }
+#page-overview .top5-mini-table th:nth-child(3),
+#page-overview .top5-mini-table td:nth-child(3) { width: 22%; }
+#page-overview .top5-mini-table th:nth-child(4),
+#page-overview .top5-mini-table td:nth-child(4) { width: 10%; }
+#page-overview .top5-mini-table td:nth-child(1) > div { gap: 8px; }
+
 /* ECharts canvas 内文字兜底 */
 #page-overview canvas { display: block; }
 
@@ -625,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 54; // v54: 总览页四象限微调——(1) 6 个 RDC 满足率标签改为左3右3对称环绕（tl/ml/bl/tr/mr/br，负 offset 贴环图外缘）；(2) 趋势图 y 轴 min: 0.7→0（显示 0-100%）；加 RDC 下拉筛选，默认"全部"显示 KA+经销商，单选 RDC 显示该 RDC 单线；(3) Top 5 mini 紧凑化：SKU 代码与品名同一行（flex + ellipsis）；(4) Top 20 加 4 个排序按钮（缺货箱数/金额/涉及RDC/大仓供应，按"紧张>缺货>正常"优先级排）+ "显示全部缺货信息"按钮；(5) bottom-grid 改 1fr 1fr（左右等宽）、heatmap 高度 280→220 与 Top 20 视觉平衡
+const DB_VERSION = 55; // v55: 总览 Top 5 mini 表加 class="top5-mini-table" + CSS table-layout:fixed 四列宽度（物料50%/缺货箱18%/缺货金额22%/RDC10%），让商品名称显示；拉回分析 sheet 名查找兼容"拉回数据/拉回明细/拉回/回货"四个变体，空数据时显示当前 inventory.xlsx 的所有 sheet 名以便诊断
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1698,7 +1710,7 @@ function renderOverview() {
   const top5Skus = [...window._overviewShortList].sort((a,b) => b.rdcShortAmount - a.rdcShortAmount).slice(0, 5);
   const top5RowHtml = top5Skus.map(d => {
     const pillCls = d.rdcShortBoxes >= 400 ? 'red' : (d.rdcShortBoxes >= 200 ? 'orange' : 'green');
-    return '<tr><td style="text-align:left;max-width:0"><div style="display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:#93c5fd;flex-shrink:0;font-weight:600">' + d.materialCode + '</span><span style="font-size:11px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</span></div></td>' +
+    return '<tr><td style="text-align:left"><div style="display:flex;align-items:center;gap:6px;min-width:0"><span style="color:#93c5fd;flex-shrink:0;font-weight:600">' + d.materialCode + '</span><span style="font-size:11px;color:#cbd5e1;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</span></div></td>' +
            '<td class="num"><span class="pill ' + pillCls + '">' + formatNum(d.rdcShortBoxes) + '</span></td>' +
            '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
            '<td>' + d.rdcCount + '</td></tr>';
@@ -1892,7 +1904,7 @@ function renderOverview() {
       </div>
       <div class="card">
         <div class="card-title">🔥 Top 5 缺货 SKU<span class="card-sub">按金额排序</span></div>
-        <table>
+        <table class="top5-mini-table">
           <thead><tr><th style="text-align:left">物料</th><th class="num">缺货箱</th><th class="num">缺货金额</th><th>RDC</th></tr></thead>
           <tbody>
             ${top5Skus.length > 0 ? top5RowHtml : '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
@@ -6058,7 +6070,9 @@ function renderPullbackAnalysis(page) {
   var inv = dataStore.inventory || {};
   var invRaw = inv.pullbackRaw || [];
   if (invRaw.length < 2) {
-    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回分析</button></div><div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg)">暂无原始拉回数据</div><div style="font-size:12px;margin-top:8px">请导入包含「拉回数据」Sheet的库存文件</div></div>';
+    var sheetNames = (window.__rawInventorySheets && Object.keys(window.__rawInventorySheets)) || (inv._rawSheets && Object.keys(inv._rawSheets)) || [];
+    var sheetListHtml = sheetNames.length ? sheetNames.map(function(n) { return '<span style="display:inline-block;padding:2px 8px;margin:2px;background:rgba(99,179,237,0.15);color:#93c5fd;border-radius:4px;font-size:11px">' + n + '</span>'; }).join('') : '<span style="color:#94a3b8">未找到任何 sheet</span>';
+    page.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn-export" style="font-size:13px;padding:7px 18px;" onclick="window._transTab=\'transship\';renderTransship()">📦 转储数据</button><button class="btn-export" style="font-size:13px;padding:7px 18px;background:var(--color-blue);color:#fff;" onclick="window._transTab=\'pullback\';renderTransship()">🔙 拉回分析</button></div><div style="text-align:center;padding:60px 20px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔙</div><div style="font-size:var(--font-size-lg);color:#fbbf24;margin-bottom:8px">未找到「拉回数据」Sheet</div><div style="font-size:12px;margin-bottom:16px;color:#94a3b8">v55 已自动尝试以下变体：拉回数据 / 拉回明细 / 拉回 / 回货</div><div style="font-size:12px;color:#94a3b8;margin-bottom:8px">当前 inventory.xlsx 含以下 Sheet：</div><div style="max-width:600px;margin:0 auto;line-height:2">' + sheetListHtml + '</div><div style="font-size:11px;margin-top:16px;color:#64748B">提示：重新导入库存文件，或将拉回相关 Sheet 重命名包含「拉回」或「回货」关键词</div></div>';
     return;
   }
 
@@ -9023,7 +9037,8 @@ function parseInventoryExcel(rawData) {
     // 解析「拉回数据」sheet：按 (发货RDC, 年月) 聚合「箱数 + 拉回金额」
     // 金额 = 发货单数量(基本单位) × 成本价；若单位是'箱'则金额 = 箱数 × 成本价 × 箱规
     // 同时保存原始行化数据供拉回分析 TAB 使用
-    const pullbackArr = findByName('拉回数据');
+    // v55: sheet 名查找兼容多个变体（拉回数据/拉回明细/拉回/回货）
+    const pullbackArr = findByName('拉回数据') || findByName('拉回明细') || findByName('拉回') || findByName('回货');
     const pullbackByRdcMonth = {}; // {RDC: {YYYY-MM: {qty: 箱, amt: 元}}}
     if (pullbackArr) {
       for (let i = 1; i < pullbackArr.length; i++) {
