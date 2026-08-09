@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 55; // v55: 总览 Top 5 mini 表加 class="top5-mini-table" + CSS table-layout:fixed 四列宽度（物料50%/缺货箱18%/缺货金额22%/RDC10%），让商品名称显示；拉回分析 sheet 名查找兼容"拉回数据/拉回明细/拉回/回货"四个变体，空数据时显示当前 inventory.xlsx 的所有 sheet 名以便诊断
+const DB_VERSION = 56; // v56: 拉回分析列名自动探测（按表头匹配日期/SKU/箱数/发货RDC 等，避免列错位导致全部被过滤，console.warn 输出列映射便于诊断）；bottom-grid（渠道订单+Top 5 mini）加月份下拉选择器，渠道订单图改 donut → grouped bar 3 series（当月/环比/同比），tooltip 显示环比/同比百分比；Top 5 mini 数据按选中月聚合（TODO）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1899,7 +1899,10 @@ function renderOverview() {
     <!-- 第二排：渠道 + Top 5 mini -->
     <div class="bottom-grid">
       <div class="card">
-        <div class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">MTD 累计</span></div>
+        <div class="card-header" style="display:flex;align-items:center">
+          <span class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">当月对比</span></span>
+          <select id="channel-month-filter" onchange="window._channelMonth=this.value;renderOverview()" style="margin-left:auto;padding:4px 8px;background:rgba(15,23,42,0.7);color:#e2e8f0;border:1px solid rgba(99,179,237,0.3);border-radius:6px;font-size:11px;outline:none"></select>
+        </div>
         <div id="chart-channel" class="chart-area" style="height:280px"></div>
       </div>
       <div class="card">
@@ -2050,49 +2053,80 @@ function renderOverview() {
     });
   }
 
-  // 4. 渠道订单量分布（环形饼图 + 客户组细分 tooltip）
-  const chMap = {};
-  monthOrders.forEach(d => {
-    const ch = d.channel || '其他';
-    if (!chMap[ch]) chMap[ch] = { orderQty: 0, firstQty: 0, groups: {} };
-    chMap[ch].orderQty += d.orderQty || 0;
-    chMap[ch].firstQty += d.firstDayQty || 0;
-    const cg = d.customerGroup || '未知';
-    if (!chMap[ch].groups[cg]) chMap[ch].groups[cg] = { orderQty: 0, firstQty: 0 };
-    chMap[ch].groups[cg].orderQty += d.orderQty || 0;
-    chMap[ch].groups[cg].firstQty += d.firstDayQty || 0;
-  });
-  const channelData = Object.entries(chMap).map(([name, info]) => ({ name, value: info.orderQty }));
+  // 4. 渠道订单量分布（v56：加月份下拉 + 改 donut 为 grouped bar 3 series 当月/环比/同比）
+  const _allMonths = [...new Set(dataStore.orderDetail.map(function(d) { return d.dateStr && d.dateStr.slice(0,7); }).filter(Boolean))].sort();
+  const _selMonth = window._channelMonth || _allMonths[_allMonths.length - 1] || '';
+  // 填充月份下拉选项
+  const _selEl = document.getElementById('channel-month-filter');
+  if (_selEl && _selEl.children.length === 0) {
+    _selEl.innerHTML = _allMonths.map(function(m) { return '<option value="' + m + '"' + (m === _selMonth ? ' selected' : '') + '>' + m + '</option>'; }).join('');
+  }
+  const _mp = _selMonth.split('-');
+  const _y = +_mp[0], _mo = +_mp[1];
+  const _prevYM = (_mo === 1 ? (_y - 1) + '-12' : _y + '-' + String(_mo - 1).padStart(2, '0'));
+  const _lastYrYM = (_y - 1) + '-' + String(_mo).padStart(2, '0');
+  function _aggCh(month) {
+    const m = {};
+    dataStore.orderDetail.forEach(function(d) {
+      if (!d.dateStr || !d.dateStr.startsWith(month)) return;
+      const ch = d.channel || '其他';
+      if (!m[ch]) m[ch] = { orderQty: 0, firstQty: 0, groups: {} };
+      m[ch].orderQty += d.orderQty || 0;
+      m[ch].firstQty += d.firstDayQty || 0;
+      const cg = d.customerGroup || '未知';
+      if (!m[ch].groups[cg]) m[ch].groups[cg] = { orderQty: 0, firstQty: 0 };
+      m[ch].groups[cg].orderQty += d.orderQty || 0;
+      m[ch].groups[cg].firstQty += d.firstDayQty || 0;
+    });
+    return m;
+  }
+  const curChMap = _aggCh(_selMonth);
+  const prevChMap = _aggCh(_prevYM);
+  const lastYrChMap = _aggCh(_lastYrYM);
+  const chMap = curChMap;
   const channelColors = { 'KA': '#60a5fa', 'KA直营': '#60a5fa', '经销商': '#34d399', '新渠道': '#f97316' };
+  const allChannels = [...new Set([...Object.keys(curChMap), ...Object.keys(prevChMap), ...Object.keys(lastYrChMap)].filter(Boolean))];
+  const curData = allChannels.map(function(c) { return curChMap[c] ? curChMap[c].orderQty : 0; });
+  const prevData = allChannels.map(function(c) { return prevChMap[c] ? prevChMap[c].orderQty : 0; });
+  const lastYrData = allChannels.map(function(c) { return lastYrChMap[c] ? lastYrChMap[c].orderQty : 0; });
   const chartChannel = initChart('chart-channel');
   if (chartChannel) {
     chartChannel.setOption({
       tooltip: {
-        trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
-        formatter: function(p) {
-          const info = chMap[p.name] || { orderQty: p.value, groups: {} };
-          const groupRows = Object.entries(info.groups || {}).sort((a,b) => b[1].orderQty - a[1].orderQty).slice(0, 8);
-          let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + p.name + '（总量：' + formatNum(p.value) + '支）</div>';
-          html += '<table style="font-size:11px;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid #334155"><td style="padding:2px 6px;color:#94a3b8">客户组</td><td style="padding:2px 6px;text-align:right;color:#94a3b8">订单量</td><td style="padding:2px 6px;text-align:right;color:#94a3b8">日满足率</td></tr>';
-          groupRows.forEach(([cg, g]) => {
-            const rate = g.orderQty > 0 ? (g.firstQty / g.orderQty * 100).toFixed(1) : '0.0';
-            html += '<tr><td style="padding:2px 6px">' + cg + '</td><td style="padding:2px 6px;text-align:right">' + formatNum(g.orderQty) + '</td><td style="padding:2px 6px;text-align:right">' + rate + '%</td></tr>';
-          });
-          html += '</table>';
+        trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+        formatter: function(params) {
+          const ch = params[0].axisValue;
+          const cur = curChMap[ch] || { orderQty: 0, firstQty: 0, groups: {} };
+          const prev = prevChMap[ch] || { orderQty: 0 };
+          const lastY = lastYrChMap[ch] || { orderQty: 0 };
+          const prevDelta = prev.orderQty > 0 ? ((cur.orderQty - prev.orderQty) / prev.orderQty * 100) : 0;
+          const lastYrDelta = lastY.orderQty > 0 ? ((cur.orderQty - lastY.orderQty) / lastY.orderQty * 100) : 0;
+          const curRate = cur.orderQty > 0 ? (cur.firstQty / cur.orderQty * 100).toFixed(1) : '0.0';
+          let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + ch + ' · ' + _selMonth + '</div>';
+          html += '<div style="margin-bottom:6px"><span style="color:#60a5fa;font-weight:700">当月</span>：' + formatNum(cur.orderQty) + ' 支 <span style="color:#94a3b8;font-size:10px">(日满足率 ' + curRate + '%)</span></div>';
+          html += '<div style="margin-bottom:4px"><span style="color:#94a3b8">环比（' + _prevYM + '）</span>：' + formatNum(prev.orderQty) + ' 支 <span style="color:' + (prevDelta >= 0 ? '#34d399' : '#f87171') + ';font-size:10px">' + (prevDelta >= 0 ? '▲ +' : '▼ ') + Math.abs(prevDelta).toFixed(1) + '%</span></div>';
+          html += '<div style="margin-bottom:6px"><span style="color:#f97316">同比（' + _lastYrYM + '）</span>：' + formatNum(lastY.orderQty) + ' 支 <span style="color:' + (lastYrDelta >= 0 ? '#34d399' : '#f87171') + ';font-size:10px">' + (lastYrDelta >= 0 ? '▲ +' : '▼ ') + Math.abs(lastYrDelta).toFixed(1) + '%</span></div>';
+          const groupRows = Object.entries(cur.groups || {}).sort(function(a, b) { return b[1].orderQty - a[1].orderQty; }).slice(0, 6);
+          if (groupRows.length > 0) {
+            html += '<div style="border-top:1px solid #334155;padding-top:4px;margin-top:4px;font-size:10px;color:#94a3b8">客户组细分：</div>';
+            groupRows.forEach(function(g) {
+              const gr = g[1].orderQty > 0 ? (g[1].firstQty / g[1].orderQty * 100).toFixed(1) : '0.0';
+              html += '<div style="font-size:11px">' + g[0] + '：' + formatNum(g[1].orderQty) + ' <span style="color:#94a3b8;font-size:10px">(' + gr + '%)</span></div>';
+            });
+          }
           return html;
         },
-        extraCssText: 'max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.4);border-radius:8px;padding:10px 12px'
+        extraCssText: 'max-width:380px;box-shadow:0 2px 12px rgba(0,0,0,.4);border-radius:8px;padding:10px 12px'
       },
-      legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { color: '#cbd5e1', fontSize: 11 }, itemWidth: 12, itemHeight: 12 },
-      series: [{
-        type: 'pie',
-        radius: ['45%', '70%'],
-        center: ['38%', '50%'],
-        label: { color: '#e2e8f0', formatter: '{b}\n{d}%', fontSize: 11 },
-        labelLine: { lineStyle: { color: '#475569' } },
-        itemStyle: { borderColor: '#0a0e27', borderWidth: 2 },
-        data: channelData.map(d => ({ ...d, itemStyle: { color: channelColors[d.name] || '#a78bfa' } }))
-      }]
+      legend: { data: [_selMonth + ' 当月', _prevYM + ' 环比', _lastYrYM + ' 同比'], textStyle: { color: '#cbd5e1', fontSize: 11 }, top: 6, itemGap: 14 },
+      grid: { left: 60, right: 20, top: 50, bottom: 40 },
+      xAxis: { type: 'category', data: allChannels, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#cbd5e1', fontSize: 11 } },
+      yAxis: { type: 'value', name: '订单量（支）', nameTextStyle: { color: '#94a3b8', fontSize: 10 }, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: function(v) { return v >= 1000 ? (v/1000).toFixed(1) + 'k' : v; } } },
+      series: [
+        { name: _selMonth + ' 当月', type: 'bar', data: curData, itemStyle: { color: '#60a5fa', borderRadius: [4, 4, 0, 0] } },
+        { name: _prevYM + ' 环比', type: 'bar', data: prevData, itemStyle: { color: '#94a3b8', borderRadius: [4, 4, 0, 0] } },
+        { name: _lastYrYM + ' 同比', type: 'bar', data: lastYrData, itemStyle: { color: '#f97316', borderRadius: [4, 4, 0, 0] } }
+      ]
     });
   }
 
@@ -9040,24 +9074,50 @@ function parseInventoryExcel(rawData) {
     // v55: sheet 名查找兼容多个变体（拉回数据/拉回明细/拉回/回货）
     const pullbackArr = findByName('拉回数据') || findByName('拉回明细') || findByName('拉回') || findByName('回货');
     const pullbackByRdcMonth = {}; // {RDC: {YYYY-MM: {qty: 箱, amt: 元}}}
+
+    // v56: 列名自动探测——按表头匹配日期/SKU/箱数/发货RDC 等，避免列错位导致全部被过滤
+    const _pbCol = { date: 0, rdc: 7, sku: 3, name: 4, qty: 5, unit: 6, rec: 2, brand: 8 }; // 默认固定位置
+    if (pullbackArr && pullbackArr.length > 0) {
+      const _header = pullbackArr[0] || [];
+      const _hLower = _header.map(function(h) { return String(h || '').replace(/\s+/g, '').toLowerCase(); });
+      function _findCol(kws) { for (let _i = 0; _i < _hLower.length; _i++) { if (kws.some(function(k) { return _hLower[_i].indexOf(k) >= 0; })) return _i; } return -1; }
+      const _dateCol = _findCol(['日期', '发货日期', '拉回日期', 'date']);
+      if (_dateCol >= 0) _pbCol.date = _dateCol;
+      const _rdcCol = _findCol(['发货rdc', '发货仓', 'rdc']);
+      if (_rdcCol >= 0) _pbCol.rdc = _rdcCol;
+      const _skuCol = _findCol(['sku编码', 'sku', '物料编码']);
+      if (_skuCol >= 0) _pbCol.sku = _skuCol;
+      const _nameCol = _findCol(['物料名称', '名称', 'name']);
+      if (_nameCol >= 0) _pbCol.name = _nameCol;
+      const _qtyCol = _findCol(['数量', '箱数', '件数', 'qty']);
+      if (_qtyCol >= 0) _pbCol.qty = _qtyCol;
+      const _unitCol = _findCol(['单位', 'unit']);
+      if (_unitCol >= 0) _pbCol.unit = _unitCol;
+      const _recCol = _findCol(['收货方', '收货', '目标仓', '目标', 'rec']);
+      if (_recCol >= 0) _pbCol.rec = _recCol;
+      const _brandCol = _findCol(['品牌', 'brand']);
+      if (_brandCol >= 0) _pbCol.brand = _brandCol;
+      console.log('[拉回分析] sheet 行数:', pullbackArr.length - 1, '列映射:', _pbCol, '表头:', _header.slice(0, 12));
+    }
+
     if (pullbackArr) {
       for (let i = 1; i < pullbackArr.length; i++) {
-        const r = pullbackArr[i]; if (!r || !r[0]) continue;
+        const r = pullbackArr[i]; if (!r || !r[_pbCol.date]) continue;
         // 日期处理：可能是 Excel 序列号或 datetime 字符串
-        const dt0 = r[0];
+        const dt0 = r[_pbCol.date];
         let dt = null;
         if (typeof dt0 === 'number' && dt0 > 1000) dt = new Date((dt0 - 25569) * 86400 * 1000);
         else if (typeof dt0 === 'string' && dt0.length >= 7) dt = new Date(dt0);
         if (!dt || isNaN(dt.getTime())) continue;
         const ym = dt.getUTCFullYear() + '-' + (dt.getUTCMonth() + 1).toString().padStart(2, '0');
-        const rdcRaw = String(r[7] || '').trim().replace('仓','RDC');
+        const rdcRaw = String(r[_pbCol.rdc] || '').trim().replace('仓','RDC');
         if (!rdcRaw) continue;
-        const sku = String(r[3] || '').trim();
+        const sku = String(r[_pbCol.sku] || '').trim();
         const master = productMaster[sku];
         const cost = master ? master.cost : 0;
         const spec = master ? master.spec : 0;
-        const unit = String(r[6] || '').trim();
-        const qty = Number(r[5]) || 0;
+        const unit = String(r[_pbCol.unit] || '').trim();
+        const qty = Number(r[_pbCol.qty]) || 0;
         let qtyBox = 0;
         if (unit === '箱') qtyBox = qty;
         else if (spec > 0) qtyBox = qty / spec;
