@@ -126,29 +126,54 @@ a { color: var(--color-blue); text-decoration: none; }
 .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 .row-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
 
-/* 总览驾驶舱（v49） */
-/* ========== 总览页驾驶舱深色主题（v51 彻底重建：统一作用域 #page-overview，纯深色） ========== */
+/* ========== 总览页驾驶舱主题（v52：1:1 复刻 overview-preview.html，全部作用域 #page-overview） ========== */
 #page-overview {
-  color: #cbd5e1;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background:
     radial-gradient(ellipse 80% 50% at 20% 10%, rgba(59,130,246,0.18), transparent 60%),
     radial-gradient(ellipse 70% 50% at 80% 90%, rgba(168,85,247,0.18), transparent 60%),
     linear-gradient(135deg, #0a0e27 0%, #131a3b 50%, #0a0e27 100%);
+  color: #e2e8f0;
   padding: 16px;
   border-radius: 14px;
   min-height: calc(100vh - 120px);
 }
 
-/* ===== KPI 6 卡（带图标+发光+hover上浮） ===== */
+/* 顶部 header */
+#page-overview .ov-header {
+  display: flex; align-items: center; justify-content: space-between;
+  background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.75));
+  border: 1px solid rgba(99,179,237,0.25);
+  border-radius: 14px;
+  padding: 14px 20px;
+  margin-bottom: 18px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+}
+#page-overview .ov-header h1 {
+  margin: 0; font-size: 20px; font-weight: 700;
+  background: linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  letter-spacing: 1px;
+}
+#page-overview .ov-header .ov-sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+#page-overview .ov-header .ov-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #94a3b8; }
+#page-overview .ov-header .ov-meta select {
+  background: rgba(15,23,42,0.7); border: 1px solid rgba(99,179,237,0.25);
+  color: #e2e8f0; padding: 4px 8px; border-radius: 6px; font-size: 12px;
+}
+
+/* KPI 行 - 6 张发光卡 */
 #page-overview .kpi-row {
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 18px;
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  gap: 14px; margin-bottom: 18px;
 }
 #page-overview .kpi-card {
   position: relative; padding: 18px 16px;
   background: linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
   border: 1px solid rgba(99,179,237,0.2);
-  border-radius: 12px; overflow: hidden;
-  display: flex; flex-direction: column; gap: 6px;
+  border-radius: 12px;
+  overflow: hidden;
   transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
 #page-overview .kpi-card::before {
@@ -156,266 +181,140 @@ a { color: var(--color-blue); text-decoration: none; }
   background: linear-gradient(90deg, transparent, var(--accent, #60a5fa), transparent);
   opacity: 0.6;
 }
-#page-overview .kpi-card:hover {
-  transform: translateY(-3px); border-color: var(--accent);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px var(--accent-glow);
-}
+#page-overview .kpi-card:hover { transform: translateY(-3px); border-color: var(--accent, #60a5fa); box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px var(--accent-glow, rgba(96,165,250,0.3)); }
 #page-overview .kpi-card.blue { --accent: #60a5fa; --accent-glow: rgba(96,165,250,0.3); }
 #page-overview .kpi-card.green { --accent: #34d399; --accent-glow: rgba(52,211,153,0.3); }
 #page-overview .kpi-card.red { --accent: #ef4444; --accent-glow: rgba(239,68,68,0.3); }
 #page-overview .kpi-card.orange { --accent: #f97316; --accent-glow: rgba(249,115,22,0.3); }
 #page-overview .kpi-card.teal { --accent: #2dd4bf; --accent-glow: rgba(45,212,191,0.3); }
 #page-overview .kpi-card.purple { --accent: #c084fc; --accent-glow: rgba(192,132,252,0.3); }
-#page-overview .kpi-card .kpi-label {
-  font-size: 12px; color: #94a3b8; letter-spacing: 0.5px; margin-bottom: 4px; padding-right: 36px;
+#page-overview .kpi-icon {
+  position: absolute; top: 14px; right: 14px;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
 }
-#page-overview .kpi-card .kpi-value {
-  font-size: 28px; font-weight: 700; line-height: 1;
-  color: var(--accent);
+#page-overview .kpi-label { font-size: 12px; color: #94a3b8; margin-bottom: 10px; letter-spacing: 0.5px; padding-right: 40px; }
+#page-overview .kpi-value { font-size: 30px; font-weight: 700; line-height: 1; color: var(--accent);
   text-shadow: 0 0 20px var(--accent-glow);
   font-family: 'Helvetica Neue', Arial, sans-serif;
 }
-#page-overview .kpi-card .kpi-unit {
-  font-size: 14px; font-weight: 500; color: var(--accent); opacity: 0.85; margin-left: 2px;
+#page-overview .kpi-unit { font-size: 16px; font-weight: 500; color: var(--accent); opacity: 0.85; margin-left: 2px; }
+#page-overview .kpi-trend { margin-top: 8px; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+#page-overview .kpi-trend.up { color: #34d399; }
+#page-overview .kpi-trend.down { color: #f87171; }
+#page-overview .kpi-trend.flat { color: #94a3b8; }
+
+/* 思维导图核心区 3 列网格 */
+#page-overview .mindmap-grid {
+  display: grid;
+  grid-template-columns: 360px 1fr 360px;
+  gap: 16px;
+  margin-bottom: 18px;
 }
-#page-overview .kpi-card .kpi-trend { font-size: 11px; display: flex; align-items: center; gap: 4px; margin-top: 2px; }
-#page-overview .kpi-card .kpi-trend.up { color: #34d399; }
-#page-overview .kpi-card .kpi-trend.down { color: #f87171; }
-#page-overview .kpi-card .kpi-trend.flat { color: #94a3b8; }
-#page-overview .kpi-icon {
-  position: absolute; top: 14px; right: 14px;
-  width: 30px; height: 30px; border-radius: 50%;
-  background: rgba(255,255,255,0.06);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
+@media (max-width: 1400px) {
+  #page-overview .mindmap-grid { grid-template-columns: 1fr 1fr; }
+  #page-overview .mindmap-center-slot { grid-column: 1 / -1; order: -1; }
 }
 
-/* ===== Card 玻璃质感 ===== */
+/* Card 玻璃质感 */
 #page-overview .card {
   background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45));
   border: 1px solid rgba(99,179,237,0.18);
-  color: #cbd5e1;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
-  backdrop-filter: blur(8px);
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
+  backdrop-filter: blur(8px);
 }
-#page-overview .card-header {
-  border-bottom: 1px solid rgba(99,179,237,0.15);
-  padding-bottom: 10px; margin-bottom: 12px;
-  display: flex; align-items: center;
-}
-#page-overview .card-title {
-  font-size: 14px; font-weight: 600; color: #e2e8f0;
+#page-overview .card-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px;
   display: flex; align-items: center; gap: 8px;
 }
-#page-overview .card-title::before {
-  content: ''; width: 3px; height: 14px;
-  background: linear-gradient(180deg, #60a5fa, #a78bfa);
-  border-radius: 2px;
+#page-overview .card-title::before { content: ''; width: 3px; height: 14px;
+  background: linear-gradient(180deg, #60a5fa, #a78bfa); border-radius: 2px;
 }
-#page-overview .card-sub {
-  font-size: 11px; color: #94a3b8; margin-left: auto; font-weight: 400;
-}
+#page-overview .card-sub { font-size: 11px; color: #94a3b8; margin-left: auto; font-weight: 400; }
 
-/* ===== 驾驶舱 hero 核心卡片（玻璃质感 + 蓝紫光晕） ===== */
-#page-overview .cockpit-card {
+/* 中央订单流核心（玻璃质感+蓝紫光晕） */
+#page-overview .mindmap-center {
   position: relative; padding: 20px 14px 16px;
   background:
     radial-gradient(ellipse 60% 80% at 50% 50%, rgba(59,130,246,0.12), transparent 70%),
     linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
   border: 1px solid rgba(99,179,237,0.25);
   border-radius: 14px;
-  box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-#page-overview .cockpit-3col {
-  display: grid; grid-template-columns: 280px 240px 280px; justify-content: space-between;
-  gap: 18px; align-items: start; width: 100%;
-}
-#page-overview .cockpit-side {
-  display: flex; flex-direction: column; gap: 6px; min-width: 0;
-}
-#page-overview .cockpit-side-title {
-  font-size: 11px; color: #94a3b8; letter-spacing: 1px;
-  margin-bottom: 2px; text-align: left;
-  display: flex; align-items: center; gap: 6px;
-}
-#page-overview .cockpit-stats {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
-}
-#page-overview .cockpit-stat {
-  padding: 10px 6px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(99,179,237,0.08);
-  border-radius: 8px;
   text-align: center;
-  transition: background 0.2s, border-color 0.2s;
+  box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
 }
-#page-overview .cockpit-stat:hover {
-  background: rgba(99,179,237,0.08);
-  border-color: rgba(99,179,237,0.2);
+#page-overview .center-title { font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 14px; }
+#page-overview .center-3col { display: grid; grid-template-columns: 1fr 240px 1fr; justify-content: space-between; gap: 14px; align-items: start; width: 100%; }
+#page-overview .center-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+#page-overview .center-side-title { font-size: 11px; color: #94a3b8; letter-spacing: 1px; margin-bottom: 2px; text-align: left; }
+#page-overview .center-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+#page-overview .center-stat { padding: 10px 6px; background: rgba(255,255,255,0.03); border: 1px solid transparent; border-radius: 8px; text-align: center; transition: background 0.2s; }
+#page-overview .center-stat:hover { background: rgba(99,179,237,0.06); }
+#page-overview .center-stat .v { font-size: 18px; font-weight: 700; line-height: 1; }
+#page-overview .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
+#page-overview .center-rings { position: relative; width: 240px; height: 240px; margin: 0 auto; }
+@media (max-width: 900px) {
+  #page-overview .center-3col { grid-template-columns: 1fr; }
+  #page-overview .center-rings { margin: 0 auto 12px; }
 }
-#page-overview .cockpit-stat .v {
-  font-size: 16px; font-weight: 700; line-height: 1.2;
-  font-family: 'Helvetica Neue', Arial, sans-serif;
-  text-shadow: 0 0 12px currentColor;
-}
-#page-overview .cockpit-stat .l {
-  font-size: 9px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px;
-}
-#page-overview .cockpit-flow {
-  font-size: 12px; color: #cbd5e1;
-  padding: 8px 10px;
-  background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04));
-  border-left: 3px solid #34d399;
-  border-radius: 6px;
-}
-#page-overview .cockpit-flow b { color: #34d399; font-weight: 700; }
-#page-overview .cockpit-center { text-align: center; position: relative; }
-#page-overview .cockpit-center-title {
-  font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 12px;
-}
-#page-overview .cockpit-center-legend {
-  display: flex; justify-content: center; gap: 18px; margin-top: 8px;
-  font-size: 11px; color: #94a3b8; flex-wrap: wrap;
-}
-#page-overview .cockpit-center-legend i {
-  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-  margin-right: 4px; vertical-align: -1px;
-}
-/* 中央大数字（环图正中） */
+/* 环形图中央大数字 */
 #page-overview .center-metric {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   text-align: center; pointer-events: none;
 }
 #page-overview .center-metric .big {
-  font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: -1px;
+  font-size: 36px; font-weight: 800; line-height: 1; letter-spacing: -1px;
   background: linear-gradient(135deg, #60a5fa, #a78bfa);
   -webkit-background-clip: text; background-clip: text; color: transparent;
   text-shadow: 0 0 30px rgba(96,165,250,0.5);
 }
 #page-overview .center-metric .lbl {
-  font-size: 11px; color: #94a3b8; margin-top: 6px; letter-spacing: 1px;
+  font-size: 10px; color: #94a3b8; margin-top: 4px; letter-spacing: 1px;
 }
+
 /* 紧急预警条 */
-#page-overview .cockpit-alert {
-  margin-top: 14px; padding: 10px 14px;
-  border-radius: 6px; font-size: 12px;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-}
-#page-overview .cockpit-alert.warn {
+#page-overview .alert-strip {
+  margin-top: 14px;
+  padding: 10px 12px;
   background: linear-gradient(90deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05));
   border-left: 3px solid #ef4444;
-  color: #fca5a5;
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex; justify-content: space-between; align-items: center;
 }
-#page-overview .cockpit-alert.warn b { color: #ef4444; font-weight: 700; font-size: 16px; }
-#page-overview .cockpit-alert.ok {
-  background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04));
-  border-left: 3px solid #34d399;
-  color: #6ee7b7;
-}
-#page-overview .cockpit-alert.ok b { color: #34d399; font-weight: 700; }
+#page-overview .alert-strip .num { color: #ef4444; font-weight: 700; font-size: 16px; }
+#page-overview .alert-strip.green { background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04)); border-left-color: #34d399; }
+#page-overview .alert-strip.green .num { color: #34d399; }
 
-/* ===== 数据表格深色 ===== */
-#page-overview .data-table { font-size: 12px; width: 100%; border-collapse: separate; border-spacing: 0; }
-#page-overview .data-table th {
-  background: transparent; padding: 10px 12px; text-align: left; font-weight: 500;
-  color: #94a3b8; border-bottom: 1px solid rgba(99,179,237,0.15);
-  font-size: 11px; letter-spacing: 0.5px; white-space: nowrap;
-}
-#page-overview .data-table td {
-  padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #cbd5e1;
-}
-#page-overview .data-table tr:hover td { background: rgba(99,179,237,0.06); }
-#page-overview .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-#page-overview .data-table .rate-good { color: #34d399 !important; font-weight: 600; }
-#page-overview .data-table .rate-warn { color: #fbbf24 !important; font-weight: 600; }
-#page-overview .data-table .rate-bad { color: #f87171 !important; font-weight: 600; }
+/* 图表容器 */
+#page-overview .chart-area { width: 100%; height: 220px; }
 
-/* ===== Badge 深色 ===== */
-#page-overview .badge.badge-red { background: rgba(239,68,68,0.2); color: #fca5a5; }
-#page-overview .badge.badge-orange { background: rgba(249,115,22,0.2); color: #fdba74; }
-#page-overview .badge.badge-green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
+/* 底部 2 列网格 */
+#page-overview .bottom-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
+@media (max-width: 1100px) { #page-overview .bottom-grid { grid-template-columns: 1fr; } }
 
-/* ===== Filter bar 深色 ===== */
-#page-overview .filter-bar {
-  background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45));
-  border: 1px solid rgba(99,179,237,0.18);
-  padding: 12px 16px; border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
-  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
-  margin-bottom: 16px;
+/* 表格深色 */
+#page-overview table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#page-overview th { text-align: left; padding: 10px 12px; font-weight: 500; color: #94a3b8;
+  border-bottom: 1px solid rgba(99,179,237,0.15); font-size: 11px; letter-spacing: 0.5px;
 }
-#page-overview .filter-bar select, #page-overview .filter-bar input {
-  background: rgba(15,23,42,0.7);
-  border: 1px solid rgba(99,179,237,0.25);
-  color: #e2e8f0;
-  padding: 6px 12px; border-radius: 6px;
-  font-size: 12px; outline: none;
-}
-#page-overview .filter-bar label { color: #94a3b8; font-size: 12px; }
+#page-overview td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #cbd5e1; }
+#page-overview tbody tr:hover { background: rgba(99,179,237,0.06); }
+#page-overview .num { text-align: right; font-variant-numeric: tabular-nums; }
+#page-overview .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+#page-overview .pill.red { background: rgba(239,68,68,0.2); color: #fca5a5; }
+#page-overview .pill.orange { background: rgba(249,115,22,0.2); color: #fdba74; }
+#page-overview .pill.green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
+#page-overview .pill.blue { background: rgba(96,165,250,0.2); color: #93c5fd; }
 
-/* ===== Button 深色 ===== */
-#page-overview .btn-export {
-  background: rgba(99,179,237,0.15) !important;
-  color: #93c5fd !important;
-  border: 1px solid rgba(99,179,237,0.3) !important;
-}
-#page-overview .btn-export:hover {
-  background: rgba(99,179,237,0.25) !important;
-  border-color: rgba(99,179,237,0.5) !important;
-}
+/* ECharts canvas 内文字兜底 */
+#page-overview canvas { display: block; }
 
-/* ===== Mindmap 3 列网格 ===== */
-#page-overview .mindmap-grid {
-  display: grid; grid-template-columns: 360px 1fr 360px; gap: 16px; margin-bottom: 18px;
-}
-
-/* ===== Bottom 2 列网格 ===== */
-#page-overview .bottom-grid {
-  display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px;
-}
-
-/* ===== Top 5 mini 表 pill 深色 ===== */
-#page-overview .top5-table td { padding: 8px 10px; font-size: 11px; }
-#page-overview .top5-table .pill {
-  display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
-}
-#page-overview .top5-table .pill.red { background: rgba(239,68,68,0.2); color: #fca5a5; }
-#page-overview .top5-table .pill.orange { background: rgba(249,115,22,0.2); color: #fdba74; }
-#page-overview .top5-table .pill.green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
-
-/* ===== RDC 选择器 chip 深色 ===== */
-#page-overview .rdc-checkbox-chip {
-  background: rgba(15,23,42,0.5) !important;
-  border: 1px solid rgba(99,179,237,0.25) !important;
-  color: #94a3b8 !important;
-}
-#page-overview .rdc-checkbox-chip:hover { border-color: #60a5fa !important; color: #e2e8f0 !important; }
-
-/* ===== Chart 容器 ===== */
-#page-overview .chart-container { background: transparent; }
-
-/* ===== 响应式 ===== */
-@media (max-width: 1400px) {
-  #page-overview .mindmap-grid { grid-template-columns: 1fr 1fr; }
-  #page-overview .mindmap-center-slot { grid-column: 1 / -1; order: -1; }
-}
-@media (max-width: 1100px) {
-  #page-overview .cockpit-3col { grid-template-columns: 1fr; }
-  #page-overview .cockpit-center { order: -1; }
-  #page-overview .mindmap-grid, #page-overview .bottom-grid { grid-template-columns: 1fr; }
-  #page-overview .kpi-row { grid-template-columns: repeat(3, 1fr); }
-}
-@media (max-width: 700px) {
-  #page-overview .kpi-row { grid-template-columns: repeat(2, 1fr); }
-}
-
-/* 已删 weekday 卡兜底 */
-#page-overview #chart-fulfill-weekday { display: none; }
+/* ========== /总览页驾驶舱主题 ========== */
 
 /* Table */
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
@@ -715,7 +614,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 51; // v51: 总览页驾驶舱样式彻底重建——删除 v49 全局 cockpit-*（浅色 var(--bg-card)残留导致白底）+ 删除 v50 不完整 #page-overview 覆盖，重写为单一作用域深色 CSS；新增 .center-metric 环图中央大数字
+const DB_VERSION = 52; // v52: 总览页 1:1 复刻 overview-preview.html 的完整 UI/配色/渲染结构（ov-header/KPI 6卡/mindmap-grid 三栏含中央大数字/bottom-grid 含 Top5 mini/heatmap/Top20 表）；删除 v49-v51 所有修补残留；5 个 ECharts option 与原版一致，仅 data 替换为 dataStore 真实聚合
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1709,7 +1608,7 @@ function renderFulfillChannelCheckboxes() {
 function getFulfillCheckedChannels() { return ['KA','经销商'].filter(function(ch) { return window._fulfillChannelChecked[ch]; }); }
 
 function renderOverview() {
-  setTitle('总览仪表板');
+  setTitle('总览仪表盘');
   const page = document.getElementById('page-overview');
   if (!page) return;
 
@@ -1724,7 +1623,6 @@ function renderOverview() {
   const affectedRdcs = rdcNamesForKpi.filter((rdc, i) => sData.some(d => d[rdcKeysForKpi[i]] > 0)).length;
 
   const allOrders = dataStore.orderDetail;
-  // 按全局月份过滤订单数据
   const monthOrders = (filters.dataMonth && filters.dataMonth !== 'all')
     ? allOrders.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth))
     : allOrders;
@@ -1735,11 +1633,8 @@ function renderOverview() {
   const dayRate = totalOrderAll > 0 ? totalFirstAll / totalOrderAll : 0;
 
   const dateLabel = filters.overviewDate || '最新日期';
-  const dateDisplay = filters.overviewDate ? '日期：' + filters.overviewDate : '最新日期';
-  const sortLabel = { rdcCount: '涉及RDC最多的', boxes: '缺货箱数最多的', amount: '缺货金额最高的', dcSupply: '按大仓供应排序的' };
-  const sortTitle = sortLabel[window._overviewShortSort] || '涉及RDC最多的';
 
-  // 构建日期选项列表（按月份过滤）
+  // 日期选项
   const dateSet = new Set();
   const shortageForDates = (filters.dataMonth && filters.dataMonth !== 'all')
     ? dataStore.shortage.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth))
@@ -1747,7 +1642,7 @@ function renderOverview() {
   shortageForDates.forEach(d => { if (d.dateStr) dateSet.add(d.dateStr); });
   const dateOptions = [...dateSet].sort().reverse();
 
-  // ===== 总览驾驶舱：订单流 / 客户库存 / RDC满足率（v49，全部真实数据聚合） =====
+  // 驾驶舱聚合（v52：1:1 复刻 overview-preview，仅数据替换为真实）
   const boxSpecOf = code => { const bs = window._boxSpec && window._boxSpec[String(code)]; return (bs && bs > 0) ? bs : null; };
   let orderBoxes = 0, firstBoxes = 0;
   const custSet = new Set(), brandSetC = new Set();
@@ -1755,7 +1650,6 @@ function renderOverview() {
   monthOrders.forEach(d => {
     const bs = boxSpecOf(d.skuCode);
     const ob = d.orderQty || 0, fb = d.firstDayQty || 0;
-    // 箱数换算：先按 SKU 除以各自箱规再加总，不能先聚合支数再除
     orderBoxes += bs ? ob / bs : ob;
     firstBoxes += bs ? fb / bs : fb;
     if (d.customerGroup) custSet.add(d.customerGroup);
@@ -1778,7 +1672,7 @@ function renderOverview() {
     return { rdc: r, rate: (a && a.orderQty > 0) ? a.fulfillQty / a.orderQty : null };
   });
 
-  // 提前聚合 SKU 缺货汇总，供 bottom-grid 右侧 Top 5 mini 表 + 下方 Top 20 排序表共用（v50 重构）
+  // SKU 缺货聚合
   const _skuAggMap = {};
   sData.forEach(d => {
     if (!_skuAggMap[d.materialCode]) {
@@ -1798,117 +1692,223 @@ function renderOverview() {
            '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
            '<td>' + d.rdcCount + '</td></tr>';
   }).join('');
+  const top20Skus = [...window._overviewShortList].sort((a,b) => b.rdcShortAmount - a.rdcShortAmount).slice(0, 20);
+  const top20RowHtml = top20Skus.map(d => {
+    const rdcPillCls = d.rdcCount >= 4 ? 'red' : (d.rdcCount >= 2 ? 'orange' : 'green');
+    const supplyTxt = String(d.dcSupply || '');
+    const supplyPillCls = supplyTxt.indexOf('紧张') >= 0 ? 'red' : (supplyTxt.indexOf('缺货') >= 0 ? 'orange' : 'green');
+    const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
+    return '<tr><td>' + d.materialCode + '</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.materialName || '') + '">' + (d.materialName || '') + '</td>' +
+           '<td>' + (d.brand || '') + '</td><td>' + (d.abcClass || '') + '</td>' +
+           '<td class="num">' + formatNum(d.rdcShortBoxes) + '</td>' +
+           '<td class="num">' + formatNum(d.rdcTransitTotal || 0) + '</td>' +
+           '<td class="num">' + formatMoney(d.rdcShortAmount) + '</td>' +
+           '<td class="num"><span class="pill ' + rdcPillCls + '">' + d.rdcCount + '</span></td>' +
+           '<td><span class="pill ' + supplyPillCls + '">' + supplyLabel + '</span></td></tr>';
+  }).join('');
 
   page.innerHTML = `
-    <div class="filter-bar">
-      <label>缺货日期：</label>
-      <select id="filter-overview-date" onchange="filters.overviewDate=this.value;renderOverview()" style="min-width:160px">
-        ${dateOptions.map(d => '<option value="'+d+'"'+(filters.overviewDate===d?' selected':'')+'>'+d+'</option>').join('')}
-      </select>
-      <span style="font-size:11px;color:#94a3b8;margin-left:auto">月度/日订单满足率口径为MTD；缺货指标截止至${dateLabel}</span>
+    <!-- 顶部 header -->
+    <div class="ov-header">
+      <div>
+        <h1>🚀 补货驾驶舱 · 总览</h1>
+        <div class="ov-sub">以订单数据为核心 · 深色驾驶舱风格 · 思维导图放射式信息架构</div>
+      </div>
+      <div class="ov-meta">
+        <span>缺货日期：</span>
+        <select onchange="filters.overviewDate=this.value;renderOverview()">
+          ${dateOptions.map(d => '<option value="'+d+'"'+(filters.overviewDate===d?' selected':'')+'>'+d+'</option>').join('')}
+        </select>
+        <span style="margin-left:8px;color:#94a3b8">月度/日满足率口径 MTD</span>
+      </div>
     </div>
+
+    <!-- 6 个 KPI 卡 -->
     <div class="kpi-row">
-      <div class="kpi-card blue"><div class="kpi-icon">📈</div><div class="kpi-label">月度订单满足率（MTD）</div><div class="kpi-value">${(monthFulfillRate*100).toFixed(1)}<span class="kpi-unit">%</span></div><div class="kpi-trend flat">— MTD</div></div>
-      <div class="kpi-card green"><div class="kpi-icon">⚡</div><div class="kpi-label">日订单满足率（MTD）</div><div class="kpi-value">${(dayRate*100).toFixed(1)}<span class="kpi-unit">%</span></div><div class="kpi-trend flat">— MTD</div></div>
-      <div class="kpi-card red"><div class="kpi-icon">💰</div><div class="kpi-label">缺货总金额</div><div class="kpi-value">${formatMoney(totalShortAmount)}</div><div class="kpi-trend flat">— 截止 ${dateLabel}</div></div>
-      <div class="kpi-card orange"><div class="kpi-icon">📦</div><div class="kpi-label">缺货总箱数</div><div class="kpi-value">${formatNum(totalShortBoxes)}<span class="kpi-unit">箱</span></div><div class="kpi-trend flat">— 截止 ${dateLabel}</div></div>
-      <div class="kpi-card teal"><div class="kpi-icon">🚚</div><div class="kpi-label">在途总箱数</div><div class="kpi-value">${formatNum(totalTransitBoxes)}<span class="kpi-unit">箱</span></div><div class="kpi-trend flat">— 截止 ${dateLabel}</div></div>
-      <div class="kpi-card purple"><div class="kpi-icon">🌐</div><div class="kpi-label">涉及 RDC 数</div><div class="kpi-value">${affectedRdcs}<span class="kpi-unit">个</span></div><div class="kpi-trend flat">— 截止 ${dateLabel}</div></div>
+      <div class="kpi-card blue">
+        <div class="kpi-icon">📈</div>
+        <div class="kpi-label">月度订单满足率（MTD）</div>
+        <div class="kpi-value">${(monthFulfillRate*100).toFixed(1)}<span class="kpi-unit">%</span></div>
+        <div class="kpi-trend flat">— MTD</div>
+      </div>
+      <div class="kpi-card green">
+        <div class="kpi-icon">⚡</div>
+        <div class="kpi-label">日订单满足率（MTD）</div>
+        <div class="kpi-value">${(dayRate*100).toFixed(1)}<span class="kpi-unit">%</span></div>
+        <div class="kpi-trend flat">— MTD</div>
+      </div>
+      <div class="kpi-card red">
+        <div class="kpi-icon">💰</div>
+        <div class="kpi-label">缺货总金额</div>
+        <div class="kpi-value">${formatMoney(totalShortAmount)}</div>
+        <div class="kpi-trend flat">— 截止 ${dateLabel}</div>
+      </div>
+      <div class="kpi-card orange">
+        <div class="kpi-icon">📦</div>
+        <div class="kpi-label">缺货总箱数</div>
+        <div class="kpi-value">${formatNum(totalShortBoxes)}<span class="kpi-unit">箱</span></div>
+        <div class="kpi-trend flat">— 截止 ${dateLabel}</div>
+      </div>
+      <div class="kpi-card teal">
+        <div class="kpi-icon">🚚</div>
+        <div class="kpi-label">在途总箱数</div>
+        <div class="kpi-value">${formatNum(totalTransitBoxes)}<span class="kpi-unit">箱</span></div>
+        <div class="kpi-trend flat">— 截止 ${dateLabel}</div>
+      </div>
+      <div class="kpi-card purple">
+        <div class="kpi-icon">🌐</div>
+        <div class="kpi-label">涉及 RDC 数</div>
+        <div class="kpi-value">${affectedRdcs}<span class="kpi-unit">个</span></div>
+        <div class="kpi-trend flat">— 截止 ${dateLabel}</div>
+      </div>
     </div>
+
+    <!-- 思维导图核心：订单流中央 + 4 个放射分支 -->
     <div class="mindmap-grid">
       <!-- 左：满足率趋势 -->
       <div class="card">
-        <div class="card-header"><span class="card-title">📈 日订单满足率趋势<span class="card-sub">近 7 个工作日</span></span></div>
-        ${renderOverviewRdcCheckboxes()}
-        <div class="chart-container" id="chart-fulfill-trend"></div>
+        <div class="card-title">📈 日订单满足率趋势<span class="card-sub">近 7 个工作日</span></div>
+        <div id="chart-trend" class="chart-area" style="height:240px"></div>
       </div>
-      <!-- 中：驾驶舱核心 -->
-      <div class="cockpit-card mindmap-center-slot">
-        <div class="cockpit-3col">
-          <div class="cockpit-side">
-            <div class="cockpit-side-title">📦 订单流（本月MTD）</div>
-            <div class="cockpit-stats">
-              <div class="cockpit-stat"><div class="v" style="color:#60a5fa">${formatNum(Math.round(orderBoxes))}</div><div class="l">订单箱数</div></div>
-              <div class="cockpit-stat"><div class="v" style="color:#34d399">${formatNum(Math.round(firstBoxes))}</div><div class="l">首日已发(箱)</div></div>
-              <div class="cockpit-stat"><div class="v" style="color:#f97316">${formatNum(Math.round(waitBoxes))}</div><div class="l">待发(箱)</div></div>
-              <div class="cockpit-stat"><div class="v" style="color:#ef4444">${urgentSkus.size}</div><div class="l">紧急SKU(大仓缺货/紧张)</div></div>
-            </div>
-            <div class="cockpit-flow">↗ 补货流：在途 <b>${formatNum(totalTransitBoxes)}</b> 箱（截止 ${dateLabel}）</div>
-          </div>
-          <div class="cockpit-center">
-            <div class="cockpit-center-title">全国订单满足率</div>
-            <div style="position:relative;display:inline-block;width:100%;max-width:250px">
-              <div id="chart-cockpit-core" style="width:100%;max-width:250px;height:250px;margin:0 auto"></div>
-              <div class="center-metric">
-                <div class="big">${(dayRate*100).toFixed(1)}%</div>
-                <div class="lbl">日满足率</div>
+
+      <!-- 中央：订单流核心（双层环形 + 左右数据发散） -->
+      <div class="mindmap-center mindmap-center-slot">
+        <div class="center-title">订 单 流 全 景</div>
+        <div class="center-3col">
+          <!-- 左列：订单流 4 个数据点（2×2 网格） -->
+          <div class="center-side">
+            <div class="center-side-title">📦 订单流</div>
+            <div class="center-stats">
+              <div class="center-stat">
+                <div class="v" style="color:#60a5fa">${formatNum(Math.round(orderBoxes))}</div>
+                <div class="l">订单箱数</div>
+              </div>
+              <div class="center-stat">
+                <div class="v" style="color:#34d399">${formatNum(Math.round(firstBoxes))}</div>
+                <div class="l">首日已发</div>
+              </div>
+              <div class="center-stat">
+                <div class="v" style="color:#f97316">${formatNum(Math.round(waitBoxes))}</div>
+                <div class="l">待发</div>
+              </div>
+              <div class="center-stat">
+                <div class="v" style="color:#ef4444">${urgentSkus.size}</div>
+                <div class="l">紧急SKU</div>
               </div>
             </div>
-            <div class="cockpit-center-legend">
-              <span><i style="background:#60a5fa"></i>月满足率 ${(monthFulfillRate*100).toFixed(1)}%</span>
-              <span><i style="background:#34d399"></i>日满足率 ${(dayRate*100).toFixed(1)}%</span>
+            <div style="margin-top:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(52,211,153,0.15),rgba(52,211,153,0.04));border-left:3px solid #34d399;border-radius:6px">
+              <div style="font-size:10px;color:#6ee7b7;letter-spacing:1px">↗ 补货流（在途）</div>
+              <div style="font-size:16px;color:#34d399;font-weight:700;margin-top:2px">${formatNum(totalTransitBoxes)} 箱</div>
             </div>
           </div>
-          <div class="cockpit-side">
-            <div class="cockpit-side-title">🌐 客户 / 库存</div>
-            <div class="cockpit-stats">
-              <div class="cockpit-stat"><div class="v" style="color:#c084fc">${custSet.size}</div><div class="l">客户组数</div></div>
-              <div class="cockpit-stat"><div class="v" style="color:#2dd4bf">${brandSetC.size}</div><div class="l">品牌数</div></div>
-              <div class="cockpit-stat"><div class="v" style="color:#fca5a5">${sData.length}</div><div class="l">缺货SKU(截止${dateLabel})</div></div>
-              <div class="cockpit-stat"><div class="v" style="color:#93c5fd">${transitSkuCount}</div><div class="l">在途SKU</div></div>
+
+          <!-- 中列：双层环形 + 中央大数字 -->
+          <div class="center-rings">
+            <div id="chart-core" style="width:240px;height:240px"></div>
+            <div class="center-metric">
+              <div class="big">${(dayRate*100).toFixed(1)}%</div>
+              <div class="lbl">日满足率</div>
             </div>
-            <div class="cockpit-flow">↘ 异常流：缺货金额 <b>${formatMoney(totalShortAmount)}</b> · 涉及 <b>${affectedRdcs}</b> 个RDC</div>
+          </div>
+
+          <!-- 右列：客户/库存 4 个数据点（2×2 网格） -->
+          <div class="center-side">
+            <div class="center-side-title">🌐 客户/库存</div>
+            <div class="center-stats">
+              <div class="center-stat" style="background:rgba(96,165,250,0.08)">
+                <div class="v" style="color:#93c5fd">${custSet.size}</div>
+                <div class="l">客户组数</div>
+              </div>
+              <div class="center-stat" style="background:rgba(168,85,247,0.08)">
+                <div class="v" style="color:#c4b5fd">${brandSetC.size}</div>
+                <div class="l">品牌数</div>
+              </div>
+              <div class="center-stat" style="background:rgba(239,68,68,0.08)">
+                <div class="v" style="color:#fca5a5">${sData.length}</div>
+                <div class="l">缺货SKU</div>
+              </div>
+              <div class="center-stat" style="background:rgba(52,211,153,0.08)">
+                <div class="v" style="color:#6ee7b7">${transitSkuCount}</div>
+                <div class="l">在途SKU</div>
+              </div>
+            </div>
+            <div style="margin-top:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(239,68,68,0.15),rgba(239,68,68,0.04));border-left:3px solid #ef4444;border-radius:6px">
+              <div style="font-size:10px;color:#fca5a5;letter-spacing:1px">↘ 异常流（缺货金额）</div>
+              <div style="font-size:16px;color:#ef4444;font-weight:700;margin-top:2px">${formatMoney(totalShortAmount)}</div>
+            </div>
           </div>
         </div>
-        <div class="cockpit-alert ${urgentSkus.size > 0 ? 'warn' : 'ok'}">${urgentSkus.size > 0 ? '🔥' : '✅'} 紧急缺货预警：<b>${urgentSkus.size}</b> 个SKU 大仓供应为「缺货/紧张」（${dateLabel}）${urgentSkus.size > 0 ? ' · 详见下方缺货概览' : ''}</div>
+        <div class="alert-strip ${urgentSkus.size > 0 ? '' : 'green'}">
+          <span>🔥 紧急缺货预警</span>
+          <span class="num">${urgentSkus.size} 个 SKU</span>
+        </div>
       </div>
+
       <!-- 右：RDC 缺货金额对比 -->
       <div class="card">
-        <div class="card-header"><span class="card-title">🏢 RDC 缺货金额对比<span class="card-sub">截至 ${dateLabel}</span></span></div>
-        <div class="chart-container" id="chart-rdc-short-amount"></div>
+        <div class="card-title">🏢 RDC 缺货金额对比<span class="card-sub">截至 ${dateLabel}</span></div>
+        <div id="chart-rdc" class="chart-area" style="height:240px"></div>
       </div>
     </div>
+
+    <!-- 第二排：渠道 + Top 5 mini -->
     <div class="bottom-grid">
-      <!-- 左：渠道订单 -->
       <div class="card">
-        <div class="card-header"><span class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">MTD 累计</span></span></div>
-        <div style="padding:8px 12px 0">
-          <select id="pie-rdc-filter" onchange="window._pieRdc=this.value;renderOverview()" style="padding:4px 8px;border:1px solid rgba(99,179,237,0.25);border-radius:6px;font-size:12px;background:rgba(15,23,42,0.7);color:#e2e8f0">
-            <option value="all" ${(window._pieRdc||'all')==='all'?'selected':''}>全部RDC</option>
-            ${RDC_LIST.map(r => '<option value="'+r+'"' + ((window._pieRdc||'')===r?' selected':'') + '>'+r+'</option>').join('')}
-          </select>
-        </div>
-        <div class="chart-container" id="chart-channel-pie-overview"></div>
+        <div class="card-title">🔗 渠道订单量分布（含客户组细分）<span class="card-sub">MTD 累计</span></div>
+        <div id="chart-channel" class="chart-area" style="height:280px"></div>
       </div>
-      <!-- 右：Top 5 缺货 mini 表 -->
       <div class="card">
-        <div class="card-header"><span class="card-title">🔥 Top 5 缺货 SKU<span class="card-sub">按金额排序</span></span></div>
-        ${top5Skus.length > 0 ? '<table class="data-table top5-table"><thead><tr><th style="text-align:left">物料</th><th class="num">缺货箱</th><th class="num">缺货金额</th><th>RDC</th></tr></thead><tbody>' + top5RowHtml + '</tbody></table>' : '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:12px">暂无缺货数据</div>'}
+        <div class="card-title">🔥 Top 5 缺货 SKU<span class="card-sub">按金额排序</span></div>
+        <table>
+          <thead><tr><th style="text-align:left">物料</th><th class="num">缺货箱</th><th class="num">缺货金额</th><th>RDC</th></tr></thead>
+          <tbody>
+            ${top5Skus.length > 0 ? top5RowHtml : '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
+          </tbody>
+        </table>
       </div>
     </div>
+
+    <!-- 品牌 × RDC 热力图 -->
     <div class="card">
-      <div class="card-header"><span class="card-title">🌡️ 品牌 × RDC 月度订单满足率矩阵</span></div>
-      <div class="chart-container" id="chart-brand-rdc-heat"></div>
+      <div class="card-title">🌡️ 品牌 × RDC 月度满足率矩阵</div>
+      <div id="chart-heat" class="chart-area" style="height:280px"></div>
     </div>
+
+    <!-- 底部 Top 20 物料 -->
     <div class="card">
-      <div class="card-header"><span class="card-title">📋 缺货概览 - ${sortTitle}Top物料 (${dateLabel})</span></div>
-      <div class="table-wrap" id="table-shortage-overview"></div>
+      <div class="card-title">📋 Top 20 缺货物料（订单核心）</div>
+      <table>
+        <thead><tr>
+          <th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th>
+          <th class="num">缺货箱数</th><th class="num">在途箱数</th>
+          <th class="num">缺货金额</th><th class="num">涉及RDC</th><th>大仓供应</th>
+        </tr></thead>
+        <tbody>
+          ${top20Skus.length > 0 ? top20RowHtml : '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:24px">暂无缺货数据</td></tr>'}
+        </tbody>
+      </table>
     </div>
   `;
 
-  // 驾驶舱：双层环形满足率图（外环月满足率 / 内环日满足率）+ 6 个 RDC 真实满足率标签
-  const chartCore = initChart('chart-cockpit-core');
+  // ============== 5 个 ECharts（option 与 overview-preview 一致，仅 data 替换为真实） ==============
+
+  // 1. 订单流核心：双层环形（外环月满足率 + 内环日满足率）+ 6 RDC 真实满足率标签环外
+  const chartCore = initChart('chart-core');
   if (chartCore) {
     const mRate = Math.round(monthFulfillRate * 100);
     const dRate = Math.round(dayRate * 100);
-    const cBlue = cssVar('--color-blue') || '#2563EB';
-    const cGreen = cssVar('--color-green') || '#10B981';
     const labelPos = [
-      { left: '2%', top: '2%' }, { right: '2%', top: '2%' }, { left: '50%', top: '0%' },
-      { left: '2%', bottom: '2%' }, { right: '2%', bottom: '2%' }, { right: '2%', top: '50%' }
+      { left: '4%', top: '6%' }, { right: '4%', top: '6%' }, { left: '50%', top: '2%' },
+      { left: '4%', bottom: '6%' }, { right: '4%', bottom: '6%' }, { right: '4%', top: '50%' }
     ];
     chartCore.setOption({
-      tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => '<strong>' + p.name + '</strong><br/>' + p.value + '%' },
+      tooltip: {
+        trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+        formatter: function(p) {
+          return '<div style="font-weight:600">' + p.name + '</div>' +
+                 '<div style="margin-top:4px">数值：' + p.value + (p.name.indexOf('率') >= 0 ? '%' : '') + '</div>';
+        }
+      },
       graphic: rdcRateLabel.map((it, i) => {
         const pos = labelPos[i];
         const obj = { type: 'text', style: { text: it.rdc.replace('RDC','') + ' ' + (it.rate == null ? '—' : (it.rate*100).toFixed(0) + '%'), fill: getRDCColor(it.rdc), font: 'bold 12px sans-serif' } };
@@ -1918,284 +1918,168 @@ function renderOverview() {
       series: [
         { type: 'pie', radius: ['88%','100%'], startAngle: 90, label: { show: false },
           data: [
-            { value: mRate, name: '月满足率', itemStyle: { color: cBlue } },
-            { value: 100 - mRate, name: '月缺口', itemStyle: { color: 'rgba(148,163,184,0.14)' } }
-          ] },
+            { value: mRate, name: '月满足率', itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 1, colorStops: [{ offset: 0, color: '#60a5fa' }, { offset: 1, color: '#a78bfa' }] } } },
+            { value: 100 - mRate, name: '月缺口', itemStyle: { color: 'rgba(99,179,237,0.06)' } }
+          ],
+          emphasis: { scale: true, scaleSize: 4 }
+        },
         { type: 'pie', radius: ['70%','82%'], startAngle: 90, label: { show: false },
           data: [
-            { value: dRate, name: '日满足率', itemStyle: { color: cGreen } },
-            { value: 100 - dRate, name: '日缺口', itemStyle: { color: 'rgba(148,163,184,0.12)' } }
-          ] },
+            { value: dRate, name: '日满足率', itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 1, colorStops: [{ offset: 0, color: '#34d399' }, { offset: 1, color: '#10b981' }] } } },
+            { value: 100 - dRate, name: '日缺口', itemStyle: { color: 'rgba(52,211,153,0.06)' } }
+          ],
+          emphasis: { scale: true, scaleSize: 4 }
+        },
         { type: 'pie', radius: ['0%','66%'], startAngle: 90, label: { show: false },
-          data: [ { value: 1, name: '核心', itemStyle: { color: 'rgba(148,163,184,0.08)' } } ] }
+          data: [ { value: 1, name: '核心背景', itemStyle: { color: 'rgba(15,23,42,0.4)' } } ]
+        }
       ]
     });
   }
 
-  // Chart 1: Daily fulfillment trend (按月份过滤)
-  let daily = (filters.dataMonth && filters.dataMonth !== 'all')
-    ? dataStore.overall.dailyFulfill.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth))
-    : dataStore.overall.dailyFulfill;
-  // 如果 overall.dailyFulfill 为空，从 orderDetail 计算日趋势
-  if (daily.length === 0 && dataStore.orderDetail.length > 0) {
-    const dayMap = {};
-    dataStore.orderDetail.forEach(d => {
-      if (!d.dateStr || !d.warehouse) return;
-      const monthMatch = filters.dataMonth && filters.dataMonth !== 'all' ? d.dateStr.startsWith(filters.dataMonth) : true;
-      if (!monthMatch) return;
-      if (!dayMap[d.dateStr]) dayMap[d.dateStr] = {};
-      if (!dayMap[d.dateStr][d.warehouse]) dayMap[d.dateStr][d.warehouse] = { orderQty: 0, firstDayQty: 0 };
-      dayMap[d.dateStr][d.warehouse].orderQty += d.orderQty;
-      dayMap[d.dateStr][d.warehouse].firstDayQty += d.firstDayQty;
-    });
-    daily = Object.keys(dayMap).sort().map(dateStr => {
-      const rdcMap = dayMap[dateStr];
-      return {
-        dateStr,
-        huanan: (rdcMap['华南RDC'] && rdcMap['华南RDC'].orderQty > 0) ? rdcMap['华南RDC'].firstDayQty / rdcMap['华南RDC'].orderQty : null,
-        huabei: (rdcMap['华北RDC'] && rdcMap['华北RDC'].orderQty > 0) ? rdcMap['华北RDC'].firstDayQty / rdcMap['华北RDC'].orderQty : null,        dongbei: (rdcMap['东北RDC'] && rdcMap['东北RDC'].orderQty > 0) ? rdcMap['东北RDC'].firstDayQty / rdcMap['东北RDC'].orderQty : null,
-        xibei: (rdcMap['西北RDC'] && rdcMap['西北RDC'].orderQty > 0) ? rdcMap['西北RDC'].firstDayQty / rdcMap['西北RDC'].orderQty : null,
-        huazhong: (rdcMap['华中RDC'] && rdcMap['华中RDC'].orderQty > 0) ? rdcMap['华中RDC'].firstDayQty / rdcMap['华中RDC'].orderQty : null,
-        xinan: (rdcMap['西南RDC'] && rdcMap['西南RDC'].orderQty > 0) ? rdcMap['西南RDC'].firstDayQty / rdcMap['西南RDC'].orderQty : null
-      };
-    });
-  }
-  // 过滤周末和国定假日（与业务提报表口径一致）
-  daily = daily.filter(d => isWorkday(d.dateStr));
-  if (daily.length > 0) {
-    const rdcKeys = ['huanan','huabei','dongbei','xibei','huazhong','xinan'];
-    const activeRDCs = getOverviewCheckedRDCs();
-    const chart1 = initChart('chart-fulfill-trend');
-    const dates = daily.map(d => d.dateStr);
-    chart1.setOption({
-      darkMode: true,
-      tooltip: { 
-        trigger: 'axis',
-        confine: true,
-        textStyle: { fontSize: 11 },
-        position: function(point, params, dom, rect, size) {
-          // 默认显示在鼠标下方，空间不足则显示在上方
-          const below = point[1] + 18;
-          const fitsBelow = below + size.contentSize[1] + 10 < size.viewSize[1];
-          return { left: Math.min(point[0] + 10, size.viewSize[0] - size.contentSize[0] - 10), top: fitsBelow ? below : point[1] - size.contentSize[1] - 18 };
-        },
-        formatter: function(params) {
-          const dateStr = params[0].axisValue;
-          let html = '<strong>' + dateStr + '</strong>';
-          params.forEach(p => {
-            const rdc = p.seriesName;
-            const rate = (p.value * 100).toFixed(1) + '%';
-            html += '<div style="margin-top:6px"><strong>' + rdc + '：' + rate + '</strong></div>';
-            const skus = getTopFirstDayShortSKUs(dateStr, rdc, 5);
-            html += buildTopShortTipTable(skus, '订单缺口', function(s, info){ if (!info.boxSpec || !s.gap) return '—'; const b = s.gap / info.boxSpec; return b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱'; }, rdc);
-          });
-          return html;
-        }
-      },
-      legend: { data: activeRDCs, type: 'scroll', top: 5, left: 10, right: 10, itemGap: 16, textStyle: { fontSize: 11 }, height: 45, pageIconSize: 10, pageButtonGap: 5, pageIconColor: '#2563EB', pageIconInactiveColor: '#94a3b8', pageTextStyle: { fontSize: 10 } },
-      grid: { left: 55, right: 20, top: 55, bottom: 60 },
-      xAxis: { type: 'category', data: dates, axisLabel: { rotate: 45, fontSize: 10, interval: Math.max(0, Math.floor(dates.length / 10) - 1) }, boundaryGap: true },
-      yAxis: { type: 'value', min: 0, max: 1.03, axisLabel: { formatter: v => (v*100).toFixed(0)+'%' } },
-      series: activeRDCs.map((rdc, idx) => {
-        const key = rdcKeys[RDC_LIST.indexOf(rdc)];
-        return { name: rdc, type: 'line', data: daily.map(d => d[key]), smooth: true, symbol: 'none', lineStyle: { width: 2 }, color: getRDCColor(rdc) };
-      })
-    });
+  // 2. 日订单满足率趋势（近 7 个工作日，KA + 经销商）
+  const trendDayMap = {};
+  monthOrders.forEach(d => {
+    if (!d.dateStr || !d.channel) return;
+    if (d.channel !== 'KA' && d.channel !== '经销商') return;
+    if (!isWorkday(d.dateStr)) return;
+    const key = d.dateStr;
+    if (!trendDayMap[key]) trendDayMap[key] = { ka: { orderQty: 0, firstQty: 0 }, jx: { orderQty: 0, firstQty: 0 } };
+    const bucket = d.channel === 'KA' ? trendDayMap[key].ka : trendDayMap[key].jx;
+    bucket.orderQty += d.orderQty || 0;
+    bucket.firstQty += d.firstDayQty || 0;
+  });
+  const trendDates = Object.keys(trendDayMap).sort();
+  const trendLast7 = trendDates.slice(-7);
+  if (trendLast7.length > 0) {
+    const chartTrend = initChart('chart-trend');
+    if (chartTrend) {
+      const kaData = trendLast7.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
+      const jxData = trendLast7.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
+      chartTrend.setOption({
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+        legend: { data: ['KA 满足率', '经销商 满足率'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0 },
+        grid: { left: 50, right: 20, top: 35, bottom: 30 },
+        xAxis: { type: 'category', data: trendLast7.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
+        yAxis: { type: 'value', min: 0.7, max: 1, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => (v*100).toFixed(0)+'%' } },
+        series: [
+          { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
+          { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
+        ]
+      });
+    }
   }
 
-  // Chart 2: RDC shortage amount
-  const rdcNames = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
-  const rdcKeys = ['huananShort','huabeiShort','dongbeiShort','xibeiShort','huazhongShort','xinanShort'];
-  const rdcAmounts = rdcNames.map((rdc, i) => {
-    return sData.filter(d => d[rdcKeys[i]] > 0).reduce((s, d) => {
-      const ratio = d.rdcShortBoxes > 0 ? d[rdcKeys[i]] / d.rdcShortBoxes : 0;
-      return s + d.rdcShortAmount * ratio;
+  // 3. RDC 缺货金额对比（bar）
+  const rdcAmounts = RDC_LIST.map((rdc, i) => {
+    const key = rdcKeysForKpi[i];
+    return sData.filter(d => d[key] > 0).reduce((sum, d) => {
+      const ratio = d.rdcShortBoxes > 0 ? d[key] / d.rdcShortBoxes : 0;
+      return sum + d.rdcShortAmount * ratio;
     }, 0);
   });
-  const chart2 = initChart('chart-rdc-short-amount');
-  chart2.setOption({
-    darkMode: true,
-    tooltip: {
-      trigger: 'axis',
-      confine: true,
-      textStyle: { fontSize: 11 },
-      position: function(point, params, dom, rect, size) {
-        const below = point[1] + 18;
-        const fitsBelow = below + size.contentSize[1] + 10 < size.viewSize[1];
-        return { left: Math.min(point[0] + 10, size.viewSize[0] - size.contentSize[0] - 10), top: fitsBelow ? below : point[1] - size.contentSize[1] - 18 };
-      },
-      formatter: function(p) {
-        const rdcName = p[0].name;
-        const rdcKeyMap = {'华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort'};
-        const rdcKey = rdcKeyMap[rdcName];
-        let html = '<strong>' + rdcName + '</strong><br/>缺货金额：¥' + p[0].value.toLocaleString();
-        const skus = getTopShortageAmountSKUsByRDC(filters.overviewDate, rdcKey, 5);
-        html += buildTopShortTipTable(skus, '缺货金额', function(s, info){ return '¥' + formatNum(s.amount) + '<br/><span class="muted">' + formatNum(s.boxes) + '箱</span>'; }, rdcName);
-        return html;
-      }
-    },
-    grid: { left: 100, right: 30, top: 10, bottom: 20 },
-    xAxis: { type: 'value', axisLabel: { formatter: v => '¥'+(v/10000).toFixed(0)+'万' } },
-    yAxis: { type: 'category', data: rdcNames, inverse: true },
-    series: [{ type: 'bar', data: rdcAmounts, itemStyle: { color: new echarts.graphic.LinearGradient(0,0,1,0,[{offset:0,color:'#FEE2E2'},{offset:1,color:'#EF4444'}]) }, label: { show: true, position: 'right', formatter: p => '¥'+(p.value/10000).toFixed(1)+'万', fontSize: 11 } }]
+  const chartRdc = initChart('chart-rdc');
+  if (chartRdc) {
+    chartRdc.setOption({
+      tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' } },
+      grid: { left: 60, right: 30, top: 10, bottom: 30 },
+      xAxis: { type: 'value', axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => '¥'+(v/10000).toFixed(0)+'万' } },
+      yAxis: { type: 'category', data: RDC_LIST.map(r => r.replace('RDC','')), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#cbd5e1', fontSize: 11 } },
+      series: [{
+        type: 'bar',
+        data: rdcAmounts.map(v => ({
+          value: v,
+          itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: '#7f1d1d' }, { offset: 1, color: '#ef4444' }] }, borderRadius: [0, 4, 4, 0] }
+        })),
+        label: { show: true, position: 'right', color: '#fca5a5', fontSize: 11, formatter: p => '¥'+(p.value/10000).toFixed(1)+'万' }
+      }]
+    });
+  }
+
+  // 4. 渠道订单量分布（环形饼图 + 客户组细分 tooltip）
+  const chMap = {};
+  monthOrders.forEach(d => {
+    const ch = d.channel || '其他';
+    if (!chMap[ch]) chMap[ch] = { orderQty: 0, firstQty: 0, groups: {} };
+    chMap[ch].orderQty += d.orderQty || 0;
+    chMap[ch].firstQty += d.firstDayQty || 0;
+    const cg = d.customerGroup || '未知';
+    if (!chMap[ch].groups[cg]) chMap[ch].groups[cg] = { orderQty: 0, firstQty: 0 };
+    chMap[ch].groups[cg].orderQty += d.orderQty || 0;
+    chMap[ch].groups[cg].firstQty += d.firstDayQty || 0;
   });
+  const channelData = Object.entries(chMap).map(([name, info]) => ({ name, value: info.orderQty }));
+  const channelColors = { 'KA': '#60a5fa', 'KA直营': '#60a5fa', '经销商': '#34d399', '新渠道': '#f97316' };
+  const chartChannel = initChart('chart-channel');
+  if (chartChannel) {
+    chartChannel.setOption({
+      tooltip: {
+        trigger: 'item', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+        formatter: function(p) {
+          const info = chMap[p.name] || { orderQty: p.value, groups: {} };
+          const groupRows = Object.entries(info.groups || {}).sort((a,b) => b[1].orderQty - a[1].orderQty).slice(0, 8);
+          let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + p.name + '（总量：' + formatNum(p.value) + '支）</div>';
+          html += '<table style="font-size:11px;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid #334155"><td style="padding:2px 6px;color:#94a3b8">客户组</td><td style="padding:2px 6px;text-align:right;color:#94a3b8">订单量</td><td style="padding:2px 6px;text-align:right;color:#94a3b8">日满足率</td></tr>';
+          groupRows.forEach(([cg, g]) => {
+            const rate = g.orderQty > 0 ? (g.firstQty / g.orderQty * 100).toFixed(1) : '0.0';
+            html += '<tr><td style="padding:2px 6px">' + cg + '</td><td style="padding:2px 6px;text-align:right">' + formatNum(g.orderQty) + '</td><td style="padding:2px 6px;text-align:right">' + rate + '%</td></tr>';
+          });
+          html += '</table>';
+          return html;
+        },
+        extraCssText: 'max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.4);border-radius:8px;padding:10px 12px'
+      },
+      legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { color: '#cbd5e1', fontSize: 11 }, itemWidth: 12, itemHeight: 12 },
+      series: [{
+        type: 'pie',
+        radius: ['45%', '70%'],
+        center: ['38%', '50%'],
+        label: { color: '#e2e8f0', formatter: '{b}\n{d}%', fontSize: 11 },
+        labelLine: { lineStyle: { color: '#475569' } },
+        itemStyle: { borderColor: '#0a0e27', borderWidth: 2 },
+        data: channelData.map(d => ({ ...d, itemStyle: { color: channelColors[d.name] || '#a78bfa' } }))
+      }]
+    });
+  }
 
-  // Chart 3: Brand x RDC heatmap - dynamic from orderDetail by month
-  const monthFilter = filters.dataMonth && filters.dataMonth !== 'all';
-  const monthOrderData = monthFilter
-    ? dataStore.orderDetail.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth))
-    : dataStore.orderDetail;
-
-  // Build brand x RDC fulfillment rate from orderDetail
+  // 5. 品牌 × RDC 月度满足率矩阵（热力图）
   const brandRdcMap = {};
-  monthOrderData.forEach(d => {
+  monthOrders.forEach(d => {
     if (!d.brand || !d.warehouse) return;
     const key = d.brand + '|' + d.warehouse;
     if (!brandRdcMap[key]) brandRdcMap[key] = { orderQty: 0, fulfillQty: 0 };
-    brandRdcMap[key].orderQty += d.orderQty;
-    brandRdcMap[key].fulfillQty += d.totalFulfillQty;
+    brandRdcMap[key].orderQty += d.orderQty || 0;
+    brandRdcMap[key].fulfillQty += d.totalFulfillQty || 0;
   });
-
-  const brandSet = new Set();
-  Object.keys(brandRdcMap).forEach(k => brandSet.add(k.split('|')[0]));
-  const brands = [...brandSet].sort();
-  const rdck = ['huanan','huabei','dongbei','xibei','huazhong','xinan'];
+  const heatBrands = [...new Set(Object.keys(brandRdcMap).map(k => k.split('|')[0]))].sort();
   const heatData = [];
-  brands.forEach((b, bi) => {
-    rdck.forEach((rk, ri) => {
-      const rdcName = RDC_LIST[ri];
-      const d = brandRdcMap[b + '|' + rdcName];
-      const rate = (d && d.orderQty > 0) ? d.fulfillQty / d.orderQty : 0;
-      heatData.push([ri, bi, rate]);
-    });
-  });
-
-  if (brands.length > 0) {
-    const chart3 = initChart('chart-brand-rdc-heat');
-    chart3.setOption({
-      darkMode: true,
-      tooltip: {
-        confine: true,
-        textStyle: { fontSize: 11 },
+  heatBrands.forEach((b, bi) => RDC_LIST.forEach((r, ri) => {
+    const d = brandRdcMap[b + '|' + r];
+    const rate = (d && d.orderQty > 0) ? d.fulfillQty / d.orderQty : 0;
+    heatData.push([ri, bi, rate]);
+  }));
+  const chartHeat = initChart('chart-heat');
+  if (chartHeat) {
+    chartHeat.setOption({
+      tooltip: { position: 'top', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
         formatter: function(p) {
-          const brand = brands[p.value[1]];
-          const rdc = RDC_LIST[p.value[0]];
-          const rate = (p.value[2] * 100).toFixed(1) + '%';
-          let html = '<strong>' + brand + ' · ' + rdc + '</strong><br/>月满足率：' + rate;
-            const skus = getTopShortageSKUs(brand, rdc, filters.overviewDate, 5);
-          if (skus.length > 0) {
-            // 缺货报告维度：gap 已是整箱数，直接展示（缺货汇总各 RDC 列为箱，勿再除箱规）
-            html += buildTopShortTipTable(skus, '订单缺口(箱)', function(s, info){ return (s.gap > 0) ? s.gap + ' 箱' : '—'; }, rdc);
-          } else {
-            // 从orderDetail计算当月该品牌×RDC的总缺货
-            const monthStr = filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (filters.overviewDate ? filters.overviewDate.slice(0, 7) : '');
-            const monthGap = dataStore.orderDetail.filter(d => d.brand === brand && d.warehouse === rdc && d.dateStr && d.dateStr.startsWith(monthStr) && d.firstDayShort > 0).reduce((s, d) => s + d.firstDayShort, 0);
-            if (monthGap > 0) {
-              html += '<br/>当月缺货量：' + formatNum(monthGap) + '（订单明细，按件汇总）';
-              html += '<br/>当日缺货报告无该品牌记录';
-            } else {
-              html += '<br/>当月该品牌在该RDC下无订单缺货';
-            }
-          }
-          return html;
+          return RDC_LIST[p.value[0]] + ' · ' + heatBrands[p.value[1]] + '<br/>月满足率：<b>' + (p.value[2]*100).toFixed(1) + '%</b>';
         }
       },
-      grid: { left: 60, right: 30, top: 50, bottom: 40 },
-      xAxis: { type: 'category', data: RDC_LIST, position: 'top', axisLabel: { fontSize: 10, rotate: 15, interval: 0 } },
-      yAxis: { type: 'category', data: brands, inverse: true },
-      visualMap: { min: 0.7, max: 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#FEE2E2','#FEF3C7','#D1FAE5','#A7F3D0','#6EE7B7'] }, formatter: v => (v*100).toFixed(1)+'%' },
-      series: [{ type: 'heatmap', data: heatData, label: { show: true, formatter: p => {
-        const brand = brands[p.value[1]];
+      grid: { left: 70, right: 30, top: 30, bottom: 50 },
+      xAxis: { type: 'category', data: RDC_LIST, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11, rotate: 15 } },
+      yAxis: { type: 'category', data: heatBrands, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
+      visualMap: { min: 0.7, max: 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 5, textStyle: { color: '#94a3b8', fontSize: 10 }, inRange: { color: ['#ef4444', '#f97316', '#facc15', '#84cc16', '#34d399'] }, formatter: v => (v*100).toFixed(0)+'%' },
+      series: [{ type: 'heatmap', data: heatData, label: { show: true, color: '#fff', fontSize: 11, formatter: p => {
+        const brand = heatBrands[p.value[1]];
         const rdc = RDC_LIST[p.value[0]];
         const d = brandRdcMap[brand + '|' + rdc];
         if (!d || d.orderQty === 0) return '无订单';
-        return (p.value[2]*100).toFixed(1)+'%';
-      }, fontSize: 11 }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.3)' } } }]
+        return (p.value[2]*100).toFixed(0)+'%';
+      } }, itemStyle: { borderColor: '#0a0e27', borderWidth: 1 } }]
     });
   }
-
-  // Channel pie - order qty by channel (with RDC filter) + customer group breakdown in tooltip
-  const pieRdcFilter = window._pieRdc || 'all';
-  const monthOrderData2 = (filters.dataMonth && filters.dataMonth !== 'all')
-    ? dataStore.orderDetail.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth))
-    : dataStore.orderDetail;
-  // Precompute customer group breakdown per channel (orderQty + dayRate)
-  const chCgMap = {};
-  monthOrderData2.forEach(d => {
-    if (pieRdcFilter !== 'all' && d.warehouse !== pieRdcFilter) return;
-    const ch = d.channel || '其他';
-    const cg = d.customerGroup || '未知';
-    if (!chCgMap[ch]) chCgMap[ch] = {};
-    if (!chCgMap[ch][cg]) chCgMap[ch][cg] = { orderQty: 0, firstDayQty: 0 };
-    chCgMap[ch][cg].orderQty += (d.orderQty || 0);
-    chCgMap[ch][cg].firstDayQty += (d.firstDayQty || 0);
-  });
-  const pieData = Object.entries(chCgMap).map(([ch, cgMap]) => ({
-    name: ch,
-    value: Object.values(cgMap).reduce((s, v) => s + v.orderQty, 0)
-  }));
-  const breakdown = {};
-  Object.entries(chCgMap).forEach(([ch, cgMap]) => {
-    breakdown[ch] = Object.entries(cgMap)
-      .map(([cg, v]) => ({ name: cg, qty: v.orderQty, rate: v.orderQty > 0 ? (v.firstDayQty / v.orderQty * 100).toFixed(1) : '0.0' }))
-      .sort((a, b) => b.qty - a.qty);
-  });
-  const chartChannel = initChart('chart-channel-pie-overview');
-  chartChannel.setOption({
-    darkMode: true,
-    tooltip: {
-      trigger: 'item',
-      formatter: function(p) {
-        const items = breakdown[p.name] || [];
-        let html = '<div style="font-weight:600;font-size:13px;margin-bottom:6px">' + p.name + '（总量：' + formatNum(p.value) + '支）</div>';
-        html += '<table style="font-size:11px;border-collapse:collapse;width:100%"><tr style="border-bottom:1px solid #ddd"><td style="padding:2px 6px;color:#888">#</td><td style="padding:2px 6px;color:#888">客户组</td><td style="padding:2px 6px;text-align:right;color:#888">订单量</td><td style="padding:2px 6px;text-align:right;color:#888">日满足率</td></tr>';
-        items.slice(0, 10).forEach(function(d, i) {
-          html += '<tr><td style="padding:2px 6px;color:#aaa;text-align:center">' + (i+1) + '</td><td style="padding:2px 6px">' + d.name + '</td><td style="padding:2px 6px;text-align:right">' + formatNum(d.qty) + '</td><td style="padding:2px 6px;text-align:right">' + d.rate + '%</td></tr>';
-        });
-        if (items.length > 10) html += '<tr><td colspan="4" style="padding:4px 6px;color:#888;text-align:center">... 共' + items.length + '个客户组</td></tr>';
-        html += '</table>';
-        return html;
-      },
-      extraCssText: 'max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.1);border-radius:8px;padding:10px 12px'
-    },
-    legend: { bottom: 0, textStyle: { fontSize: 11 } },
-    series: [{ type: 'pie', radius: ['40%','70%'], center: ['50%','45%'], data: pieData, label: { formatter: '{b}\n{d}%' }, emphasis: { itemStyle: { shadowBlur: 10 } } }]
-  });
-
-  // Table: Top shortage materials（_skuAggMap 已在前面聚合好，直接排序展示）
-  window._overviewShortSort = window._overviewShortSort || 'amount';
-  let displayList = [...window._overviewShortList];
-  if (window._overviewShortSort === 'boxes') displayList.sort((a,b) => b.rdcShortBoxes - a.rdcShortBoxes);
-  else if (window._overviewShortSort === 'amount') displayList.sort((a,b) => b.rdcShortAmount - a.rdcShortAmount);
-  else if (window._overviewShortSort === 'rdcCount') displayList.sort((a,b) => b.rdcCount - a.rdcCount || b.rdcShortBoxes - a.rdcShortBoxes);
-  else if (window._overviewShortSort === 'dcSupply') {
-    const supplyRank = s => {
-      const v = (s || '').toString();
-      if (v.includes('紧张')) return 0;
-      if (v.includes('缺货')) return 1;
-      return 2;
-    };
-    displayList.sort((a,b) => supplyRank(a.dcSupply) - supplyRank(b.dcSupply) || (b.rdcShortBoxes - a.rdcShortBoxes));
-  }
-  displayList = displayList.slice(0, 20);
-  const sortActive = (k) => window._overviewShortSort === k ? 'background:var(--color-blue);color:#fff;' : '';
-  const tableHtml = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center"><span style="font-size:12px;color:var(--text-secondary)">排序：</span>' +
-    `<button class="btn-export" style="font-size:11px;padding:4px 10px;${sortActive('rdcCount')}" onclick="window._overviewShortSort='rdcCount';renderOverview()">涉及RDC数</button>` +
-    `<button class="btn-export" style="font-size:11px;padding:4px 10px;${sortActive('boxes')}" onclick="window._overviewShortSort='boxes';renderOverview()">缺货箱数</button>` +
-    `<button class="btn-export" style="font-size:11px;padding:4px 10px;${sortActive('amount')}" onclick="window._overviewShortSort='amount';renderOverview()">缺货金额</button>` +
-    `<button class="btn-export" style="font-size:11px;padding:4px 10px;${sortActive('dcSupply')}" onclick="window._overviewShortSort='dcSupply';renderOverview()">大仓供应</button>` +
-    `<button class="btn-export" style="font-size:11px;padding:4px 10px;margin-left:auto;background:var(--color-orange)" onclick="window._showAllShortage=!window._showAllShortage;renderOverview()">${window._showAllShortage?'返回Top20':'展示所有缺货信息'}</button>` +
-    '</div>' +
-    (window._showAllShortage ? renderAllShortageTable(sData) : '<table class="data-table"><thead><tr><th>物料号</th><th>物料名称</th><th>品牌</th><th>ABC</th><th>缺货箱数</th><th>在途箱数</th><th>缺货金额</th><th>涉及RDC数</th><th>大仓供应</th></tr></thead><tbody>' +
-    displayList.map(d => `<tr>
-      <td>${d.materialCode}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.materialName}">${d.materialName}</td>
-      <td>${d.brand}</td><td>${d.abcClass}</td>
-      <td class="num">${formatNum(d.rdcShortBoxes)}</td><td class="num">${formatNum(d.rdcTransitTotal || 0)}</td><td class="num">${formatMoney(d.rdcShortAmount)}</td>
-      <td class="num"><span class="badge ${d.rdcCount>=4?'badge-red':d.rdcCount>=2?'badge-orange':'badge-green'}">${d.rdcCount}</span></td>
-      <td>${d.dcSupply}</td></tr>`).join('') + '</tbody></table>');
-  document.getElementById('table-shortage-overview').innerHTML = tableHtml;
 }
-
 // 日度订单满足率历史趋势卡片（HTML 部分）
 function renderOverviewHistory() {
   if (!dataStore.history || !dataStore.history.fulfillment) return '';
