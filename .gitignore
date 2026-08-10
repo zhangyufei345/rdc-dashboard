@@ -30,3 +30,6 @@ inventory_2026_forecast.html
 
 # 临时分析脚本（不入库）
 _*.mjs
+
+# 大文件：transship.xlsx 超过 Cloudflare Pages 单文件 25MB 上限，不入库（网页只加载 transship.json）
+transship.xlsx
