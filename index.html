@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 74; // v74: 转储数据页删除「2025上半年 vs 2026上半年」H1 对比图（chart-trans-h1-compare 区块与对应初始化逻辑）；transship.xlsx 仅保留 2026 年数据（已剔除 2025 共 44885 行，文件从 76MB 降至 37MB，加载更快）
+const DB_VERSION = 76; // v76: 订单流 KPI 标签微调——39,132 那个改回「订单箱数」（按 SKU 箱规换算的箱数），15 那个从「紧急SKU」改为「订单数量」（v73 误把红框标签改成了订单数量，按用户最新要求纠正）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1917,7 +1917,7 @@ function renderOverview() {
             <div class="center-stats">
               <div class="center-stat">
                 <div class="v" style="color:#60a5fa">${formatNum(Math.round(orderBoxes))}</div>
-                <div class="l">订单数量</div>
+                <div class="l">订单箱数</div>
               </div>
               <div class="center-stat">
                 <div class="v" style="color:#34d399">${formatNum(Math.round(firstBoxes))}</div>
@@ -1929,7 +1929,7 @@ function renderOverview() {
               </div>
               <div class="center-stat">
                 <div class="v" style="color:#ef4444">${urgentSkus.size}</div>
-                <div class="l">紧急SKU</div>
+                <div class="l">订单数量</div>
               </div>
             </div>
             <div style="margin-top:8px;padding:8px 10px;background:linear-gradient(90deg,rgba(52,211,153,0.15),rgba(52,211,153,0.04));border-left:3px solid #34d399;border-radius:6px">
