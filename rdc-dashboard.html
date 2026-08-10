@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.6 (deploy-2026-08-06) v3.0.5根因修复后优化：折线图y轴下限从0.7改0（便于跨RDC比较）；KPI标题"8月月均"读起来像"月月"，改为"8月份月均"（加"份"字断开） -->
+<!-- RDC运营数据看板 v3.0.7 (deploy-2026-08-10) 修复"订单洞察-转储入库vs实际出货"标题误导：用户选8月但transship只到6月时，标题明确显示"8月（转储暂未导出，已回退显示6月）"而不是直接显示6月。根因是dataStore.transship在IDB旧缓存中可能含7月数据（v0.4.8修了transship.json不走IDB但没清IDB旧转储字段）。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -3171,12 +3171,20 @@ function renderOrderInsight() {
   const transMonths = new Set();
   (dataStore.transship || []).forEach(r => { if (r.dateStr && r.dateStr.length >= 7) transMonths.add(r.dateStr.slice(0, 7)); });
   let compareMonth = window._oiMonth;
+  let compareMonthFallback = false;  // 标记是否回退到其他月（避免标题误导）
   if (compareMonth === 'all') {
     const shipMonths = [...new Set(selRows.map(r => r.month))].sort();
     compareMonth = shipMonths.slice().reverse().find(m => transMonths.has(m)) || '';
   } else if (!transMonths.has(compareMonth)) {
+    // 用户选定的月份没有转储数据时，回退到最近月但**明确标注**（避免显示成"07月"误导用户）
     const arr = [...transMonths].sort();
-    compareMonth = arr.filter(m => m <= compareMonth).pop() || arr[arr.length - 1] || '';
+    const fallback = arr.filter(m => m <= compareMonth).pop() || arr[arr.length - 1] || '';
+    if (fallback && fallback !== compareMonth) {
+      compareMonth = fallback;
+      compareMonthFallback = true;
+    } else {
+      compareMonth = '';
+    }
   }
   const compareRows = compareMonth ? selRows.filter(r => r.month === compareMonth) : [];
   const compareRowsNoFree = compareRows.filter(r => r.type !== '免费单'); // 转储vs出货模块排除免费单出货/需求
@@ -3208,7 +3216,9 @@ function renderOrderInsight() {
   if (transShipRdcs.length === 0) transShipRdcs.push(...RDC_LIST);
   const diffByRdc = {};
   transShipRdcs.forEach(rdc => { diffByRdc[rdc] = (transByRdc[rdc] || 0) - (shipByRdc[rdc] || 0); });
-  const transShipMonthLabel = compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无数据';
+  const transShipMonthLabel = compareMonthFallback
+    ? (window._oiMonth.replace('2026-', '') + '月（转储暂未导出，已回退显示 ' + compareMonth.replace('2026-', '') + '月）')
+    : (compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无转储数据');
   // ====== SKU 级差异明细（转储 vs 出货 + 期初库存/未来需求 + 根因）======
   // 期初库存基准：取 targetMonth 上月最近可用的覆盖数据（当前 inventory 仅含 5/6 月，8月会回退到6月末）
   const covBase = getCovBaseForMonth(compareMonth);
