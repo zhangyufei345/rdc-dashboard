@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 78; // v78: 「订单数量」数值后加单位「笔」（1,063 笔），避免误解为订单箱数
+const DB_VERSION = 79; // v79: 库存结构「风险库存SKU变动」弹框（drillRiskSkuDetail + renderDrillModal risk分支）改 pivot 展示——按 RDC×SKU 聚合，同一行显示 5月/6月 风险金额对比（5月列蓝底、6月列绿底、变动列正负着色），替换原本按月平铺的多行布局
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -10353,9 +10353,10 @@ function drillRdcCovDetail(rdc) {
 
 // 风险库存 SKU 明细弹窗（5月/6月 对比，按 RDC 拆分）
 function drillRiskSkuDetail(sku) {
-  const rows = [];
+  // v79：按 RDC×SKU 聚合，同一行展示 5月/6月 对比（不再按月平铺成多行）
+  const map = {};
   function riskOf(d) { return (d.staleAmt||0) + (d.expiredAmt||0) + (d.returnAmt||0) + (d.nearExpiryAmt||0); }
-  function pushMonth(arr, monthLabel) {
+  function push(arr, monthNum) {
     arr.forEach(d => {
       if (!d || d.sku !== sku) return;
       const h = window._invHainan || 'all';
@@ -10363,15 +10364,18 @@ function drillRiskSkuDetail(sku) {
       if (h === 'no' && d.isHainan === true) return;
       const r = window._isRdc || 'all';
       if (r !== 'all' && d.rdc !== r) return;
-      rows.push({
-        rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand,
-        month: monthLabel, riskAmt: riskOf(d), isHainan: d.isHainan === true
-      });
+      const k = d.rdc + '|' + d.sku;
+      if (!map[k]) map[k] = { rdc: d.rdc, sku: d.sku, skuName: d.skuName || '', brand: d.brand || '', isHainan: d.isHainan === true, amt5: 0, amt6: 0 };
+      map[k]['amt' + monthNum] += riskOf(d);
     });
   }
-  pushMonth((dataStore.inventory && dataStore.inventory.cov5) || [], '5月');
-  pushMonth((dataStore.inventory && dataStore.inventory.cov6) || [], '6月');
+  push((dataStore.inventory && dataStore.inventory.cov5) || [], 5);
+  push((dataStore.inventory && dataStore.inventory.cov6) || [], 6);
+  const rows = Object.values(map);
   if (rows.length === 0) { showToast('该 SKU 无风险库存数据'); return; }
+  rows.forEach(r => r.diff = (r.amt6 || 0) - (r.amt5 || 0));
+  // 按变动金额绝对值降序，最值得关注的 SKU×RDC 在前面
+  rows.sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff));
   window._drillTitle = '风险库存明细 · ' + sku + '（共' + rows.length + '条）';
   window._drillData = rows;
   window._drillType = 'risk';
@@ -10409,8 +10413,26 @@ function renderDrillModal() {
     html += '<table class="data-table"><thead><tr><th>库位</th><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>可用库存</th><th>金额</th><th>状态</th><th>海南花露水</th></tr></thead><tbody>' +
       pageData.map(d => '<tr><td>' + (d.location||'') + '</td><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.amount) + '</td><td>' + (d.status||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
   } else if (tp === 'risk') {
-    html += '<table class="data-table"><thead><tr><th>月份</th><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">风险金额</th><th>海南花露水</th></tr></thead><tbody>' +
-      pageData.map(d => '<tr style="background:' + (d.month === '5月' ? 'rgba(59,130,246,0.06)' : 'rgba(16,185,129,0.06)') + '"><td><b>' + (d.month||'') + '</b></td><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num" style="font-weight:600;color:' + (d.month === '5月' ? '#2563EB' : '#059669') + '">' + (d.riskAmt||0).toLocaleString() + ' 元</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
+    // v79：按 RDC×SKU pivot，同一行展示 5月/6月 风险金额对比（替换原本按月平铺）
+    html += '<table class="data-table"><thead><tr>' +
+      '<th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>海南花露水</th>' +
+      '<th class="num" style="background:rgba(59,130,246,0.10)">5月风险金额</th>' +
+      '<th class="num" style="background:rgba(16,185,129,0.10)">6月风险金额</th>' +
+      '<th class="num">变动</th></tr></thead><tbody>' +
+      pageData.map(d => {
+        const cls = d.diff > 0 ? '#EF4444' : (d.diff < 0 ? '#10B981' : 'var(--text-secondary)');
+        const arrow = d.diff > 0 ? '⬆' : (d.diff < 0 ? '⬇' : '·');
+        return '<tr>' +
+          '<td>' + (d.rdc||'') + '</td>' +
+          '<td>' + (d.sku||'') + '</td>' +
+          '<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td>' +
+          '<td>' + (d.brand||'') + '</td>' +
+          '<td>' + (d.isHainan ? '是' : '否') + '</td>' +
+          '<td class="num" style="background:rgba(59,130,246,0.06)">' + (d.amt5||0).toLocaleString() + ' 元</td>' +
+          '<td class="num" style="background:rgba(16,185,129,0.06)">' + (d.amt6||0).toLocaleString() + ' 元</td>' +
+          '<td class="num" style="color:' + cls + ';font-weight:600">' + arrow + ' ' + Math.abs(d.diff).toLocaleString() + ' 元</td>' +
+          '</tr>';
+      }).join('') + '</tbody></table>';
   } else {
     html += '<table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>可用库存</th><th>金额</th><th>6月</th><th>7月</th><th>8月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
       pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov06) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
