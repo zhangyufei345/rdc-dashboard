@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.7 (deploy-2026-08-10) 修复"订单洞察-转储入库vs实际出货"标题误导：用户选8月但transship只到6月时，标题明确显示"8月（转储暂未导出，已回退显示6月）"而不是直接显示6月。根因是dataStore.transship在IDB旧缓存中可能含7月数据（v0.4.8修了transship.json不走IDB但没清IDB旧转储字段）。 -->
+<!-- RDC运营数据看板 v3.0.8 (deploy-2026-08-10) 进一步修复 v3.0.7 退回显示7月但不显示7月出货的问题：回退时 actual 出货数据也按 compareMonth 过滤（之前只过滤转储）。原 compareRows = selRows.filter(month === compareMonth)，selRows 按 _oiMonth(8月) 过滤，导致 7月出货为空。改为 compareMonthFallback 时用 rows.filter(month === compareMonth)，保证转储+出货用同一月（保留海南花露水筛选）。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -3186,7 +3186,7 @@ function renderOrderInsight() {
       compareMonth = '';
     }
   }
-  const compareRows = compareMonth ? selRows.filter(r => r.month === compareMonth) : [];
+  const compareRows = compareMonth ? (compareMonthFallback ? rows.filter(r => r.month === compareMonth) : selRows.filter(r => r.month === compareMonth)) : [];
   const compareRowsNoFree = compareRows.filter(r => r.type !== '免费单'); // 转储vs出货模块排除免费单出货/需求
   const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth) && !skuIsHainan[r.material]) : [];
   const shipByRdc = {}, transByRdc = {};
