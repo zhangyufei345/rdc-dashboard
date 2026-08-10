@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.8 (deploy-2026-08-10) 进一步修复 v3.0.7 退回显示7月但不显示7月出货的问题：回退时 actual 出货数据也按 compareMonth 过滤（之前只过滤转储）。原 compareRows = selRows.filter(month === compareMonth)，selRows 按 _oiMonth(8月) 过滤，导致 7月出货为空。改为 compareMonthFallback 时用 rows.filter(month === compareMonth)，保证转储+出货用同一月（保留海南花露水筛选）。 -->
+<!-- RDC运营数据看板 v3.0.9 (deploy-2026-08-10) 6个RDC满足率标签口径统一：原用 fulfillQty/orderQty（月满足率），与中央大数字 dayRate（日满足率）口径不一致。改为 firstQty/orderQty 与中央一致，避免数据看起来矛盾。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1729,7 +1729,8 @@ function renderOverview() {
   const transitSkuCount = sData.filter(d => (d.rdcTransitTotal || 0) > 0).length;
   const rdcRateLabel = RDC_LIST.map(r => {
     const a = rdcAgg[r];
-    return { rdc: r, rate: (a && a.orderQty > 0) ? a.fulfillQty / a.orderQty : null };
+    // 修复：6 个 RDC 标签改用日满足率（firstQty/orderQty），与中央大数字"日满足率"一致
+    return { rdc: r, rate: (a && a.orderQty > 0) ? a.firstQty / a.orderQty : null };
   });
 
   // SKU 缺货聚合
