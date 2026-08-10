@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 76; // v76: 订单流 KPI 标签微调——39,132 那个改回「订单箱数」（按 SKU 箱规换算的箱数），15 那个从「紧急SKU」改为「订单数量」（v73 误把红框标签改成了订单数量，按用户最新要求纠正）
+const DB_VERSION = 77; // v77: 「订单数量」KPI 改为真实订单数——monthOrders 内按销售单号(orderNo)去重后的数量（8月=1063，非订单行数3203、非紧急SKU数15）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1719,6 +1719,8 @@ function renderOverview() {
     }
   });
   const waitBoxes = Math.max(0, orderBoxes - firstBoxes);
+  // v76: 订单数量 = 当前筛选月份（monthOrders）内按销售单号去重后的订单数（不是订单行数）
+  const orderCount = new Set(monthOrders.map(d => d.orderNo).filter(Boolean)).size;
   const urgentSkus = new Set();
   sData.forEach(d => {
     const v = String(d.dcSupply || '');
@@ -1928,7 +1930,7 @@ function renderOverview() {
                 <div class="l">待发</div>
               </div>
               <div class="center-stat">
-                <div class="v" style="color:#ef4444">${urgentSkus.size}</div>
+                <div class="v" style="color:#ef4444">${orderCount}</div>
                 <div class="l">订单数量</div>
               </div>
             </div>
