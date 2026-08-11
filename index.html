@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.1.0 (deploy-2026-08-11) 两个 UI 调整：(1)订单数据洞察页"⚡ 交叉洞察"卡片删除"📦 库存覆盖预警（订单 vs N月末库存）"段，保留 invWarnHtml 计算函数与 invBaseLabel 变量定义；(2)订单满足率分析页"📅 日度订单满足率历史趋势"卡片移至页面顶部（filter-bar 之前）置顶。 -->
+<!-- RDC运营数据看板 v3.1.1 (deploy-2026-08-11) 删"订单满足率分析"页 filter-bar 里的"显示渠道：KA/经销商"两选项及对应label（保留 renderFulfillChannelCheckboxes/getFulfillCheckedChannels 函数定义与 _fulfillChannelChecked 变量定义，避免破坏调用 site）。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2492,8 +2492,6 @@ function renderFulfillment() {
   page.innerHTML = `
     ${renderOverviewHistory() || ''}
     <div class="filter-bar">
-      <label>显示渠道：</label>
-      ${renderFulfillChannelCheckboxes()}
       <label>RDC：</label>
       <select id="filter-fulfill-rdc" onchange="filters.fulfillRDC=this.value;renderFulfillment()" style="min-width:120px">
         <option value="all" ${filters.fulfillRDC==='all'?'selected':''}>所有RDC</option>
