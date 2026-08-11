@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.0.9 (deploy-2026-08-10) 6个RDC满足率标签口径统一：原用 fulfillQty/orderQty（月满足率），与中央大数字 dayRate（日满足率）口径不一致。改为 firstQty/orderQty 与中央一致，避免数据看起来矛盾。 -->
+<!-- RDC运营数据看板 v3.1.0 (deploy-2026-08-11) 两个 UI 调整：(1)订单数据洞察页"⚡ 交叉洞察"卡片删除"📦 库存覆盖预警（订单 vs N月末库存）"段，保留 invWarnHtml 计算函数与 invBaseLabel 变量定义；(2)订单满足率分析页"📅 日度订单满足率历史趋势"卡片移至页面顶部（filter-bar 之前）置顶。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2490,6 +2490,7 @@ function renderFulfillment() {
   }
 
   page.innerHTML = `
+    ${renderOverviewHistory() || ''}
     <div class="filter-bar">
       <label>显示渠道：</label>
       ${renderFulfillChannelCheckboxes()}
@@ -2501,7 +2502,6 @@ function renderFulfillment() {
       <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">${filters.fulfillRateType==='mtd'?'MTD日满足率基于月初至所选日期累计':'日满足率基于所选日期'} · 月满足率基于全月数据</span>
     </div>
     ${renderFulfillmentHistory() || ''}
-    ${renderOverviewHistory() || ''}
     <div class="card">
       <div class="card-header">
         <span class="card-title">RDC × 渠道 订单满足率统计表</span>
@@ -3395,8 +3395,7 @@ function renderOrderInsight() {
       '<div class="kpi-row" style="padding:0 8px 8px">' +
         rateRows.map(r => '<div class="kpi-card" style="background:' + TYPE_COLORS[r.type] + '11"><div class="kpi-label">' + r.type + ' 首日满足率</div><div class="kpi-value">' + fmtPct(r.rate) + '</div><div style="font-size:11px;color:#64748B">订单 ' + fmtN(r.qty) + ' ' + u + '</div></div>').join('') +
       '</div>' +
-      '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px"><span class="card-title" style="font-size:13px">📦 库存覆盖预警（订单 vs ' + invBaseLabel + '库存）</span></div>' +
-      invWarnHtml +
+      // 用户要求（2026-08-11）：删除"📦 库存覆盖预警"段（保留 invWarnHtml 计算函数与 invBaseLabel 变量定义，避免破坏调用）
       '<div class="card-header" style="border-top:1px dashed var(--border-card);padding-top:10px;margin-top:12px"><span class="card-title" style="font-size:13px">🚚 转储入库 vs 实际出货（按RDC）— ' + transShipMonthLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">差异 = 转储入库 − 实际出货</span></div>' +
       (compareMonth
         ? '<div class="chart-container" style="height:280px" id="oi-chart-trans-ship"></div>'
