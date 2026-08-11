@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.1.3 (deploy-2026-08-11) 修复库存规模年度对比图2026年折线硬编码 i<6（只画1-6月）：改为按 amountAtRdcs 实际值取数，无数据时 null（断点）。跟随 inventory.xlsx 7月模版自动显示 7 月。amt25/ship26 已是动态（ship26 通过 ship26Jul 处理7月）。其他用到 inventory 数据的图表（库存结构分析 v3.1.2 已修、库存覆盖图 cov6-only 6月、库存预测1-6+7-12预测 不需改）已排查无遗漏。 -->
+<!-- RDC运营数据看板 v3.1.4 (deploy-2026-08-11) 年末库存预测模块接入 7 月真实数据：(1)2026 actual 由 history.json（仅1-6月）改为 amountAtRdcs 取 2025全年+2026 1-7月（与库存结构分析图同源，含真实7月，否则7月为0）；预测期由7-12月改为8-12月（5个月），滚动模拟起点仍为6月末可出货库存；(2)修复 nationalYiH2[5]→[4]（原6月预测期长度误用，会 undefined.toFixed 崩溃）；(3)图表/说明文字「1-6月actual/7月起预测」改为「1-7月actual/8月起预测」，阴影区起点 6月→7月。单位校准：amountAtRdcs 元 ÷1e8 = 亿元。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -7897,9 +7897,12 @@ function renderInventoryForecast(page, tabBar) {
     let s = 0; keys.forEach(r => { s += getHainanAdjustedAmount(year, r, i); });
     return s;
   }
-  const nat25 = months.map((_, i) => sumRdcsHainan('2025', i, rdc7) / 100000);
-  const nat26A = months.slice(0,6).map((_, i) => sumRdcsHainan('2026', i, rdc7) / 100000);
-  const twYuan = (sumRdcs('2026', 5, rdc6.concat(['总仓'])) - sumRdcs('2026', 5, rdc6)) * 1000; // 元
+  // 2025 actual 与 2026 actual 统一用 amountAtRdcs（库存金额 sheet「库存金额_考核」透视，与库存结构分析图同源，含 2026 1-7 月真实值）
+  // 单位：元 → 亿元（÷1e8）。注意 history.json 仅含 2026 1-6 月，7 月必须从 amountTrendBlocks 取，否则为 0
+  const nat25 = months.map((_, i) => amountAtRdcs('2025', i + 1, rdc7) / 1e8);
+  // 2026 actual 取 1-7 月（7 月为真实值，非 0）；预测期移到 8-12 月
+  const nat26A = months.slice(0,7).map((_, i) => amountAtRdcs('2026', i + 1, rdc7) / 1e8);
+  const twYuan = (sumRdcs('2026', 5, rdc6.concat(['总仓'])) - sumRdcs('2026', 5, rdc6)) * 1000; // 元（总仓仅 history 含，amountTrendBlocks 为 7RDC）
   const twYi = twYuan / 1e8;
 
   // === 2. 从 cov6 算单品成本 + 7-12月 需求(元) ===
@@ -7923,16 +7926,16 @@ function renderInventoryForecast(page, tabBar) {
     startInvRdcYuan[d.rdc] += (d.planAmt || 0) + (d.inTransitAmt || 0);
   });
 
-  // === 3. 滚动库存模拟 Jul-Dec (元) —— 所有参数（覆盖天数、渐进比率）可在上方 ⚙ 面板调 ===
+  // === 3. 滚动库存模拟 Aug-Dec (5个月) —— v3.1.4 预测期从7-12月改为8-12月（7月作actual） ===
   const forecastYuan = {};
   rdc6.forEach(rdc => {
     const cf = CP[rdc] / 30;
     const d = demandYuan[rdc]; // 直接用原始需求（不做准确率补偿，14天覆盖已含安全库存）
     let cur = startInvRdcYuan[rdc];
     const end = [];
-    for (let t = 0; t < 6; t++) {
-      const demand = d[t];
-      const nextD = t < 5 ? d[t+1] : d[t];
+    for (let t = 0; t < 5; t++) {  // 8月-12月：5个月预测
+      const demand = d[t + 1] || d[t] || 0;  // d[1..5] = cov08..cov12（d[0]=cov07 不再用作预测起点）
+      const nextD = t < 4 ? d[t + 2] || d[t] : d[t + 1] || d[t];
       const targetEnd = nextD * cf;
       if (cur >= demand + targetEnd) {
         cur = cur - demand; // 库存充裕，自然消耗
@@ -7950,18 +7953,20 @@ function renderInventoryForecast(page, tabBar) {
   });
 
   // === 5. 汇总 6RDC (亿元) - 图表口径与年度对比卡片一致；总仓单独保留在推演表 ===
-  const rdcOnlyH2 = [0,1,2,3,4,5].map(t => rdc6.reduce((s,r) => s + forecastYuan[r][t], 0));
+  // v3.1.4：预测期 8-12 月（5 个月），rdcOnlyH2 取 forecastYuan[r][0..4]
+  const rdcOnlyH2 = [0,1,2,3,4].map(t => rdc6.reduce((s,r) => s + forecastYuan[r][t], 0));
   const rdcOnlyYiH2 = rdcOnlyH2.map(v => v / 1e8);
   const nationalYiH2 = rdcOnlyH2.map(v => (v + twYuan) / 1e8);
   const nat26Demand = nat26A.concat(rdcOnlyYiH2);
 
   // === 7. 各地点年末推演 (亿元) —— 只含 6 RDC；总仓/全国合计作为信息脚注 ===
+  // v3.1.4：预测期 8-12 月（5 个月），forecastYuan[r] 长度从 6 改为 5，索引 0-4
   const proj = [];
   rdc6.forEach(r => {
-    const v = forecastYuan[r][5] / 1e8;
+    const v = forecastYuan[r][4] / 1e8;
     proj.push([r, v, '覆盖'+CP[r]+'天，渐进'+GRADUAL.toFixed(1)+'倍']);
   });
-  const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][5], 0) / 1e8;
+  const rdcSumYi = rdc6.reduce((s,r) => s + forecastYuan[r][4], 0) / 1e8;
   proj.push(['6RDC合计', rdcSumYi, '各 RDC 年末可出货库存之和']);
 
   // === 8. 覆盖表 (基于未来 6 个月逐月累积需求，模拟库存能消化几个月) ===
@@ -8017,9 +8022,9 @@ function renderInventoryForecast(page, tabBar) {
         '</select>';
       return '<div class="card" style="margin-bottom:16px">' +
         '<div class="card-header" style="display:flex;align-items:center"><span class="card-title">🔮 2026 年度库存金额推演与冗余分析</span><div style="margin-left:auto;display:flex;align-items:center">' + hainanDropdown + '</div></div>' +
-        '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：history.json（2025/2026 1-6月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（7-12月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（千元 ÷ 100,000）｜图表口径：6RDC；推演表口径：6RDC + 总仓｜<b>可调参数</b>（⬇ 面板）：各 RDC 覆盖天数 + 渐进比率（月补 ≤ 月需×倍）</div>' +
+        '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">数据基准：库存金额 sheet「库存金额_考核」透视（amountAtRdcs，与库存结构分析图同源；2025 全年 + 2026 1-7 月 actual）+ inventory.xlsx「6月库存覆盖数据」X–AB 列（8-12 月需求）｜快照日期 ' + new Date().toISOString().slice(0,10) + '｜单位：亿元（元 ÷ 1e8）｜图表口径：6RDC(+华东) actual / 6RDC 预测；推演表口径：6RDC + 总仓｜<b>可调参数</b>（⬇ 面板）：各 RDC 覆盖天数 + 渐进比率（月补 ≤ 月需×倍）</div>' +
         '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px">' +
-          '<div style="flex:1;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'倍），各 RDC 覆盖天数可调。<b>年末 ≈ '+ nationalYiH2[5].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。参数见下方 ⚙ 面板。</div>' +
+          '<div style="flex:1;background:#F8FAFC;border:1px solid var(--border-card);border-radius:10px;padding:12px;font-size:13px"><b style="color:#7B4DF6">渐进入市（全国=6RDC+总仓）：</b>渐进补货（≤月需×'+GRADUAL.toFixed(1)+'倍），各 RDC 覆盖天数可调。<b>年末 ≈ '+ nationalYiH2[4].toFixed(2) + ' 亿</b>（6RDC '+ rdcSumYi.toFixed(2) + ' + 总仓 '+ twYi.toFixed(2) + '）。参数见下方 ⚙ 面板。</div>' +
         '</div>' +
       '</div>';
     })() +
@@ -8043,7 +8048,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">6RDC 库存金额月度走势（单位：亿元）</span></div>' +
       '<div class="chart-container" id="chart-forecast" style="height:420px"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际 H1+渐进入市 H2（6RDC，参数可调 ⬆ 面板）。<b>1-6月为历史 actual</b>，与「库存金额趋势」年度对比卡片同口径；<b>7月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">灰虚线=2025 7RDC 实际；紫虚线=2026 实际(1-7月, 与库存结构分析同源)+渐进入市预测(8-12月, 6RDC, 参数可调 ⬆ 面板)。<b>1-7月为历史 actual</b>（库存金额_考核透视）；<b>8月起为预测</b>，按华东停运仅含 6RDC；<b>总仓见下方推演表「全国合计」</b>。灰色阴影区为 H2 预测区间。</div>' +
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
@@ -8074,7 +8079,7 @@ function renderInventoryForecast(page, tabBar) {
     series:[
       {name:'2025 7RDC 实际',type:'line',data:nat25,lineStyle:{type:'dashed',color:'#9aa7b4'},itemStyle:{color:'#9aa7b4'},symbol:'circle'},
       {name:'2026 实际+渐进入市',type:'line',data:nat26Demand,lineStyle:{type:'dashed',width:3,color:'#7b4df6'},itemStyle:{color:'#7b4df6'},
-        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'6月'},{xAxis:'12月'}]]}}
+        markArea:{silent:true,itemStyle:{color:'rgba(123,77,246,0.08)'},data:[[{xAxis:'7月'},{xAxis:'12月'}]]}}
     ]
   });
 
