@@ -3937,7 +3937,19 @@ function renderShortageOrderDetail() {
     else if (d.channel === '经销商') brandMap[d.brand].dealer += d.firstDayShort;
   });
   const brandSorted = Object.entries(brandMap).sort((a,b) => b[1].all - a[1].all);
-  const brandNames = brandSorted.map(([b]) => b);
+
+  // 计算各品牌 TOP5 主要缺货 SKU（按 firstDayShort 汇总），用于表格 hover 弹框
+  var brandTopShortage = {};
+  filtered.forEach(function(d) {
+    if (!d.brand || !d.skuCode || !(d.firstDayShort > 0)) return;
+    if (!brandTopShortage[d.brand]) brandTopShortage[d.brand] = {};
+    var m = brandTopShortage[d.brand];
+    if (!m[d.skuCode]) m[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+    m[d.skuCode].gap += d.firstDayShort;
+  });
+  Object.keys(brandTopShortage).forEach(function(b) {
+    brandTopShortage[b] = Object.values(brandTopShortage[b]).sort(function(a, c) { return c.gap - a.gap; }).slice(0, 5);
+  });
 
   // ---- SKU维度明细 ----
   const skuMap = {};
@@ -4059,10 +4071,9 @@ function renderShortageOrderDetail() {
     <div class="card" style="margin-bottom:12px">
       <div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="card-title">品牌维度</span>
-        <span style="font-size:12px;color:var(--text-secondary)">首日累计未满足订单量 + 首日满足率对比</span>
+        <span style="font-size:12px;color:var(--text-secondary)">首日累计未满足订单量（悬停行查看主要缺货 SKU 与满足率）</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
-        <div class="chart-container" style="flex:1;min-width:300px;height:240px" id="chart-od-fulfill-rate"></div>
         <div style="flex:1;min-width:280px">
           <div class="table-wrap" style="max-height:240px;overflow-y:auto">
             <table class="data-table" style="font-size:12px">
@@ -4071,13 +4082,29 @@ function renderShortageOrderDetail() {
                 <th style="text-align:right;background:#FEF3C7">KA首日累计未满足</th><th style="text-align:right;background:#DBEAFE">经销首日累计未满足</th>
               </tr></thead>
               <tbody>
-                ${brandSorted.map(([brand, v]) => '<tr>' +
-                  '<td><strong>' + brand + '</strong></td>' +
-                  '<td style="text-align:right;color:var(--color-red);font-weight:600">' + v.all.toLocaleString() + '</td>' +
-                  '<td style="text-align:right">' + v.fulfilled.toLocaleString() + '</td>' +
-                  '<td style="text-align:right;background:#FEF3C7">' + v.ka.toLocaleString() + '</td>' +
-                  '<td style="text-align:right;background:#DBEAFE">' + v.dealer.toLocaleString() + '</td></tr>'
-                ).join('')}
+                ${brandSorted.map(([brand, v]) => {
+                  var total = v.all + v.fulfilled;
+                  var rate = total > 0 ? (v.fulfilled / total * 100) : 0;
+                  var tipHtml = '<div class="hd"><strong>' + brand + '</strong></div><div>首日满足率：' + rate.toFixed(1) + '%</div>';
+                  var topShort = brandTopShortage[brand] || [];
+                  if (topShort.length > 0) {
+                    tipHtml += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要未满足 TOP5：</div>';
+                    tipHtml += buildTopShortTipTable(topShort, '首日累计订单缺口', function(s, info) {
+                      if (!info.boxSpec || !s.gap) return '—';
+                      var b = s.gap / info.boxSpec;
+                      return b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱';
+                    }, null);
+                  } else {
+                    tipHtml += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">该品牌当日无缺货记录</div>';
+                  }
+                  var tipIdx = regTip(tipHtml);
+                  return '<tr data-tip="' + tipIdx + '" style="cursor:default">' +
+                    '<td><strong>' + brand + '</strong></td>' +
+                    '<td style="text-align:right;color:var(--color-red);font-weight:600">' + v.all.toLocaleString() + '</td>' +
+                    '<td style="text-align:right">' + v.fulfilled.toLocaleString() + '</td>' +
+                    '<td style="text-align:right;background:#FEF3C7">' + v.ka.toLocaleString() + '</td>' +
+                    '<td style="text-align:right;background:#DBEAFE">' + v.dealer.toLocaleString() + '</td></tr>';
+                }).join('')}
               </tbody>
             </table>
           </div>
@@ -4163,55 +4190,6 @@ function renderShortageOrderDetail() {
   chart1a.setOption(buildPieOption('KA订单结构', sumKa));
   const chart1b = initChart('chart-od-summary-dealer');
   chart1b.setOption(buildPieOption('经销商订单结构', sumDealer));
-
-  // Brand fulfillment rate chart (率值在 0-100% 范围, 数据差距小, 适合柱状图)
-  var fulfillRateData = brandSorted.map(function(e) {
-    var v = e[1];
-    var total = v.all + v.fulfilled;
-    return total > 0 ? (v.fulfilled / total * 100) : 0;
-  });
-
-  // 计算各品牌 TOP5 主要缺货 SKU（按 firstDayShort 汇总）
-  var brandTopShortage = {};
-  filtered.forEach(function(d) {
-    if (!d.brand || !d.skuCode || !(d.firstDayShort > 0)) return;
-    if (!brandTopShortage[d.brand]) brandTopShortage[d.brand] = {};
-    var m = brandTopShortage[d.brand];
-    if (!m[d.skuCode]) m[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
-    m[d.skuCode].gap += d.firstDayShort;
-  });
-  Object.keys(brandTopShortage).forEach(function(b) {
-    brandTopShortage[b] = Object.values(brandTopShortage[b]).sort(function(a, c) { return c.gap - a.gap; }).slice(0, 5);
-  });
-
-  var rateChart = initChart('chart-od-fulfill-rate');
-  rateChart.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true, textStyle: { fontSize: 11 }, formatter: function(p) {
-      var brand = p[0].axisValue;
-      var rate = p[0].value;
-      var html = '<strong>' + brand + '</strong><br/>首日满足率：' + rate.toFixed(1) + '%';
-      var topShort = brandTopShortage[brand] || [];
-      if (topShort.length > 0) {
-        html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要未满足 TOP5：</div>';
-        html += buildTopShortTipTable(topShort, '首日累计订单缺口', function(s, info) {
-          // firstDayShort 是基本单位(支)，按箱规换算成箱（<1箱保留2位小数）
-          if (!info.boxSpec || !s.gap) return '—';
-          var b = s.gap / info.boxSpec;
-          return b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱';
-        }, null);
-      } else {
-        html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">该品牌当日无缺货记录</div>';
-      }
-      return html;
-    }},
-    grid: { left: 55, right: 20, top: 8, bottom: 40 },
-    xAxis: { type: 'category', data: brandNames, axisLabel: { fontSize: 11, rotate: brandNames.length > 5 ? 25 : 0 } },
-    yAxis: { type: 'value', min: 0, max: 100, axisLabel: { formatter: function(v) { return v.toFixed(0) + '%'; }, fontSize: 10 } },
-    series: [{
-      type: 'bar', data: fulfillRateData, color: '#2563EB', barWidth: '40%',
-      label: { show: true, position: 'top', fontSize: 11, color: '#1E40AF', formatter: function(p) { return p.value.toFixed(1) + '%'; } }
-    }]
-  });
 
 }
 
