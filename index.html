@@ -2239,8 +2239,8 @@ function renderHeatMatrix() {
   const mBtn = document.getElementById('heat-gran-month');
   const dBtn = document.getElementById('heat-gran-day');
   const dateWrap = document.getElementById('heat-date-wrap');
-  if (mBtn) { mBtn.style.background = gran === 'month' ? 'var(--color-blue)' : 'var(--color-red)'; mBtn.style.color = '#fff'; }
-  if (dBtn) { dBtn.style.background = gran === 'day' ? 'var(--color-blue)' : 'var(--color-red)'; dBtn.style.color = '#fff'; }
+  if (mBtn) { mBtn.style.background = gran === 'month' ? 'var(--color-blue)' : 'var(--color-orange)'; mBtn.style.color = '#fff'; }
+  if (dBtn) { dBtn.style.background = gran === 'day' ? 'var(--color-blue)' : 'var(--color-orange)'; dBtn.style.color = '#fff'; }
   if (dateWrap) dateWrap.style.display = gran === 'day' ? 'flex' : 'none';
 
   const brands = MATRIX_BRANDS;
