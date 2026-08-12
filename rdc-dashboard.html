@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 85; // v85: 【根因】慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退——可用库存=0 属 falsy 时回退到 availableQty(库存总数量)，导致 55542/华南 可用库存0 却显示868(=红色预警数量)。三处回退全部去除(KPI totalQty/明细行 availableQty/趋势 trendQty)，改为纯 availQtyPlan||0；v84: 库存覆盖明细/弹框/堆叠图/RDC×覆盖周期 统一「可用库存金额」口径：金额列/聚合由 inventoryAmt（库存总金额，含风险库存）改为 planAmt（源表「可用库存」金额版）；v83: 修复库存覆盖明细/弹框"可用库存"数量列：改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 86; // v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列，仅保留"当月值+环比"；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退——可用库存=0 属 falsy 时回退到 availableQty(库存总数量)，三处回退改为纯 availQtyPlan||0；v84: 库存覆盖明细/弹框/堆叠图/RDC×覆盖周期 统一「可用库存金额」口径：inventoryAmt→planAmt；v83: 修复库存覆盖明细"可用库存"数量列：改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2878,38 +2878,34 @@ function renderFulfillmentHistoryCharts() {
     }); });
     return c ? s / c : 0;
   }
-  // 当月（选中月）：环比 vs 上一月 / 同比 vs 2025 同期
-  const last_26 = avgOf('monthly', '2026', [lastIdx]), last_25 = avgOf('monthly', '2025', [lastIdx]);
-  const last_26d = avgOf('daily', '2026', [lastIdx]), last_25d = avgOf('daily', '2025', [lastIdx]);
+  // 当月（选中月）：环比 vs 上一月
+  const last_26 = avgOf('monthly', '2026', [lastIdx]);
+  const last_26d = avgOf('daily', '2026', [lastIdx]);
   const prev_26 = prevIdx !== null ? avgOf('monthly', '2026', [prevIdx]) : 0;
   const prev_26d = prevIdx !== null ? avgOf('daily', '2026', [prevIdx]) : 0;
   function pp(cur, prev) { const d = cur - prev; return { color: d >= 0 ? 'var(--color-green)' : 'var(--color-red)', txt: (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp' }; }
-  const aMom = pp(last_26, prev_26), aYoy = pp(last_26, last_25);
-  const aMomD = pp(last_26d, prev_26d), aYoyD = pp(last_26d, last_25d);
+  const aMom = pp(last_26, prev_26);
+  const aMomD = pp(last_26d, prev_26d);
   const lastLabel = latestMonthLabel + '份';
   const lastMonthNum = parseInt(String(latestMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
   const prevLabel = prevIdx !== null ? (prevIdx + 1) + '月份' : '上月';
-  // 单行 KPI：指标 / 当月值 / 环比 / 同比（v59：去掉操作列，文字统一黑色）
-  const kpiRow = function(type, label, value, mom, momColor, yoy, yoyColor, momLabel, momVal, yoyLabel, yoyVal) {
+  // 单行 KPI：指标 / 当月值 / 环比（v59：去掉操作列，文字统一黑色）
+  const kpiRow = function(type, label, value, mom, momColor, momLabel, momVal) {
     return '<tr>' +
       '<td style="padding:14px;font-weight:600;color:#000;white-space:nowrap">' + label + '</td>' +
       '<td style="padding:14px;text-align:right;font-size:20px;font-weight:700;color:' + (type === 'monthly' ? '#2563EB' : '#059669') + '">' + value + '%</td>' +
       '<td style="padding:14px;font-size:11px;white-space:nowrap;color:#000">' +
         '<span style="color:' + momColor + '">▲ ' + mom + '</span> <span style="color:#000">vs ' + momLabel + ' ' + momVal + '%</span>' +
       '</td>' +
-      '<td style="padding:14px;font-size:11px;white-space:nowrap;color:#000">' +
-        '<span style="color:' + yoyColor + '">▼ ' + yoy + '</span> <span style="color:#000">vs ' + yoyLabel + ' ' + yoyVal + '%</span>' +
-      '</td>' +
     '</tr>';
   };
   const kpiHtml = '<table class="data-table" style="width:100%"><thead><tr style="background:#f3f4f6">' +
     '<th style="text-align:left;padding:10px 14px;color:#000;width:24%">指标</th>' +
     '<th style="text-align:right;padding:10px 14px;color:#000;width:18%">当月值</th>' +
-    '<th style="text-align:left;padding:10px 14px;color:#000;width:29%">环比（vs ' + prevLabel + '）</th>' +
-    '<th style="text-align:left;padding:10px 14px;color:#000;width:29%">同比（vs 2025年' + lastMonthNum + '月）</th>' +
+    '<th style="text-align:left;padding:10px 14px;color:#000;width:58%">环比（vs ' + prevLabel + '）</th>' +
     '</tr></thead><tbody>' +
-    kpiRow('monthly', lastLabel + '月均满足率', (last_26 * 100).toFixed(1), aMom.txt, aMom.color, aYoy.txt, aYoy.color, prevLabel, (prev_26 * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25 * 100).toFixed(1)) +
-    kpiRow('daily', lastLabel + '日满足率', (last_26d * 100).toFixed(1), aMomD.txt, aMomD.color, aYoyD.txt, aYoyD.color, prevLabel, (prev_26d * 100).toFixed(1), '2025年' + lastMonthNum + '月', (last_25d * 100).toFixed(1)) +
+    kpiRow('monthly', lastLabel + '月均满足率', (last_26 * 100).toFixed(1), aMom.txt, aMom.color, prevLabel, (prev_26 * 100).toFixed(1)) +
+    kpiRow('daily', lastLabel + '日满足率', (last_26d * 100).toFixed(1), aMomD.txt, aMomD.color, prevLabel, (prev_26d * 100).toFixed(1)) +
     '</tbody></table>';
   document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
 }
