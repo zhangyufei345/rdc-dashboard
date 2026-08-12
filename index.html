@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 87; // v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动：cov7(7月末库存)显示 8月~次年1月(cov08~cov13)，修复此前硬编码 6~11 月导致月份错位；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列，仅保留"当月值+环比"；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退——可用库存=0 属 falsy 时回退到 availableQty(库存总数量)，三处回退改为纯 availQtyPlan||0；v84: 库存覆盖明细/弹框/堆叠图/RDC×覆盖周期 统一「可用库存金额」口径：inventoryAmt→planAmt；v83: 修复库存覆盖明细"可用库存"数量列：改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 88; // v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU——仅保留 availQtyPlan>0 的 SKU（覆盖月数命中+非排除品+有可用库存）；慢动SKU数 KPI 随之准确（被剔除项可用库存/金额均为0，金额类KPI数值不变）；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动：cov7显示 8月~次年1月(cov08~cov13)，修复此前硬编码 6~11 月导致月份错位；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列，仅保留"当月值+环比"；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -10555,6 +10555,8 @@ window._slowPage = 1;
 window._slowMovingNew = [];
 window._slowMovingAll = [];
 function isSlowCoverage(level) { return level && (level === '无需求' || level === '3~4个月' || level === '4~5个月' || level === '5~6个月' || level === '大于6个月'); }
+// 真正慢动品须有可用库存（availQtyPlan>0），剔除可用库存=0 的纯风险/无货 SKU（2026-08-12 决策）
+function hasAvailableStock(d) { return (d.availQtyPlan || 0) > 0; }
 // 新品/促销装/非卖品 完全排除在慢动品计算之外（按产品属性显式排除，不依赖未来需求判定周转）
 function isExcludedProduct(d) {
   if (!d) return false;
@@ -10603,8 +10605,8 @@ function renderSlowMoving() {
   var cov6 = filterArr(inv.cov7 || []); // 当前月=7月
   var cov5 = filterArr(inv.cov6 || []); // 基准月=6月
   var excludedCount = 0;
-  var slow6 = cov6.filter(function(d) { if (isExcludedProduct(d)) { excludedCount++; return false; } return isSlowCoverage(d.coverageLevel); });
-  var slow5 = cov5.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d); });
+  var slow6 = cov6.filter(function(d) { if (isExcludedProduct(d)) { excludedCount++; return false; } return isSlowCoverage(d.coverageLevel) && hasAvailableStock(d); });
+  var slow5 = cov5.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d) && hasAvailableStock(d); });
   var slow5Keys = new Set(slow5.map(function(d) { return d.rdc + '|' + d.sku; }));
   var newSlow = slow6.filter(function(d) { return !slow5Keys.has(d.rdc + '|' + d.sku); });
   var kpi = {
@@ -10715,7 +10717,7 @@ function renderSlowMoving() {
   });
   var slow6AllRdc = cov6AllRdc.filter(function(d) {
     if (isExcludedProduct(d)) return false;
-    return isSlowCoverage(d.coverageLevel);
+    return isSlowCoverage(d.coverageLevel) && hasAvailableStock(d);
   });
   // 全量5月参照（与慢动明细共用统一诊断引擎；仅受海南花露水/是否淘汰筛选影响，不受RDC下拉影响）
   var cov5AllRdc = (inv.cov6 || []).filter(function(d) {
@@ -10724,7 +10726,7 @@ function renderSlowMoving() {
     if (!obsoletePass(d)) return false;
     return true;
   });
-  var maySlowKeysAll = new Set(cov5AllRdc.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d); }).map(function(d) { return d.rdc + '|' + d.sku; }));
+  var maySlowKeysAll = new Set(cov5AllRdc.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d) && hasAvailableStock(d); }).map(function(d) { return d.rdc + '|' + d.sku; }));
   var futureDemand5All = {};
   cov5AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemand5All[k] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0); });
   // 品牌×RDC 慢动占比矩阵（分子=慢动可用金额，分母=品牌该RDC全部可用金额）
