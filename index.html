@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 80; // v80: 风险库存SKU变动弹框新增状态展示——5月/6月金额列下加4类状态构成小字（残次/过期/退货/近效期占比，彩色），新增「变动主因」列（6月vs5月各类差绝对值最大者，⬆红/⬇绿）；drillRiskSkuDetail 聚合 parts5/parts6
+const DB_VERSION = 81; // v81: 接入7月库存覆盖数据/7月库存状态分析；新增 status7/cov7/expiry7，当前月滚动到7月(基准=6月)；覆盖需求窗 cov08~cov13；可销售判定按「快报月报-红橙黄预警=可用库存」；buildExpiryMap 按表头名定位列(7月字段序不同)；结构页月份封顶到当前月
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1402,7 +1402,7 @@ function handleInvUpload(file) {
   const reader = new FileReader();
   reader.onload = function(e) {
     if (parseInventoryExcel(e.target.result)) {
-      showToast('库存数据导入成功！共 ' + ((dataStore.inventory.status6||[]).length + (dataStore.inventory.cov6||[]).length) + ' 条明细');
+      showToast('库存数据导入成功！共 ' + ((dataStore.inventory.status7||[]).length + (dataStore.inventory.cov7||[]).length) + ' 条明细');
       navigateTo('inventory-structure');
       renderAll();
     } else {
@@ -3023,14 +3023,14 @@ function renderOrderInsight() {
 
   const orderDetail = dataStore.orderDetail || [];
   const otherOrders = dataStore.otherOrders || [];
-  const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
-  const cov5 = (dataStore.inventory && dataStore.inventory.cov5) || [];
+  const covCur = (dataStore.inventory && dataStore.inventory.cov7) || []; // 当前月=7月
+  const covPrev = (dataStore.inventory && dataStore.inventory.cov6) || []; // 基准月=6月
   // SKU 名称补全表：从多源补全（订单明细 → 库存覆盖 → 周转 sheet → 转储数据 → 海南花露水历史 → 基础数据）
   const skuNameMap = {};
   orderDetail.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
   otherOrders.forEach(d => { if (d.skuCode && d.skuName) skuNameMap[d.skuCode] = d.skuName; });
-  cov6.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
-  cov5.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
+  covCur.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
+  covPrev.forEach(d => { if (d.sku && d.skuName && !skuNameMap[d.sku]) skuNameMap[d.sku] = d.skuName; });
   // 数据源 4：转储数据 materialName（idb 缓存可能为空，每次都补一次以防万一）
   (dataStore.transship || []).forEach(d => { if (d.material && d.materialName && !skuNameMap[d.material]) skuNameMap[d.material] = d.materialName; });
   // 数据源 5：海南花露水历史数据（含 SKU 名称 + 编码，第 5/4 列）
@@ -3091,7 +3091,7 @@ function renderOrderInsight() {
   // 早期实现只用了 1，cov5/cov6 sheet 实际不带 isHainan 列，导致 skuIsHainan 集合空，
   // 海南花露水筛选在所有页（含转储vs出货弹框）都失效。
   const skuIsHainan = {};
-  [...((dataStore.inventory && dataStore.inventory.cov6) || []), ...((dataStore.inventory && dataStore.inventory.cov5) || [])].forEach(d => {
+  [...covCur, ...covPrev].forEach(d => {
     if (d.sku && d.isHainan) skuIsHainan[d.sku] = true;
   });
   const _hainanSheet2 = (dataStore.inventory && dataStore.inventory._rawSheets && dataStore.inventory._rawSheets['海南花露水历史数据']) || null;
@@ -3219,9 +3219,11 @@ function renderOrderInsight() {
 
   // ====== 交叉洞察：库存覆盖联动（品牌当月订单 vs 最近可用期末库存） ======
   function getCovBaseForMonth(targetMonth) {
+    const inv = dataStore.inventory || {};
     const available = [];
-    if (cov5 && cov5.length) available.push({ month: '2026-06', data: cov5 });
-    if (cov6 && cov6.length) available.push({ month: '2026-07', data: cov6 });
+    if (inv.cov5 && inv.cov5.length) available.push({ month: '2026-05', data: inv.cov5 }); // 5月sheet→5月末库存（6月起覆盖）
+    if (inv.cov6 && inv.cov6.length) available.push({ month: '2026-06', data: inv.cov6 }); // 6月sheet→6月末库存（7月起覆盖）
+    if (inv.cov7 && inv.cov7.length) available.push({ month: '2026-07', data: inv.cov7 }); // 7月sheet→7月末库存（8月起覆盖）
     if (!available.length) return null;
     const prev = getPrevMonth(targetMonth);
     const match = available.filter(x => x.month <= prev).pop();
@@ -3230,8 +3232,10 @@ function renderOrderInsight() {
   function getCovBaseMonthLabel(targetMonth) {
     const base = getCovBaseForMonth(targetMonth);
     if (!base) return '';
-    if (base === cov6) return '6月末';
-    if (base === cov5) return '5月末';
+    const inv = dataStore.inventory || {};
+    if (base === inv.cov7) return '7月末';
+    if (base === inv.cov6) return '6月末';
+    if (base === inv.cov5) return '5月末';
     return '';
   }
   const invBaseLabel = getCovBaseMonthLabel(window._oiMonth);
@@ -3307,7 +3311,7 @@ function renderOrderInsight() {
     ? (window._oiMonth.replace('2026-', '') + '月（转储暂未导出，已回退显示 ' + compareMonth.replace('2026-', '') + '月）')
     : (compareMonth ? (compareMonth.replace('2026-', '') + '月') : '无转储数据');
   // ====== SKU 级差异明细（转储 vs 出货 + 期初库存/未来需求 + 根因）======
-  // 期初库存基准：取 targetMonth 上月最近可用的覆盖数据（当前 inventory 仅含 5/6 月，8月会回退到6月末）
+  // 期初库存基准：取 targetMonth 上月最近可用的覆盖数据（5/6/7月 sheet 滚动，取最新可用）
   const covBase = getCovBaseForMonth(compareMonth);
   const invMap = {};
   (covBase || []).forEach(d => {
@@ -3315,7 +3319,7 @@ function renderOrderInsight() {
     const s = window._oiByBox ? specOf(d.sku) : 1;
     const k = d.rdc + '|' + d.sku;
     if (invMap[k]) return;
-    const fut = (d.cov07 || 0) + (d.cov08 || 0) + (d.cov09 || 0) + (d.cov10 || 0) + (d.cov11 || 0) + (d.cov12 || 0);
+    const fut = (d.cov08 || 0) + (d.cov09 || 0) + (d.cov10 || 0) + (d.cov11 || 0) + (d.cov12 || 0) + (d.cov13 || 0);
     invMap[k] = { avail: (d.availQtyPlan || 0) / s, fut: fut / s };
   });
   // SKU×RDC 聚合：出货/订单需求（来自订单明细，排除免费单），转储入库（来自转储）
@@ -4941,15 +4945,15 @@ async function renderDataPage() {
       <div class="card-header"><span class="card-title">📋 库存数据状态</span></div>
       <div style="font-size:12px">已加载于 ${new Date(dataStore.inventory.loadedAt).toLocaleString('zh-CN')}</div>
       <table class="data-table" style="margin-top:8px"><thead><tr><th>数据类型</th><th>记录数</th><th>状态</th></tr></thead><tbody>
-        <tr><td>库存状态分析 (6月)</td><td class="num">${(dataStore.inventory.status6||[]).length}</td><td><span class="badge badge-green">已加载</span></td></tr>
-        <tr><td>库存覆盖分析 (6月)</td><td class="num">${(dataStore.inventory.cov6||[]).length}</td><td><span class="badge badge-green">已加载</span></td></tr>
+        <tr><td>库存状态分析 (7月)</td><td class="num">${(dataStore.inventory.status7||[]).length}</td><td><span class="badge badge-green">已加载</span></td></tr>
+        <tr><td>库存覆盖分析 (7月)</td><td class="num">${(dataStore.inventory.cov7||[]).length}</td><td><span class="badge badge-green">已加载</span></td></tr>
       </tbody></table>
     </div>
   ` : '';
 
   const invUploadHtml = dataStore.inventory ? '' : `
     <div style="margin-top:16px">
-      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">📋 上传库存分析Excel（6月库存分析模版）</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">📋 上传库存分析Excel（7月库存分析模版）</div>
       <div class="upload-zone" onclick="document.getElementById('inv-file-input').click()" style="border-style:dashed;border-color:#F59E0B">
         <div class="upload-icon">📋</div>
         <div class="upload-text">点击上传库存分析Excel</div>
@@ -6156,10 +6160,10 @@ function renderPullbackAnalysis(page) {
     return;
   }
 
-  // 2. 海南花露水 SKU 集合（优先用 6月库存覆盖数据 col8='是'，回退到名称匹配）
+  // 2. 海南花露水 SKU 集合（优先用 7月库存覆盖数据 col8='是'，回退到名称匹配）
   var hnMap = {};
   var rawSheets = window.__rawInventorySheets || inv._rawSheets || {};
-  var cov6Raw = rawSheets['6月库存覆盖数据'];
+  var cov6Raw = rawSheets['7月库存覆盖数据'];
   if (cov6Raw && cov6Raw.length > 1) {
     for (var ri = 1; ri < cov6Raw.length; ri++) {
       var rr = cov6Raw[ri]; if (!rr || !rr[1]) continue;
@@ -7735,7 +7739,7 @@ function renderInventoryForecast(page, tabBar) {
   };
   const CP = window._forecastParams.coverageDays;
   const GRADUAL = window._forecastParams.gradualRatio;
-  const covFields = ['cov07','cov08','cov09','cov10','cov11','cov12']; // Jul..Dec
+  const covFields = ['cov08','cov09','cov10','cov11','cov12','cov13']; // Aug..Jan(次年)
 
   // === 1. 从 history.json 读 2025/2026 1-6月 actual (千元) ===
   // 历史 actual 用 7RDC（含华东停运前）以对齐「库存金额趋势」年度对比卡片；华东 2026 已停运为 0，故 7RDC≈6RDC
@@ -7761,15 +7765,15 @@ function renderInventoryForecast(page, tabBar) {
   const twYuan = (sumRdcs('2026', 5, rdc6.concat(['总仓'])) - sumRdcs('2026', 5, rdc6)) * 1000; // 元（总仓仅 history 含，amountTrendBlocks 为 7RDC）
   const twYi = twYuan / 1e8;
 
-  // === 2. 从 cov6 算单品成本 + 7-12月 需求(元) ===
+  // === 2. 从 cov7(7月) 算单品成本 + 8月-次年1月 需求(元) ===
   // 起始库存：只算"可出货" = 计划可用库存(planAmt) + 在途库存(inTransitAmt)
   //   不含 残次/过期/退货/近效期（这些不能用于正常出货）
   // 按 window._invHainan 筛选：'yes' 只算 isHainan=true 的 SKU；'no' 跳过；'all' 不筛
-  const cov6 = (dataStore.inventory && dataStore.inventory.cov6) || [];
+  const cov7 = (dataStore.inventory && dataStore.inventory.cov7) || [];
   const demandYuan = {}; rdc6.forEach(r => demandYuan[r] = [0,0,0,0,0,0]);
   const startInvRdcYuan = {}; rdc6.forEach(r => startInvRdcYuan[r] = 0);
   let skuCount = 0;
-  cov6.forEach(d => {
+  cov7.forEach(d => {
     if (rdc6.indexOf(d.rdc) < 0) return;
     // 海南花露水筛选
     if (_hFilter === 'yes' && d.isHainan !== true) return;
@@ -7790,7 +7794,7 @@ function renderInventoryForecast(page, tabBar) {
     let cur = startInvRdcYuan[rdc];
     const end = [];
     for (let t = 0; t < 5; t++) {  // 8月-12月：5个月预测
-      const demand = d[t + 1] || d[t] || 0;  // d[1..5] = cov08..cov12（d[0]=cov07 不再用作预测起点）
+      const demand = d[t + 1] || d[t] || 0;  // d[1..5] = cov09..cov13（d[0]=cov08 不再用作预测起点）
       const nextD = t < 4 ? d[t + 2] || d[t] : d[t + 1] || d[t];
       const targetEnd = nextD * cf;
       if (cur >= demand + targetEnd) {
@@ -7828,20 +7832,20 @@ function renderInventoryForecast(page, tabBar) {
   // === 8. 覆盖表 (基于未来 6 个月逐月累积需求，模拟库存能消化几个月) ===
   // 库存量 = 全部在库 SKU；逐月扣减需求，得到「库存能撑到几月」
   const _hcFilter = window._invHainan || 'all';
-  const cov6Filtered = _hcFilter === 'all' ? cov6 : cov6.filter(function(d) { return _hcFilter === 'yes' ? d.isHainan === true : d.isHainan !== true; });
+  const cov7Filtered = _hcFilter === 'all' ? cov7 : cov7.filter(function(d) { return _hcFilter === 'yes' ? d.isHainan === true : d.isHainan !== true; });
   const cover = [];
   rdc6.forEach(r => {
     let invQty = 0;
-    const monthDemands = [0, 0, 0, 0, 0, 0]; // 7月..12月
-    cov6Filtered.forEach(d => {
+    const monthDemands = [0, 0, 0, 0, 0, 0]; // 8月..次年1月
+    cov7Filtered.forEach(d => {
       if (d.rdc !== r) return;
       invQty += d.availableQty || 0;
-      monthDemands[0] += d.cov07 || 0;
-      monthDemands[1] += d.cov08 || 0;
-      monthDemands[2] += d.cov09 || 0;
-      monthDemands[3] += d.cov10 || 0;
-      monthDemands[4] += d.cov11 || 0;
-      monthDemands[5] += d.cov12 || 0;
+      monthDemands[0] += d.cov08 || 0;
+      monthDemands[1] += d.cov09 || 0;
+      monthDemands[2] += d.cov10 || 0;
+      monthDemands[3] += d.cov11 || 0;
+      monthDemands[4] += d.cov12 || 0;
+      monthDemands[5] += d.cov13 || 0;
     });
     // 逐月扣减，模拟库存消化进度
     let remaining = invQty, coveredMonths = 0;
@@ -7908,9 +7912,9 @@ function renderInventoryForecast(page, tabBar) {
     '</div>' +
 
     '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header"><span class="card-title">当前库存 vs 未来需求覆盖分析（6 月末）</span></div>' +
+      '<div class="card-header"><span class="card-title">当前库存 vs 未来需求覆盖分析（7 月末）</span></div>' +
       '<div class="table-wrap" id="table-forecast-cover"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 用 6 月末库存量逐月扣减未来 6 个月（7-12 月）需求，得出库存能消化到几月。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 用 7 月末库存量逐月扣减未来 6 个月（8月-次年1月）需求，得出库存能消化到几月。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
     '</div>' +
 
     '<div class="card">' +
@@ -9044,17 +9048,19 @@ function parseInventoryExcel(rawData) {
       if (d['5月'] > 0) d['环比'] = (d['6月'] - d['5月']) / d['5月'];
     });
 
-    // Sheet 3/4: 库存状态分析 (5月/6月)
+    // Sheet 3/4: 库存状态分析 (5月/6月/7月)
     const status5Arr = findByName('5月库存状态'); const status5 = parseStatusSheet(status5Arr || []);
     const status6Arr = findByName('6月库存状态'); const status6 = parseStatusSheet(status6Arr || []);
+    const status7Arr = findByName('7月库存状态'); const status7 = parseStatusSheet(status7Arr || []);
 
-    // Sheet 5/6: 库存覆盖分析 (5月/6月)
+    // Sheet 5/6/7: 库存覆盖分析 (5月/6月/7月)
     const cov5 = parseCoverageSheet(findByName('5月库存覆盖') || []); // 5月
     const cov6 = parseCoverageSheet(findByName('6月库存覆盖') || []); // 6月
+    const cov7 = parseCoverageSheet(findByName('7月库存覆盖') || []); // 7月
 
-    // 从6月覆盖明细按RDC汇总，并将覆盖月数分类映射为标准周期
+    // 从7月覆盖明细（当前月）按RDC汇总，并将覆盖周数分类映射为标准周期
     const rdcCoverage = {};
-    cov6.forEach(d => {
+    cov7.forEach(d => {
       if (!rdcCoverage[d.rdc]) rdcCoverage[d.rdc] = { qty: {}, amt: {} };
       const p = rdcCoverage[d.rdc];
       const cov = mapCovLevel(d.coverageLevel);
@@ -9068,17 +9074,33 @@ function parseInventoryExcel(rawData) {
     const turnoverData = invTurnoverSheet ? parseInventoryTurnoverSheet(invTurnoverSheet) : null;
     if (turnoverData) dataStore.inventoryTurnover = turnoverData;
 
-    // 6月库存状态分析 → 按 RDC+SKU 聚合「效期风险」指标：可销售库存中 临期天数/总货架寿命 < 2/3 的金额占比
+    // 库存状态分析 → 按 RDC+SKU 聚合「效期风险」指标：可销售库存中 临期天数/总货架寿命 < 2/3 的金额占比
+    // 兼容 6月（状态列 ∈ {计划可用库存,7~1/2效期,可用库存}）与 7月（快报月报-红橙黄预警 === '可用库存'，最严格口径）
     function buildExpiryMap(arr) {
       const m = {};
+      if (!arr || arr.length < 2) return m;
+      const h = arr[0] || [];
+      function cIdx(name) {
+        for (let i = 0; i < h.length; i++) { const v = String(h[i] || '').trim(); if (v === name || v.indexOf(name) >= 0) return i; }
+        return -1;
+      }
+      const C_RDC = cIdx('RDC'), C_SKU = cIdx('产品编码'), C_AMT = cIdx('库存金额'),
+            C_AGE = cIdx('临期天数'), C_LIFE = cIdx('总货架寿命'),
+            C_STATUS = cIdx('状态'), C_WARN = cIdx('快报月报-红橙黄预警');
       for (let i = 1; i < arr.length; i++) {
         const r = arr[i]; if (!r) continue;
-        const st = String(r[13] || '').trim();
-        if (st !== '计划可用库存' && st !== '7个月~1/2效期' && st !== '可用库存') continue; // 仅可销售状态（效期>1/2）
-        const rdc = mapRDCName(String(r[1] || '').trim());
-        const sku = String(r[3] || '').trim();
+        let sellable = false;
+        if (C_WARN >= 0) {
+          sellable = String(r[C_WARN] || '').trim() === '可用库存'; // 7月：仅「可用库存」最严格
+        } else if (C_STATUS >= 0) {
+          const st = String(r[C_STATUS] || '').trim();
+          sellable = st === '计划可用库存' || st === '7~1/2效期' || st === '可用库存';
+        }
+        if (!sellable) continue;
+        const rdc = mapRDCName(String(r[C_RDC>=0?C_RDC:1] || '').trim());
+        const sku = String(r[C_SKU>=0?C_SKU:3] || '').trim();
         if (!sku) continue;
-        const amt = getSN(r, 11), ld = getSN(r, 9), life = getSN(r, 10); // 金额 / 临期天数 / 总货架寿命
+        const amt = getSN(r, C_AMT>=0?C_AMT:11), ld = getSN(r, C_AGE>=0?C_AGE:9), life = getSN(r, C_LIFE>=0?C_LIFE:10);
         const key = rdc + '|' + sku;
         if (!m[key]) m[key] = { sellable: 0, below23: 0 };
         m[key].sellable += amt;
@@ -9087,6 +9109,7 @@ function parseInventoryExcel(rawData) {
       return m;
     }
     const expiry6 = buildExpiryMap(status6Arr || []);
+    const expiry7 = buildExpiryMap(status7Arr || []);
 
     // Save data
     // 解析「海南花露水历史数据」sheet：按 (年, 月, RDC, 状态) 聚合金额
@@ -9467,7 +9490,7 @@ function parseInventoryExcel(rawData) {
     }
 
     dataStore.inventory = {
-      summary, rdcStatus, status5, status6, cov5, cov6, rdcCoverage, expiry6,
+      summary, rdcStatus, status5, status6, status7, cov5, cov6, cov7, rdcCoverage, expiry6, expiry7,
       hainanHistoryStatus, productMaster, pullbackByRdcMonth,
       amountTrendBlocks, structureByYear, structureByYearNoHainan, coverageNew,
       pullbackRaw: pullbackArr || [],  // 原始行化数据（保留兼容）
@@ -9616,6 +9639,14 @@ function parseInventoryExcel(rawData) {
         }
         return -1;
       }
+      function colLastIdx(name) {
+        let r = -1;
+        for (let i = 0; i < header.length; i++) {
+          const v = String(header[i] || '').trim();
+          if (v === name || v.indexOf(name) >= 0) r = i;
+        }
+        return r;
+      }
       const C_RDC = colIdx('RDC');
       const C_SKU = colIdx('产品编码');
       const C_NAME = colIdx('产品名称');
@@ -9627,23 +9658,23 @@ function parseInventoryExcel(rawData) {
       const C_HAINAN = colIdx('海南花露水');
       const C_QTY = colIdx('库存总数量');
       const C_TOTAL = colIdx('库存总金额');
-      // 金额字段（按表头动态定位，5月 sheet 多偏移 1 列）
-      const C_STALE = colIdx('残次（元）');
-      const C_EXPIRED = colIdx('过期~6个月（元）');
-      const C_RETURN = colIdx('退货库位（元）');
-      const C_NEAR = colIdx('7~1/2效期（元）');
-      const C_AVAIL_RAW = colIdx('可用库存（元）');  // 「可用库存」对应 planAmt
-      const C_INTRANSIT = colIdx('在途库存（元）');
-      // 数量字段
-      const C_QTY_AVAIL = colIdx('可用库存（个）');
-      // 未来需求: cov06..cov12 = 2026-06..12（按列名匹配，5月只有 06-11 共 6 个月，6月只有 07-12 共 6 个月）
+      // 金额字段（按表头动态定位，兼容 6月「残次（元）」与 7月「【红色预警】残次品、效期品<1/3」等重命名）
+      const C_STALE = colIdx('残次品') >= 0 ? colIdx('残次品') : colIdx('残次（元）');
+      const C_EXPIRED = colIdx('过期~6个月（元）'); // 7月模板无独立"过期"列 → 0（已并入红/橙预警）
+      const C_RETURN = colIdx('退货品') >= 0 ? colIdx('退货品') : colIdx('退货库位（元）');
+      const C_NEAR = colIdx('1/3<效期') >= 0 ? colIdx('1/3<效期') : (colIdx('黄色预警') >= 0 ? colIdx('黄色预警') : colIdx('7~1/2效期（元）'));
+      const C_AVAIL_RAW = colIdx('可用库存（元）') >= 0 ? colIdx('可用库存（元）') : colIdx('可用库存'); // 「可用库存」对应 planAmt（7月首个"可用库存"=金额版）
+      const C_INTRANSIT = colIdx('在途库存（元）') >= 0 ? colIdx('在途库存（元）') : colIdx('在途');
+      // 数量字段：7月"可用库存"出现两次（金额版在前/数量版在后），取最后一次出现 = 数量版
+      const C_QTY_AVAIL = colIdx('可用库存（个）') >= 0 ? colIdx('可用库存（个）') : colLastIdx('可用库存');
+      // 未来需求: cov06..cov13 = 2026-06..2027-01（按列名匹配；5月 06-11、6月 07-12、7月 08-13 各 6 个月）
       const C_DEMAND = {};
-      ['2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'].forEach((n) => {
+      ['2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12','2027-01'].forEach((n) => {
         const covIdx = parseInt(n.split('-')[1], 10).toString().padStart(2, '0');
         C_DEMAND['cov' + covIdx] = colIdx(n);
       });
       const C_COVERAGE = colIdx('库存覆盖月数') >= 0 ? colIdx('库存覆盖月数') : colIdx('库存覆盖');
-      const C_COV_LEVEL = colIdx('覆盖月数分类');
+      const C_COV_LEVEL = colIdx('覆盖周数分类') >= 0 ? colIdx('覆盖周数分类') : colIdx('覆盖月数分类');
       for (let i = 2; i < arr.length; i++) {
         const r = arr[i];
         if (!r || r.length < 25) continue;
@@ -9676,7 +9707,7 @@ function parseInventoryExcel(rawData) {
           nearExpiryAmt: C_NEAR>=0 ? getSN(r,C_NEAR) : 0,
           planAmt: C_AVAIL_RAW>=0 ? getSN(r,C_AVAIL_RAW) : 0,
           inTransitAmt: C_INTRANSIT>=0 ? getSN(r,C_INTRANSIT) : 0,
-          // 未来需求: cov06..cov12 = 2026-06..12（按列名匹配，5月只有 06-11）
+          // 未来需求: cov06..cov13 = 2026-06..2027-01（按列名匹配，各月模板只含自身起点起 6 个月）
           cov06: getSN(r, C_DEMAND.cov06>=0?C_DEMAND.cov06:-1),
           cov07: getSN(r, C_DEMAND.cov07>=0?C_DEMAND.cov07:-1),
           cov08: getSN(r, C_DEMAND.cov08>=0?C_DEMAND.cov08:-1),
@@ -9684,6 +9715,7 @@ function parseInventoryExcel(rawData) {
           cov10: getSN(r, C_DEMAND.cov10>=0?C_DEMAND.cov10:-1),
           cov11: getSN(r, C_DEMAND.cov11>=0?C_DEMAND.cov11:-1),
           cov12: getSN(r, C_DEMAND.cov12>=0?C_DEMAND.cov12:-1),
+          cov13: getSN(r, C_DEMAND.cov13>=0?C_DEMAND.cov13:-1),
           coverageMonths: getSN(r, C_COVERAGE>=0?C_COVERAGE:29),
           coverageLevel: covLabel
         });
@@ -9790,8 +9822,11 @@ function renderInventoryStructure() {
     const rdcFilter = window._isRdc;
     const allRdcs = ['东北RDC','华北RDC','华东RDC','华南RDC','华中RDC','西北RDC','西南RDC'];
     // 动态月份：取 structure['2026'] 实际包含的月份（覆盖数据更新后会扩展），无结构数据则默认 1-6月
-    const months2026 = structureAll && structureAll['2026'] ? Object.keys(structureAll['2026']).map(m => +m).filter(m => !isNaN(m)).sort((a, b) => a - b) : [];
-    const MONTHS = months2026.length > 0 ? months2026 : [1,2,3,4,5,6];
+    const monthsAll2026 = structureAll && structureAll['2026'] ? Object.keys(structureAll['2026']).map(m => +m).filter(m => !isNaN(m)).sort((a, b) => a - b) : [];
+    // 当前分析月 = 覆盖数据最新月（cov7=7月 / cov6=6月 / cov5=5月）；库存金额趋势仅展示到当前月，保持与覆盖/慢动口径一致（后续换月自动前移）
+    const _curMonth = (inv && inv.cov7) ? 7 : ((inv && inv.cov6) ? 6 : ((inv && inv.cov5) ? 5 : 6));
+    const months2026 = monthsAll2026.filter(m => m <= _curMonth);
+    const MONTHS = months2026.length > 0 ? months2026 : (monthsAll2026.length ? monthsAll2026 : [1,2,3,4,5,6]);
     const monthLabels = MONTHS.map(m => m + '月');
     const latestMonth = MONTHS[MONTHS.length - 1] || 6;
     const STATUS_META = [
@@ -9879,9 +9914,9 @@ function renderInventoryStructure() {
       renderInventoryStructure();
     };
 
-    // 库存覆盖数据（SKU 级聚合：支持海南花露水筛选；与点击下钻明细同源 = 6月库存覆盖数据 sheet）
-    const cov6All = (dataStore.inventory && dataStore.inventory.cov6) || [];
-    const covRdcs = cov6All.reduce((acc, d) => { if (d && d.rdc && acc.indexOf(d.rdc) < 0) acc.push(d.rdc); return acc; }, []);
+    // 库存覆盖数据（SKU 级聚合：支持海南花露水筛选；与点击下钻明细同源 = 7月库存覆盖数据 sheet）
+    const cov7All = (dataStore.inventory && dataStore.inventory.cov7) || [];
+    const covRdcs = cov7All.reduce((acc, d) => { if (d && d.rdc && acc.indexOf(d.rdc) < 0) acc.push(d.rdc); return acc; }, []);
     const covLabels = ['≤1个月','1~2个月','2~3个月','3~4个月','4~5个月','5~6个月','大于6个月','零库存','无需求','非卖品','促销装','新品期'];
     const covColors = ['#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE','#1D4ED8','#1E3A8A','#94A3B8','#9CA3AF','#6B7280','#F59E0B','#10B981'];
     // 兼容 0~1个月 / 零库存 变体 → 标准标签
@@ -9889,7 +9924,7 @@ function renderInventoryStructure() {
     function covKey(cov, l) { return cov[l] ? l : (l === '≤1个月' && cov['0~1个月'] ? '0~1个月' : null); }
     // 按 RDC × 覆盖分类 聚合 6 月 SKU 明细金额（元），跟随海南花露水筛选
     const covAgg = {}; // {RDC: {分类: 金额}}
-    cov6All.forEach(d => {
+    cov7All.forEach(d => {
       if (!d || !d.rdc) return;
       if (hainanFilter === 'yes' && d.isHainan !== true) return;
       if (hainanFilter === 'no' && d.isHainan === true) return;
@@ -9931,9 +9966,9 @@ function renderInventoryStructure() {
     });
     const covGrandTotal = covTableRows.reduce((s, r) => s + r.total, 0);
 
-    // 风险库存 SKU 变动（5月 → 6月）：按 SKU 聚合风险金额(stale+expired+return+near)差值，跟随海南+RDC筛选
-    const cov5All = (dataStore.inventory && dataStore.inventory.cov5) || [];
-    const cov6All2 = (dataStore.inventory && dataStore.inventory.cov6) || [];
+    // 风险库存 SKU 变动（6月 → 7月）：按 SKU 聚合风险金额(stale+expired+return+near)差值，跟随海南+RDC筛选
+    const cov6All = (dataStore.inventory && dataStore.inventory.cov6) || [];
+    const cov7All2 = (dataStore.inventory && dataStore.inventory.cov7) || [];
     const RISK_NAMES = [['staleAmt','残次','#F97316'],['expiredAmt','过期','#EF4444'],['returnAmt','退货','#9CA3AF'],['nearExpiryAmt','近效期','#FACC15']];
     function riskOf(d) { return RISK_NAMES.reduce((s,[k]) => s + (d[k]||0), 0); }
     function riskBreak(d) { return RISK_NAMES.map(([k]) => d[k]||0); } // [stale, expired, return, near]
@@ -9952,15 +9987,15 @@ function renderInventoryStructure() {
       });
       return m;
     }
-    const riskM5 = aggRisk(cov5All);
-    const riskM6 = aggRisk(cov6All2);
+    const riskM6 = aggRisk(cov6All);
+    const riskM7 = aggRisk(cov7All2);
     const riskSkuList = [];
-    Object.keys(riskM6).forEach(k => {
-      const a = riskM6[k], b = riskM5[k];
+    Object.keys(riskM7).forEach(k => {
+      const a = riskM7[k], b = riskM6[k];
       const amt5 = b ? b.amt : 0;
       riskSkuList.push({ sku: k, skuName: a.skuName, brand: a.brand, isHainan: a.isHainan, amt5: amt5, amt6: a.amt, diff: a.amt - amt5, parts5: b ? b.parts : [0,0,0,0], parts6: a.parts });
     });
-    Object.keys(riskM5).forEach(k => { if (!riskM6[k]) { const b = riskM5[k]; riskSkuList.push({ sku: k, skuName: b.skuName, brand: b.brand, isHainan: b.isHainan, amt5: b.amt, amt6: 0, diff: -b.amt, parts5: b.parts, parts6: [0,0,0,0] }); } });
+    Object.keys(riskM6).forEach(k => { if (!riskM7[k]) { const b = riskM6[k]; riskSkuList.push({ sku: k, skuName: b.skuName, brand: b.brand, isHainan: b.isHainan, amt5: b.amt, amt6: 0, diff: -b.amt, parts5: b.parts, parts6: [0,0,0,0] }); } });
     const riskUp = riskSkuList.filter(x => x.diff > 0).sort((a,b) => b.diff - a.diff).slice(0, 10);
     const riskDown = riskSkuList.filter(x => x.diff < 0).sort((a,b) => a.diff - b.diff).slice(0, 10);
     // 把 4 个状态占比做成小横条 + 文字（用 6 月金额口径）
@@ -10038,7 +10073,7 @@ function renderInventoryStructure() {
       // 库存覆盖-可用库存：堆叠柱状图（元）
       '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header" style="display:flex;flex-direction:column;gap:6px">' +
-        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📦 库存覆盖-可用库存（2026年6月 · 按RDC堆叠）</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：元 · 数据源：6月库存覆盖数据(SKU级，跟随海南筛选)</span></div>' +
+        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📦 库存覆盖-可用库存（2026年7月 · 按RDC堆叠）</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：元 · 数据源：7月库存覆盖数据(SKU级，跟随海南筛选)</span></div>' +
       // RDC 切换控件：仅在顶部 RDC=全部 时启用；点击色块/RDC名 整体切换显示
       (rdcFilter === 'all' ? ('<div style="display:flex;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:11px;width:100%">' +
         '<span style="color:#6B7280">点击色块切换RDC显示：</span>' +
@@ -10058,18 +10093,18 @@ function renderInventoryStructure() {
       '</div>' +
       '<div class="chart-container" style="height:360px;max-width:75%;min-width:480px" id="chart-cov-stacked"></div>' +
       '</div>' +
-      // 风险库存 SKU 变动（5月→6月）
+      // 风险库存 SKU 变动（6月→7月）
       '<div class="card" style="margin-bottom:16px">' +
-      '<div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="card-title">🔴 风险库存 SKU 变动（2026年5月 → 6月）</span>' +
+      '<div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="card-title">🔴 风险库存 SKU 变动（2026年6月 → 7月）</span>' +
       '<button class="btn-export" onclick="exportRiskSkuChangeCSV()" style="margin-left:auto;font-size:12px;padding:4px 10px">导出CSV</button>' +
       '<span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 风险=残次+过期+退货+近效期 · 单位：元 · 点击行下钻</span></div>' +
       '<div class="row-2" style="gap:16px">' +
-        '<div class="card" style="background:#FFF7F7;border-color:#FECACA"><div class="card-header"><span class="card-title" style="color:#EF4444">⬆ 风险库存上涨 TOP 10</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">5月→6月</span></div>' +
-        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">5月</th><th class="num">6月</th><th class="num">上涨</th><th>6月风险构成</th></tr></thead><tbody>' + riskUpHtml + '</tbody></table></div></div>' +
-        '<div class="card" style="background:#F0FDF4;border-color:#BBF7D0"><div class="card-header"><span class="card-title" style="color:#10B981">⬇ 风险库存下降 TOP 10</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">5月→6月</span></div>' +
-        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">5月</th><th class="num">6月</th><th class="num">下降</th><th>6月风险构成</th></tr></thead><tbody>' + riskDownHtml + '</tbody></table></div></div>' +
+        '<div class="card" style="background:#FFF7F7;border-color:#FECACA"><div class="card-header"><span class="card-title" style="color:#EF4444">⬆ 风险库存上涨 TOP 10</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">6月→7月</span></div>' +
+        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">6月</th><th class="num">7月</th><th class="num">上涨</th><th>7月风险构成</th></tr></thead><tbody>' + riskUpHtml + '</tbody></table></div></div>' +
+        '<div class="card" style="background:#F0FDF4;border-color:#BBF7D0"><div class="card-header"><span class="card-title" style="color:#10B981">⬇ 风险库存下降 TOP 10</span><span style="font-size:11px;color:var(--text-secondary);margin-left:8px">6月→7月</span></div>' +
+        '<div class="table-wrap" style="overflow-x:auto"><table class="data-table" style="font-size:11px"><thead><tr><th>SKU</th><th>名称</th><th>品牌</th><th class="num">6月</th><th class="num">7月</th><th class="num">下降</th><th>7月风险构成</th></tr></thead><tbody>' + riskDownHtml + '</tbody></table></div></div>' +
       '</div>' +
-      '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">口径：同一 SKU 跨 RDC 聚合；「上涨」= 6月风险金额 − 5月风险金额（红色），「下降」= 5月 − 6月（绿色）。点击行查看该 SKU 在 5月/6月 的 RDC 明细。</div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">口径：同一 SKU 跨 RDC 聚合；「上涨」= 7月风险金额 − 6月风险金额（红色），「下降」= 6月 − 7月（绿色）。点击行查看该 SKU 在 6月/7月 的 RDC 明细。</div>' +
       '</div>';
 
     // 写入派生缓存（HTML + 图表纯数据），下次切换秒开
@@ -10204,7 +10239,7 @@ function drillCoverageDetail(data, label) {
 }
 
 function drillRdcCovDetail(rdc) {
-  let data = (dataStore.inventory.cov6 || []).filter(d => d.rdc === rdc);
+  let data = (dataStore.inventory.cov7 || []).filter(d => d.rdc === rdc);
   const h = window._invHainan || 'all';
   if (h === 'yes') data = data.filter(d => d.isHainan === true);
   if (h === 'no') data = data.filter(d => d.isHainan !== true);
@@ -10234,8 +10269,8 @@ function drillRiskSkuDetail(sku) {
       for (let i = 0; i < 4; i++) parts[i] += br[i];
     });
   }
-  push((dataStore.inventory && dataStore.inventory.cov5) || [], 5);
-  push((dataStore.inventory && dataStore.inventory.cov6) || [], 6);
+  push((dataStore.inventory && dataStore.inventory.cov6) || [], 5);
+  push((dataStore.inventory && dataStore.inventory.cov7) || [], 6);
   const rows = Object.values(map);
   if (rows.length === 0) { showToast('该 SKU 无风险库存数据'); return; }
   rows.forEach(r => r.diff = (r.amt6 || 0) - (r.amt5 || 0));
@@ -10250,7 +10285,7 @@ function drillRiskSkuDetail(sku) {
 // 库存覆盖图点击下钻：RDC + 周期 → SKU 明细
 function drillRdcPeriodCovDetail(rdc, periodLabel) {
   // 兼容 "0~1个月" 与 "≤1个月"
-  let data = (dataStore.inventory.cov6 || []).filter(d => d.rdc === rdc && (d.coverageLevel === periodLabel || (periodLabel === '≤1个月' && d.coverageLevel === '0~1个月')));
+  let data = (dataStore.inventory.cov7 || []).filter(d => d.rdc === rdc && (d.coverageLevel === periodLabel || (periodLabel === '≤1个月' && d.coverageLevel === '0~1个月')));
   const h = window._invHainan || 'all';
   if (h === 'yes') data = data.filter(d => d.isHainan === true);
   if (h === 'no') data = data.filter(d => d.isHainan !== true);
@@ -10278,7 +10313,7 @@ function renderDrillModal() {
     html += '<table class="data-table"><thead><tr><th>库位</th><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>可用库存</th><th>金额</th><th>状态</th><th>海南花露水</th></tr></thead><tbody>' +
       pageData.map(d => '<tr><td>' + (d.location||'') + '</td><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.amount) + '</td><td>' + (d.status||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
   } else if (tp === 'risk') {
-    // v79：按 RDC×SKU pivot，同一行展示 5月/6月 风险金额对比
+    // v79：按 RDC×SKU pivot，同一行展示 6月/7月 风险金额对比
     // v80：月份列下加 4 类状态构成小字（残次/过期/退货/近效期）+ 新增「变动主因」列
     const R_NAMES = [['残次','#F97316'],['过期','#EF4444'],['退货','#9CA3AF'],['近效期','#FACC15']];
     // 状态构成小字：某月金额中 4 类占比（只显示非 0 类）
@@ -10290,7 +10325,7 @@ function renderDrillModal() {
       }
       return '<div style="font-size:10px;line-height:1.5;margin-top:2px">' + items.join(' ') + '</div>';
     }
-    // 变动主因：6月 vs 5月 各类状态金额差，取绝对值最大的一类
+    // 变动主因：7月 vs 6月 各类状态金额差，取绝对值最大的一类
     function mainDriver(d) {
       const diffs = [];
       for (let i = 0; i < 4; i++) diffs.push({ name: R_NAMES[i][0], diff: (d.parts6||[0,0,0,0])[i] - (d.parts5||[0,0,0,0])[i] });
@@ -10302,8 +10337,8 @@ function renderDrillModal() {
     }
     html += '<table class="data-table"><thead><tr>' +
       '<th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>海南花露水</th>' +
-      '<th class="num" style="background:rgba(59,130,246,0.10)">5月风险金额</th>' +
-      '<th class="num" style="background:rgba(16,185,129,0.10)">6月风险金额</th>' +
+      '<th class="num" style="background:rgba(59,130,246,0.10)">6月风险金额</th>' +
+      '<th class="num" style="background:rgba(16,185,129,0.10)">7月风险金额</th>' +
       '<th class="num">变动</th><th>变动主因</th></tr></thead><tbody>' +
       pageData.map(d => {
         const cls = d.diff > 0 ? '#EF4444' : (d.diff < 0 ? '#10B981' : 'var(--text-secondary)');
@@ -10321,8 +10356,8 @@ function renderDrillModal() {
           '</tr>';
       }).join('') + '</tbody></table>';
   } else {
-    html += '<table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>可用库存</th><th>金额</th><th>6月</th><th>7月</th><th>8月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
-      pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov06) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
+    html += '<table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>可用库存</th><th>金额</th><th>7月</th><th>8月</th><th>9月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
+      pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td class="num">' + formatNum(d.cov09) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
   }
 
   html += '<div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center">' +
@@ -10426,7 +10461,7 @@ function renderInventoryCoverageDetail() {
 function exportRiskSkuChangeCSV() {
   const d = window._riskSkuExport || { up: [], down: [] };
   if ((!d.up || d.up.length === 0) && (!d.down || d.down.length === 0)) { showToast('暂无数据可导出', true); return; }
-  let csv = '\uFEFF变动类型,SKU,名称,品牌,海南花露水,5月风险金额,6月风险金额,变动金额,残次5月,过期5月,退货5月,近效期5月,残次6月,过期6月,退货6月,近效期6月\n';
+  let csv = '\uFEFF变动类型,SKU,名称,品牌,海南花露水,6月风险金额,7月风险金额,变动金额,残次6月,过期6月,退货6月,近效期6月,残次7月,过期7月,退货7月,近效期7月\n';
   function row(tag, x) {
     return [tag, x.sku, x.skuName, x.brand, x.isHainan ? '是' : '否', x.amt5, x.amt6, x.diff, x.parts5[0], x.parts5[1], x.parts5[2], x.parts5[3], x.parts6[0], x.parts6[1], x.parts6[2], x.parts6[3]].join(',') + '\n';
   }
@@ -10439,11 +10474,11 @@ function exportRiskSkuChangeCSV() {
 function exportInventoryCoverageDetail() {
   const data = window._invCoverageDetailData || [];
   if (data.length === 0) { showToast('暂无数据可导出', true); return; }
-  let csv = '\uFEFFRDC,SKU,名称,品牌,可用库存,金额,6月,7月,8月,9月,10月,11月,覆盖,海南花露水\n';
+  let csv = '\uFEFFRDC,SKU,名称,品牌,可用库存,金额,7月,8月,9月,10月,11月,12月,覆盖,海南花露水\n';
   data.forEach(d => {
     csv += [
       d.rdc || '', d.sku || '', d.skuName || '', d.brand || '',
-      d.availableQty || 0, d.inventoryAmt || 0, d.cov06 || 0, d.cov07 || 0, d.cov08 || 0, d.cov09 || 0, d.cov10 || 0, d.cov11 || 0,
+      d.availableQty || 0, d.inventoryAmt || 0, d.cov07 || 0, d.cov08 || 0, d.cov09 || 0, d.cov10 || 0, d.cov11 || 0, d.cov12 || 0,
       d.coverageLevel || '', d.isHainan ? '是' : '否'
     ].join(',') + '\n';
   });
@@ -10479,7 +10514,7 @@ function renderSlowMoving() {
     cov5Len: dataStore.inventory?.cov5?.length,
     filters: window._slowFilters
   });
-  if (!dataStore.inventory || !dataStore.inventory.cov6) {
+  if (!dataStore.inventory || !dataStore.inventory.cov7) {
     page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🐢</div><div>请先导入库存分析Excel</div></div>';
     return;
   }
@@ -10501,8 +10536,8 @@ function renderSlowMoving() {
     else if (obsoleteFilter === 'no') res = res.filter(function(d) { return !((productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品')); });
     return res;
   }
-  var cov6 = filterArr(inv.cov6 || []);
-  var cov5 = filterArr(inv.cov5 || []);
+  var cov6 = filterArr(inv.cov7 || []); // 当前月=7月
+  var cov5 = filterArr(inv.cov6 || []); // 基准月=6月
   var excludedCount = 0;
   var slow6 = cov6.filter(function(d) { if (isExcludedProduct(d)) { excludedCount++; return false; } return isSlowCoverage(d.coverageLevel); });
   var slow5 = cov5.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d); });
@@ -10541,12 +10576,12 @@ function renderSlowMoving() {
   var futureDemand = {};
   slow6.forEach(function(d) {
     var key = d.rdc + '|' + d.sku;
-    futureDemand[key] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0);
+    futureDemand[key] = (d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0)+(d.cov13||0);
   });
   var futureDemand5 = {};
   cov5.forEach(function(d) {
     var key = d.rdc + '|' + d.sku;
-    futureDemand5[key] = (d.cov06||0)+(d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0);
+    futureDemand5[key] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0);
   });
   // 统一慢动品根因诊断引擎（新增慢动 + 当前慢动 + 跨RDC 共用，全部聚焦需求侧）
   function diagnoseSlowItem(o) {
@@ -10579,7 +10614,7 @@ function renderSlowMoving() {
     var demand = bizDemand[key] || 0;
     var fut = futureDemand[key] || 0;
     var fut5 = futureDemand5[key] || 0;
-    var exMap = (dataStore.inventory && dataStore.inventory.expiry6) ? dataStore.inventory.expiry6[key] : null;
+    var exMap = (dataStore.inventory && dataStore.inventory.expiry7) ? dataStore.inventory.expiry7[key] : null;
     var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0; // 可销售库存中 临期天数/总货架寿命<2/3 的占比
     var isNew = !slow5Keys.has(key);
     var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, demand: demand, fut: fut, fut5: fut5, expiryRatio: expiryRatio, isNew: isNew });
@@ -10608,7 +10643,7 @@ function renderSlowMoving() {
     if (obsoleteFilter === 'no') return !((productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品'));
     return true;
   }
-  var cov6AllRdc = (inv.cov6 || []).filter(function(d) {
+  var cov6AllRdc = (inv.cov7 || []).filter(function(d) {
     if (hainanFilter === 'yes' && d.isHainan !== true) return false;
     if (hainanFilter === 'no' && d.isHainan === true) return false;
     if (!obsoletePass(d)) return false;
@@ -10619,7 +10654,7 @@ function renderSlowMoving() {
     return isSlowCoverage(d.coverageLevel);
   });
   // 全量5月参照（与慢动明细共用统一诊断引擎；仅受海南花露水/是否淘汰筛选影响，不受RDC下拉影响）
-  var cov5AllRdc = (inv.cov5 || []).filter(function(d) {
+  var cov5AllRdc = (inv.cov6 || []).filter(function(d) {
     if (hainanFilter === 'yes' && d.isHainan !== true) return false;
     if (hainanFilter === 'no' && d.isHainan === true) return false;
     if (!obsoletePass(d)) return false;
@@ -10627,7 +10662,7 @@ function renderSlowMoving() {
   });
   var maySlowKeysAll = new Set(cov5AllRdc.filter(function(d) { return isSlowCoverage(d.coverageLevel) && !isExcludedProduct(d); }).map(function(d) { return d.rdc + '|' + d.sku; }));
   var futureDemand5All = {};
-  cov5AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemand5All[k] = (d.cov06||0)+(d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0); });
+  cov5AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemand5All[k] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0); });
   // 品牌×RDC 慢动占比矩阵（分子=慢动可用金额，分母=品牌该RDC全部可用金额）
   var brandRdcCell = {};
   cov6AllRdc.forEach(function(d) {
@@ -10676,12 +10711,12 @@ function renderSlowMoving() {
   var bizDemandAll = {};
   (dataStore.bizDemand || []).forEach(function(bz) { var k = normalizeRdcName(bz.rdc) + '|' + bz.opCode; if (!skuRdcKeysAll.has(k)) return; bizDemandAll[k] = (bizDemandAll[k] || 0) + (bz.dealerDemand || 0) + (bz.kaDemand || 0) + (bz.newChannel || 0); });
   var futureDemandAll = {};
-  slow6AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemandAll[k] = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0); });
+  slow6AllRdc.forEach(function(d) { var k = d.rdc + '|' + d.sku; futureDemandAll[k] = (d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0)+(d.cov13||0); });
   var brandFlagCount = {};
   var brandSlowCount = {};
   slow6AllRdc.forEach(function(d) {
     var k = d.rdc + '|' + d.sku; var tn = transNetAll[k] || { inn: 0, out: 0 }; var netIn = tn.inn - tn.out; var ship = shipQtyAll[k] || 0; var demand = bizDemandAll[k] || 0; var fut = futureDemandAll[k] || 0;
-    var exMap = (dataStore.inventory && dataStore.inventory.expiry6) ? dataStore.inventory.expiry6[k] : null;
+    var exMap = (dataStore.inventory && dataStore.inventory.expiry7) ? dataStore.inventory.expiry7[k] : null;
     var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0;
     var fut5 = futureDemand5All[k] || 0;
     var isNewAll = !maySlowKeysAll.has(k);
@@ -10744,9 +10779,9 @@ function renderSlowMoving() {
     var netIn = transNetAll2[key] ? (transNetAll2[key].inn - transNetAll2[key].out) : 0;
     var ship = shipQtyAll2[key] || 0;
     var demand = bizDemandAll2[key] || 0;
-    var fut = (d.cov07||0)+(d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0);
+    var fut = (d.cov08||0)+(d.cov09||0)+(d.cov10||0)+(d.cov11||0)+(d.cov12||0)+(d.cov13||0);
     var fut5v = futureDemand5All[key] || 0;
-    var exMap = (dataStore.inventory && dataStore.inventory.expiry6) ? dataStore.inventory.expiry6[key] : null;
+    var exMap = (dataStore.inventory && dataStore.inventory.expiry7) ? dataStore.inventory.expiry7[key] : null;
     var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0;
     var isNew = !maySlowKeysAll.has(key);
     var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, demand: demand, fut: fut, fut5: fut5v, expiryRatio: expiryRatio, isNew: isNew });
@@ -10863,7 +10898,7 @@ function renderSlowMoving() {
   legendCardHtml += '</div></div>';
   html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;align-items:stretch">' + matrixCardHtml + legendCardHtml + '</div>';
 
-  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🔴 本月新增慢动品 Top 20（5月正常→6月慢动）</span><button class="btn-export" onclick="exportSlowMovingNew()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>5月覆盖</th><th>6月覆盖</th><th class="num">计划可用库存量</th><th class="num">计划可用金额（千元）</th><th>根因</th><th>建议</th></tr></thead><tbody>';
+  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🔴 本月新增慢动品 Top 20（6月正常→7月慢动）</span><button class="btn-export" onclick="exportSlowMovingNew()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>6月覆盖</th><th>7月覆盖</th><th class="num">计划可用库存量</th><th class="num">计划可用金额（千元）</th><th>根因</th><th>建议</th></tr></thead><tbody>';
   if (topNew.length === 0) { html += '<tr><td colspan="10" style="text-align:center;padding:30px">暂无新增慢动品</td></tr>'; }
   else { topNew.forEach(function(r) { html += '<tr><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+(r.prevCoverageLevel||'-')+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
   html += '</tbody></table></div></div>';
@@ -10872,7 +10907,7 @@ function renderSlowMoving() {
   sortedBrands.forEach(function(b) { var rowTotal = allRdcs.reduce(function(s,r) { return s + (brandRdc[b][r]||0); }, 0) / 1000; html += '<tr><td><strong>'+b+'</strong></td>'+allRdcs.map(function(r){return '<td class="num">'+formatMoney((brandRdc[b][r]||0)/1000)+'</td>';}).join('')+'<td class="num"><strong>'+formatMoney(rowTotal)+'</strong></td></tr>'; });
   html += '</tbody></table></div></div>';
 
-  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">📊 当前慢动品明细（按金额降序）</span><button class="btn-export" onclick="exportSlowMovingAll()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">计划可用库存量</th><th class="num">计划可用金额</th><th>近2月出货</th><th>近2月补货净流入</th><th>6月分仓需求</th><th>根因</th><th>建议</th></tr></thead><tbody>';
+  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">📊 当前慢动品明细（按金额降序）</span><button class="btn-export" onclick="exportSlowMovingAll()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">计划可用库存量</th><th class="num">计划可用金额</th><th>近2月出货</th><th>近2月补货净流入</th><th>7月分仓需求</th><th>根因</th><th>建议</th></tr></thead><tbody>';
   if (pageData.length === 0) { html += '<tr><td colspan="12" style="text-align:center;padding:30px">无数据</td></tr>'; }
   else { pageData.forEach(function(r) { var key = r.rdc+'|'+r.sku; var tn = transNet[key]||{inn:0,out:0}; var net = tn.inn-tn.out; var ship = shipQty[key]||0; var fut = futureDemand[key]||0; html += '<tr><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td class="num">'+formatNum(ship)+'</td><td class="num">'+formatNum(net)+'</td><td class="num">'+formatNum(fut)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
   html += '</tbody></table></div><div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center"><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.max(1,window._slowPage-1);renderSlowMoving()" '+(p<=1?'disabled':'')+'>上一页</button><span style="font-size:12px">第'+p+'/'+totalPages+'页（共'+detailRows.length+'条）</span><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.min('+totalPages+',window._slowPage+1);renderSlowMoving()" '+(p>=totalPages?'disabled':'')+'>下一页</button></div></div>';
@@ -10882,7 +10917,7 @@ function renderSlowMoving() {
   setTimeout(function() {
     window._chartInstances = window._chartInstances || [];
     var trendChart = echarts.init(document.getElementById('chart-slow-trend'));
-    trendChart.setOption({ tooltip: { trigger: 'axis' }, grid: { left: 50, right: 20, top: 20, bottom: 30 }, xAxis: { type: 'category', data: ['5月','6月'] }, yAxis: { type: 'value', axisLabel: { formatter: function(v) { return (v/10000).toFixed(0)+'万'; } } }, series: [{ data: trendQty, type: 'line', smooth: true, areaStyle: { color: 'rgba(239,68,68,0.2)' }, itemStyle: { color: '#EF4444' } }] });
+    trendChart.setOption({ tooltip: { trigger: 'axis' }, grid: { left: 50, right: 20, top: 20, bottom: 30 }, xAxis: { type: 'category', data: ['6月','7月'] }, yAxis: { type: 'value', axisLabel: { formatter: function(v) { return (v/10000).toFixed(0)+'万'; } } }, series: [{ data: trendQty, type: 'line', smooth: true, areaStyle: { color: 'rgba(239,68,68,0.2)' }, itemStyle: { color: '#EF4444' } }] });
 
     var rdcChart = echarts.init(document.getElementById('chart-slow-rdc'));
     var rdcPieData = Object.keys(rdcAmt).map(function(r) { return { name: r, value: rdcAmt[r] / 1000 }; }).sort(function(a,b){return b.value-a.value;});
@@ -10983,7 +11018,7 @@ function renderSlowMoving() {
 function exportSlowMovingNew() {
   var rows = window._slowMovingNew || [];
   if (rows.length === 0) { showToast('暂无新增慢动品数据', true); return; }
-  var csv = '\uFEFFRDC,SKU,名称,品牌,5月覆盖,6月覆盖,库存量,金额（元）,根因,建议\n';
+  var csv = '\uFEFFRDC,SKU,名称,品牌,6月覆盖,7月覆盖,库存量,金额（元）,根因,建议\n';
   rows.forEach(function(r) { csv += [r.rdc, r.sku, r.skuName, r.brand, r.prevCoverageLevel, r.coverageLevel, r.availableQty, r.inventoryAmt, r.rootCause, r.advice].join(',') + '\n'; });
   downloadFile('新增慢动品Top20_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
@@ -11200,7 +11235,7 @@ function renderSlowMovingLogic() {
 
   // Section 1: 数据源
   s += '<h2>📦 数据来源</h2><div class="logic-card"><div class="rule-box">';
-  s += '<div class="rule-item"><div class="ri-flag">📊 库存覆盖数据</div><div class="ri-cond">6月/5月库存覆盖表</div><div class="ri-result">SKU×RDC 覆盖月数、可用库存金额、未来6个月需求</div></div>';
+  s += '<div class="rule-item"><div class="ri-flag">📊 库存覆盖数据</div><div class="ri-cond">7月/6月库存覆盖表</div><div class="ri-result">SKU×RDC 覆盖月数、可用库存金额、未来6个月需求</div></div>';
   s += '<div class="rule-item"><div class="ri-flag">📋 转储数据</div><div class="ri-cond">转储明细</div><div class="ri-result">SKU×RDC 净转入量</div></div>';
   s += '<div class="rule-item"><div class="ri-flag">🚚 订单明细</div><div class="ri-cond">近60天订单</div><div class="ri-result">SKU×RDC 实际出货量</div></div>';
   s += '<div class="rule-item"><div class="ri-flag">📝 业务需求</div><div class="ri-cond">业务提报需求</div><div class="ri-result">SKU×RDC 需求量</div></div>';
@@ -11209,7 +11244,7 @@ function renderSlowMovingLogic() {
   // Section 2: 判定流程
   s += '<h2>🔄 慢动品判定流程</h2><div class="logic-card">';
   s += '<div class="flow">';
-  s += '<div class="flow-item"><div class="fi-icon">📥</div><div class="fi-title">读取全部SKU</div><div class="fi-desc">6月库存覆盖数据<br/>共 ~2950 行 SKU×RDC</div></div>';
+  s += '<div class="flow-item"><div class="fi-icon">📥</div><div class="fi-title">读取全部SKU</div><div class="fi-desc">7月库存覆盖数据<br/>共 ~2737 行 SKU×RDC</div></div>';
   s += '<div class="flow-arrow">→</div>';
   s += '<div class="flow-item"><div class="fi-icon">🚫</div><div class="fi-title">排除特殊产品</div><div class="fi-desc">非卖品 / 促销装 / 新品期<br/><span class="tag tag-gray" style="font-size:10px">~627个SKU排除</span></div></div>';
   s += '<div class="flow-arrow">→</div>';
@@ -11229,14 +11264,14 @@ function renderSlowMovingLogic() {
   s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 实际出货 ship</div><div class="ri-cond">来源：订单明细 firstDayQty</div><div class="ri-result">真实卖出去的数量</div></div>';
   s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">🔄 净转入 netIn</div><div class="ri-cond">来源：转储数据 转入−转出</div><div class="ri-result">实际补货入库量（补多了即偏高）</div></div>';
   s += '<div class="rule-item" style="border-left-color:#D97706"><div class="ri-flag">📝 业务提报需求 demand</div><div class="ri-cond">来源：业务需求满足情况（经销商+KA+新渠道）</div><div class="ri-result">销售端报上来的需求</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📅 分仓未来需求 fut</div><div class="ri-cond">来源：6月覆盖表 cov07~cov12 合计（7~12月，6月起点的未来6个月）</div><div class="ri-result">系统按覆盖逻辑测算的分仓需求</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#0EA5E9"><div class="ri-flag">📆 分仓未来需求(上月) fut5</div><div class="ri-cond">来源：5月库存覆盖表 cov06~cov11 合计（6~11月，5月起点的未来6个月）</div><div class="ri-result">上月同期测算的分仓需求，用于环比</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📅 分仓未来需求 fut</div><div class="ri-cond">来源：7月覆盖表 cov08~cov13 合计（8月~次年1月，7月起点的未来6个月）</div><div class="ri-result">系统按覆盖逻辑测算的分仓需求</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#0EA5E9"><div class="ri-flag">📆 分仓未来需求(上月) fut5</div><div class="ri-cond">来源：6月库存覆盖表 cov07~cov12 合计（7~12月，6月起点的未来6个月）</div><div class="ri-result">上月同期测算的分仓需求，用于环比</div></div>';
   s += '</div>';
   s += '<p style="font-size:13px;font-weight:600;margin:16px 0 8px">五个诊断维度（任一命中即打标签，可多命中）</p>';
   var roots = [
     { flag:'🚚', result:'分仓需求虚高(过量补货)', cond:'净转入 / 出货 > 2.0 倍', field:'netIn / ship', color:'#DC2626', advice:'回溯分仓需求预测，下调提报系数；暂停按原需求补货' },
     { flag:'📝', result:'业务提报需求虚高', cond:'出货 / 业务提报需求 < 50%', field:'ship / demand', color:'#8B5CF6', advice:'回溯业务提报口径，下调该SKU提报系数；暂停按原需求补货' },
-    { flag:'📉', result:'未来需求下降', cond:'6月起点未来6个月 / 5月起点未来6个月 < 0.7（下降超30%）', field:'fut / fut5', color:'#059669', advice:'核实下降原因：若非真实萎缩则恢复预测，避免库存被动积压' },
+    { flag:'📉', result:'未来需求下降', cond:'7月起点未来6个月 / 6月起点未来6个月 < 0.7（下降超30%）', field:'fut / fut5', color:'#059669', advice:'核实下降原因：若非真实萎缩则恢复预测，避免库存被动积压' },
     { flag:'⏳', result:'效期风险', cond:'可销售库存中 临期天数/总货架寿命 < 2/3 占比 > 30%', field:'below23 / sellable', color:'#D97706', advice:'优先折价/特价出清临期库存，评估退厂或调拨' },
     { flag:'⏰', result:'严重呆滞', cond:'出货 = 0 且 分仓未来需求 = 0', field:'ship=0 且 fut=0', color:'#2563EB', advice:'折价出清或退厂处理，评估SKU清退或停产' }
   ];
@@ -11271,10 +11306,10 @@ function renderSlowMovingLogic() {
   s += '<div class="rule-box">';
   s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 分仓需求虚高(过量补货)</div><div class="ri-cond">判定：净转入/出货 > 2.0 倍</div><div class="ri-result">分仓提报多→触发大量补货→实际没卖</div></div>';
   s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">📝 业务提报需求虚高</div><div class="ri-cond">判定：出货/业务提报需求 < 50%</div><div class="ri-result">业务端提报多→触发补货→实际没卖</div></div>';
-  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 未来需求下降</div><div class="ri-cond">判定：(6月起点未来6个月 cov07~cov12) / (5月起点未来6个月 cov06~cov11) < 0.7（下降超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📉 未来需求下降</div><div class="ri-cond">判定：(7月起点未来6个月 cov08~cov13) / (6月起点未来6个月 cov07~cov12) < 0.7（下降超30%）</div><div class="ri-result">后续需求被大幅下调→覆盖被动拉高</div></div>';
   s += '<div class="rule-item" style="border-left-color:#DC2626"><div class="ri-flag">⚡ 需求信号全面失真</div><div class="ri-cond">判定：分仓虚高 + 业务虚高 同时命中</div><div class="ri-result">双端需求都失真，最危险，需冻结补货复盘</div></div>';
   s += '</div>';
-  s += '<p style="font-size:12px;color:var(--text-secondary);margin-top:12px">对<strong>「较上月新增」</strong>的慢动SKU（5月正常周转、6月跳入慢动），这一维度<strong>「未来需求下降」</strong>尤为关键——它用<strong>滚动6个月窗口</strong>对比（6月视角的 7~12月 vs 5月视角的 6~11月），能客观反映"未来需求是否被整体下调"，而非仅看单月。</p>';
+  s += '<p style="font-size:12px;color:var(--text-secondary);margin-top:12px">对<strong>「较上月新增」</strong>的慢动SKU（6月正常周转、7月跳入慢动），这一维度<strong>「未来需求下降」</strong>尤为关键——它用<strong>滚动6个月窗口</strong>对比（7月视角的 8月~次年1月 vs 6月视角的 7~12月），能客观反映"未来需求是否被整体下调"，而非仅看单月。</p>';
   s += '</div>';
 
   // Section 4: 排除规则
