@@ -34,27 +34,73 @@ function sha256File(p) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-// 读取产品主数据（产品.xlsx），构建 物料号 -> 每箱支数(箱规转化因子) 映射
-// 列定位：第1列(A)=产品编码，第35列(AI)=箱规转化因子
-function buildBoxSpecMap() {
+// 读取产品主数据（产品.xlsx），构建多维度产品属性映射。
+// 该文件含 3 个 sheet：
+//   「产品列表」：产品编码 / ABC分类 / 品牌 / 箱规转化因子 等
+//   「单价」：物料编码 / 单价
+//   「淘汰品」：产品编码 / 是否为淘汰品
+// 列定位统一按表头名动态查找（兼容新旧列顺序，避免硬编码列号取空）。
+function buildProductMaster() {
   const p = path.join(ROOT, '产品.xlsx');
-  if (!fs.existsSync(p)) { console.log('   (未找到 产品.xlsx，boxSpecMap 为空)'); return {}; }
+  const empty = { boxSpecMap: {}, priceMap: {}, discontinuedMap: {}, brandMap: {}, abcMap: {} };
+  if (!fs.existsSync(p)) { console.log('   (未找到 产品.xlsx，产品主数据为空)'); return empty; }
   const wb = XLSX.read(fs.readFileSync(p), { type: 'array' });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const arr = XLSX.utils.sheet_to_json(ws, SHEET_OPTS);
-  const map = {};
-  for (let i = 1; i < arr.length; i++) {
-    const row = arr[i];
-    if (!row || row.length < 35) continue;
-    const code = String(row[0] != null ? row[0] : '').trim();
-    const fac = row[34]; // 第35列(AI) 箱规转化因子
-    if (code && fac != null && fac !== '') {
-      const n = Number(fac);
-      if (!isNaN(n) && n > 0) map[code] = n;
+  const out = { boxSpecMap: {}, priceMap: {}, discontinuedMap: {}, brandMap: {}, abcMap: {} };
+  function colIdx(header, name) {
+    for (let i = 0; i < (header || []).length; i++) {
+      if (String(header[i] || '').trim() === name) return i;
+    }
+    return -1;
+  }
+  function loadSheet(name) {
+    if (!wb.SheetNames.includes(name)) return null;
+    return XLSX.utils.sheet_to_json(wb.Sheets[name], SHEET_OPTS);
+  }
+  // 1) 产品列表：箱规 / 品牌 / ABC
+  const list = loadSheet('产品列表') || loadSheet(wb.SheetNames[0]);
+  if (list && list.length > 0) {
+    const h = list[0] || [];
+    const cCode = colIdx(h, '产品编码') >= 0 ? colIdx(h, '产品编码') : 0;
+    const cSpec = colIdx(h, '箱规转化因子');
+    const cBrand = colIdx(h, '品牌');
+    const cAbc = colIdx(h, 'ABC分类');
+    for (let i = 1; i < list.length; i++) {
+      const r = list[i];
+      const code = String(r[cCode >= 0 ? cCode : 0] || '').trim();
+      if (!code) continue;
+      if (cSpec >= 0) { const v = Number(r[cSpec]); if (!isNaN(v) && v > 0) out.boxSpecMap[code] = v; }
+      if (cBrand >= 0) { const b = String(r[cBrand] || '').trim(); if (b) out.brandMap[code] = b; }
+      if (cAbc >= 0) { const a = String(r[cAbc] || '').trim(); if (a) out.abcMap[code] = a; }
     }
   }
-  console.log('   boxSpecMap 命中 ' + Object.keys(map).length + ' 个SKU');
-  return map;
+  // 2) 单价：物料编码 -> 单价
+  const price = loadSheet('单价');
+  if (price && price.length > 0) {
+    const h = price[0] || [];
+    const cCode = colIdx(h, '物料编码') >= 0 ? colIdx(h, '物料编码') : 0;
+    const cPrice = colIdx(h, '单价');
+    for (let i = 1; i < price.length; i++) {
+      const r = price[i];
+      const code = String(r[cCode >= 0 ? cCode : 0] || '').trim();
+      if (!code) continue;
+      if (cPrice >= 0) { const v = Number(r[cPrice]); if (!isNaN(v)) out.priceMap[code] = v; }
+    }
+  }
+  // 3) 淘汰品：产品编码 -> 是否为淘汰品
+  const disc = loadSheet('淘汰品');
+  if (disc && disc.length > 0) {
+    const h = disc[0] || [];
+    const cCode = colIdx(h, '产品编码') >= 0 ? colIdx(h, '产品编码') : 0;
+    const cObs = colIdx(h, '是否为淘汰品');
+    for (let i = 1; i < disc.length; i++) {
+      const r = disc[i];
+      const code = String(r[cCode >= 0 ? cCode : 0] || '').trim();
+      if (!code) continue;
+      if (cObs >= 0) { const v = String(r[cObs] || '').trim(); if (v) out.discontinuedMap[code] = v; }
+    }
+  }
+  console.log('   产品主数据：boxSpec=' + Object.keys(out.boxSpecMap).length + ' 单价=' + Object.keys(out.priceMap).length + ' 淘汰品=' + Object.keys(out.discontinuedMap).length + ' 品牌=' + Object.keys(out.brandMap).length + ' ABC=' + Object.keys(out.abcMap).length);
+  return out;
 }
 
 // 解析转储数据源（上半年转储.XLSX），输出与网页 dataStore.transship 同构的数组
@@ -195,7 +241,14 @@ function main() {
     });
 
     const payload = { sheetNames: wb.SheetNames, sheets };
-    if (base === 'data') payload.boxSpecMap = buildBoxSpecMap();
+    if (base === 'data') {
+      const pm = buildProductMaster();
+      payload.boxSpecMap = pm.boxSpecMap;
+      payload.priceMap = pm.priceMap;
+      payload.discontinuedMap = pm.discontinuedMap;
+      payload.brandMap = pm.brandMap;
+      payload.abcMap = pm.abcMap;
+    }
     fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
     // manifest 以「源 xlsx 内容哈希」为键，仅当真实数据变化时才触发网页重新解析
     manifest.files[outJson] = sha256File(srcPath);

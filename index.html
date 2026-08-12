@@ -3032,7 +3032,7 @@ function renderOrderInsight() {
   console.log('[HainanFilter] 海南花露水 SKU 集合大小:', Object.keys(skuIsHainan).length, '当前筛选:', window._oiHainan);
 
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
-  function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+  function specOf(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : 1; }
 
   // ====== 归一化行 ======
   const rows = [];
@@ -5481,7 +5481,7 @@ function renderDcSupplySimTab(page, tabBar) {
   });
   // productMaster 取箱规
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
-  function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+  function specOf(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : 1; }
 
   // 选取「总仓供应情况」含目标关键字的 SKU
   const selectedRows = allShortage.filter(d => {
@@ -5867,7 +5867,7 @@ function exportDcSupplySim() {
   const rows = window._dcSimSkuList || [];
   if (rows.length === 0) { showToast('暂无数据可导出', true); return; }
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
-  function specOf(sku) { const m = _pm[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+  function specOf(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : 1; }
   const rdcNames = DC_SUPPLY_RDC_KEYS.map(r => r.name);
   const header = ['SKU','名称','品牌','大仓原状态','涉及RDC数','总缺货箱数','模拟可消化(支)','箱规'].concat(rdcNames.map(n => n + '缺货箱数'));
   const csv = '\uFEFF' + header.join(',') + '\n';
@@ -8084,7 +8084,7 @@ function renderInventoryRootCause(page, tabBar) {
 
   // ====== 通用工具函数 ======
   function rn(v) { return Math.round(v || 0); }
-  function getSpec(sku) { const m = productMaster[sku]; return (m && m.spec > 0) ? m.spec : 1; }
+  function getSpec(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : 1; }
 
   // 构建 SKU→品牌 字典（从覆盖数据）
   const skuBrand = {};
@@ -8136,7 +8136,7 @@ function renderInventoryRootCause(page, tabBar) {
       if (ym !== '2026-05' && ym !== '2026-06') continue;
       var rdcRaw = String(r[7] || '').trim().replace('仓','RDC'); if (!rdcRaw) continue;
       var sku = String(r[3] || '').trim();
-      var spec = (productMaster[sku] && productMaster[sku].spec > 0) ? productMaster[sku].spec : 0;
+      var spec = (window._boxSpec && window._boxSpec[String(sku)] > 0) ? window._boxSpec[String(sku)] : 0;
       var unit = String(r[6] || '').trim(); var qty = Number(r[5]) || 0;
       var qtyBox = 0;
       if (unit === '箱') qtyBox = qty; else if (spec > 0) qtyBox = qty / spec;
@@ -8782,7 +8782,14 @@ function init() {
       }
       const wb = { __preparsed: true, SheetNames: j.sheetNames, Sheets: j.sheets };
       if (filename === 'inventory.json') parseInventoryExcel(wb);
-      else if (filename === 'data.json') { window._boxSpec = (j && j.boxSpecMap) || {}; parseExcel(wb, 'replace'); }
+      else if (filename === 'data.json') {
+        window._boxSpec = (j && j.boxSpecMap) || {};
+        window._priceMap = (j && j.priceMap) || {};
+        window._discontinuedMap = (j && j.discontinuedMap) || {};
+        window._brandMap = (j && j.brandMap) || {};
+        window._abcMap = (j && j.abcMap) || {};
+        parseExcel(wb, 'replace');
+      }
       else if (filename.indexOf('data-') === 0) parseExcel(wb, 'append', { skipTransship: true });
       else if (filename === 'history.json') { dataStore.history = j; }
     }
@@ -9397,11 +9404,11 @@ function parseInventoryExcel(rawData) {
         // v69: 收货仓 优先取 C列(大仓收货仓,直接给答案)；缺失时回退 基础数据 收货库位→收货仓 映射
         const recLoc = String(r[pbCols.recLoc] || '').trim();
         const rec = String(r[pbCols.rec] || '').trim() || (recLoc && recWhMap[recLoc]) || '未知';
-        const master = productMaster[sku];
-        const cost = master ? master.cost : 0;
-        const spec = master ? master.spec : 0;
+        const master = productMaster[sku] || {};
+        const spec = (window._boxSpec && window._boxSpec[String(sku)] > 0) ? window._boxSpec[String(sku)] : (master.spec > 0 ? master.spec : 0);
+        const cost = (window._priceMap && window._priceMap[String(sku)] != null) ? window._priceMap[String(sku)] : (master.cost || 0);
         // v67: 品牌优先从产品主数据抓取（兼容新模板无品牌列的情况）
-        const brand = String(r[pbCols.brand] || '').trim() || (master ? master.brand : '') || '未知';
+        const brand = (window._brandMap && window._brandMap[String(sku)]) ? window._brandMap[String(sku)] : (String(r[pbCols.brand] || '').trim() || (master.brand || '') || '未知');
         const unit = String(r[pbCols.unit] || '').trim();
         const qty = parsePullQty(r[pbCols.qty]);
         // v70 fix: 金额换算按「实际件数 × 单件成本价」。
@@ -10592,8 +10599,8 @@ function renderSlowMoving() {
     if (hainanFilter === 'yes') res = res.filter(function(d) { return d.isHainan === true; });
     else if (hainanFilter === 'no') res = res.filter(function(d) { return d.isHainan !== true; });
     // 是否淘汰品筛选：基础数据 sheet 的「是否为淘汰品」列
-    if (obsoleteFilter === 'yes') res = res.filter(function(d) { return productMaster[d.sku] && productMaster[d.sku].obsolete === true; });
-    else if (obsoleteFilter === 'no') res = res.filter(function(d) { return !(productMaster[d.sku] && productMaster[d.sku].obsolete === true); });
+    if (obsoleteFilter === 'yes') res = res.filter(function(d) { return (productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品'); });
+    else if (obsoleteFilter === 'no') res = res.filter(function(d) { return !((productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品')); });
     return res;
   }
   var cov6 = filterArr(inv.cov6 || []);
@@ -10699,8 +10706,8 @@ function renderSlowMoving() {
 
   // ========== 跨RDC高占比品牌根因分析（使用全部RDC，受海南花露水/是否淘汰筛选影响）==========
   function obsoletePass(d) {
-    if (obsoleteFilter === 'yes') return productMaster[d.sku] && productMaster[d.sku].obsolete === true;
-    if (obsoleteFilter === 'no') return !(productMaster[d.sku] && productMaster[d.sku].obsolete === true);
+    if (obsoleteFilter === 'yes') return (productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品');
+    if (obsoleteFilter === 'no') return !((productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品');
     return true;
   }
   var cov6AllRdc = (inv.cov6 || []).filter(function(d) {
