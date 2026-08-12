@@ -10707,7 +10707,7 @@ function renderSlowMoving() {
   // ========== 跨RDC高占比品牌根因分析（使用全部RDC，受海南花露水/是否淘汰筛选影响）==========
   function obsoletePass(d) {
     if (obsoleteFilter === 'yes') return (productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品');
-    if (obsoleteFilter === 'no') return !((productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品');
+    if (obsoleteFilter === 'no') return !((productMaster[d.sku] && productMaster[d.sku].obsolete === true) || (window._discontinuedMap && window._discontinuedMap[String(d.sku)] === '淘汰品'));
     return true;
   }
   var cov6AllRdc = (inv.cov6 || []).filter(function(d) {
