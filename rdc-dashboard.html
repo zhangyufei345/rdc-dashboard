@@ -3930,26 +3930,32 @@ function renderShortageOrderDetail() {
   // ---- 品牌维度 ----
   const brandMap = {};
   filtered.forEach(d => {
-    if (!brandMap[d.brand]) brandMap[d.brand] = { all:0, ka:0, dealer:0, fulfilled:0 };
+    if (!brandMap[d.brand]) brandMap[d.brand] = { all:0, ka:0, dealer:0, fulfilled:0, kaFulfilled:0, dealerFulfilled:0 };
     brandMap[d.brand].all += d.firstDayShort;
     brandMap[d.brand].fulfilled += d.firstDayQty;
-    if (d.channel === 'KA') brandMap[d.brand].ka += d.firstDayShort;
-    else if (d.channel === '经销商') brandMap[d.brand].dealer += d.firstDayShort;
+    if (d.channel === 'KA') { brandMap[d.brand].ka += d.firstDayShort; brandMap[d.brand].kaFulfilled += d.firstDayQty; }
+    else if (d.channel === '经销商') { brandMap[d.brand].dealer += d.firstDayShort; brandMap[d.brand].dealerFulfilled += d.firstDayQty; }
   });
   const brandSorted = Object.entries(brandMap).sort((a,b) => b[1].all - a[1].all);
 
-  // 计算各品牌 TOP5 主要缺货 SKU（按 firstDayShort 汇总），用于表格 hover 弹框
-  var brandTopShortage = {};
-  filtered.forEach(function(d) {
-    if (!d.brand || !d.skuCode || !(d.firstDayShort > 0)) return;
-    if (!brandTopShortage[d.brand]) brandTopShortage[d.brand] = {};
-    var m = brandTopShortage[d.brand];
-    if (!m[d.skuCode]) m[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
-    m[d.skuCode].gap += d.firstDayShort;
-  });
-  Object.keys(brandTopShortage).forEach(function(b) {
-    brandTopShortage[b] = Object.values(brandTopShortage[b]).sort(function(a, c) { return c.gap - a.gap; }).slice(0, 5);
-  });
+  // 按渠道分别汇总各品牌 TOP5 主要缺货 SKU（用于表格 hover 弹框，按渠道区分）
+  function buildBrandTopShortage(channel) {
+    var m = {};
+    filtered.forEach(function(d) {
+      if (!d.brand || !d.skuCode || !(d.firstDayShort > 0)) return;
+      if (channel && d.channel !== channel) return;
+      if (!m[d.brand]) m[d.brand] = {};
+      if (!m[d.brand][d.skuCode]) m[d.brand][d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+      m[d.brand][d.skuCode].gap += d.firstDayShort;
+    });
+    Object.keys(m).forEach(function(b) {
+      m[b] = Object.values(m[b]).sort(function(a, c) { return c.gap - a.gap; }).slice(0, 5);
+    });
+    return m;
+  }
+  var brandTopAll = buildBrandTopShortage(null);
+  var brandTopKa = buildBrandTopShortage('KA');
+  var brandTopDealer = buildBrandTopShortage('经销商');
 
   // ---- SKU维度明细 ----
   const skuMap = {};
@@ -4073,41 +4079,44 @@ function renderShortageOrderDetail() {
         <span class="card-title">品牌维度</span>
         <span style="font-size:12px;color:var(--text-secondary)">首日累计未满足订单量（悬停行查看主要缺货 SKU 与满足率）</span>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:12px">
-        <div style="flex:1;min-width:280px">
-          <div class="table-wrap" style="max-height:240px;overflow-y:auto">
-            <table class="data-table" style="font-size:12px">
-              <thead><tr>
-                <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日累计未满足</th><th style="text-align:right;color:var(--color-green)">首日累计已满足</th>
-                <th style="text-align:right;background:#FEF3C7">KA首日累计未满足</th><th style="text-align:right;background:#DBEAFE">经销首日累计未满足</th>
-              </tr></thead>
-              <tbody>
-                ${brandSorted.map(([brand, v]) => {
-                  var total = v.all + v.fulfilled;
-                  var rate = total > 0 ? (v.fulfilled / total * 100) : 0;
-                  var tipHtml = '<div class="hd"><strong>' + brand + '</strong></div><div>首日满足率：' + rate.toFixed(1) + '%</div>';
-                  var topShort = brandTopShortage[brand] || [];
+      <div style="width:66.666%">
+        <div class="table-wrap" style="max-height:240px;overflow-y:auto">
+          <table class="data-table" style="font-size:12px">
+            <thead><tr>
+              <th>品牌</th><th style="text-align:right;color:var(--color-red)">首日累计未满足</th><th style="text-align:right;color:var(--color-green)">首日累计已满足</th>
+              <th style="text-align:right;background:#FEF3C7">KA首日累计未满足</th><th style="text-align:right;background:#DBEAFE">经销首日累计未满足</th>
+            </tr></thead>
+            <tbody>
+              ${brandSorted.map(([brand, v]) => {
+                function buildBrandTip(chLabel, shortAmt, fulfillAmt, topMap) {
+                  var total = shortAmt + fulfillAmt;
+                  var rate = total > 0 ? (fulfillAmt / total * 100) : 0;
+                  var html = '<div class="hd"><strong>' + brand + '</strong></div><div style="color:#9ca3af;font-size:10px">' + chLabel + '</div><div>首日满足率：' + rate.toFixed(1) + '%</div>';
+                  var topShort = topMap[brand] || [];
                   if (topShort.length > 0) {
-                    tipHtml += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要未满足 TOP5：</div>';
-                    tipHtml += buildTopShortTipTable(topShort, '首日累计订单缺口', function(s, info) {
+                    html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">主要缺货 TOP5：</div>';
+                    html += buildTopShortTipTable(topShort, '首日累计缺口', function(s, info) {
                       if (!info.boxSpec || !s.gap) return '—';
                       var b = s.gap / info.boxSpec;
                       return b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱';
                     }, null);
                   } else {
-                    tipHtml += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">该品牌当日无缺货记录</div>';
+                    html += '<div style="margin-top:6px;color:#9ca3af;font-size:10px">该渠道当日无缺货记录</div>';
                   }
-                  var tipIdx = regTip(tipHtml);
-                  return '<tr data-tip="' + tipIdx + '" style="cursor:default">' +
-                    '<td><strong>' + brand + '</strong></td>' +
-                    '<td style="text-align:right;color:var(--color-red);font-weight:600">' + v.all.toLocaleString() + '</td>' +
-                    '<td style="text-align:right">' + v.fulfilled.toLocaleString() + '</td>' +
-                    '<td style="text-align:right;background:#FEF3C7">' + v.ka.toLocaleString() + '</td>' +
-                    '<td style="text-align:right;background:#DBEAFE">' + v.dealer.toLocaleString() + '</td></tr>';
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
+                  return html;
+                }
+                var tipAll = regTip(buildBrandTip('全渠道', v.all, v.fulfilled, brandTopAll));
+                var tipKa = regTip(buildBrandTip('KA渠道', v.ka, v.kaFulfilled, brandTopKa));
+                var tipDealer = regTip(buildBrandTip('经销商渠道', v.dealer, v.dealerFulfilled, brandTopDealer));
+                return '<tr style="cursor:default">' +
+                  '<td><strong>' + brand + '</strong></td>' +
+                  '<td data-tip="' + tipAll + '" style="text-align:right;color:var(--color-red);font-weight:600">' + v.all.toLocaleString() + '</td>' +
+                  '<td style="text-align:right">' + v.fulfilled.toLocaleString() + '</td>' +
+                  '<td data-tip="' + tipKa + '" style="text-align:right;background:#FEF3C7">' + v.ka.toLocaleString() + '</td>' +
+                  '<td data-tip="' + tipDealer + '" style="text-align:right;background:#DBEAFE">' + v.dealer.toLocaleString() + '</td></tr>';
+              }).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
