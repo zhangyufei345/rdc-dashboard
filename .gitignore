@@ -33,3 +33,9 @@ _*.mjs
 
 # 大文件：transship.xlsx 超过 Cloudflare Pages 单文件 25MB 上限，不入库（网页只加载 transship.json）
 transship.xlsx
+
+# 临时分析/脚本产物（非看板代码）
+analyze_diff.js
+heat_surgery.py
+remove_shortage_matrix.py
+*_vs_*.csv
