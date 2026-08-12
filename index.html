@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 84; // v84: 库存覆盖明细/弹框/堆叠图/RDC×覆盖周期 统一「可用库存金额」口径：金额列/聚合由 inventoryAmt（库存总金额，含风险库存）改为 planAmt（源表「可用库存」金额版）；v83: 修复库存覆盖明细/弹框"可用库存"数量列：改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 85; // v85: 【根因】慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退——可用库存=0 属 falsy 时回退到 availableQty(库存总数量)，导致 55542/华南 可用库存0 却显示868(=红色预警数量)。三处回退全部去除(KPI totalQty/明细行 availableQty/趋势 trendQty)，改为纯 availQtyPlan||0；v84: 库存覆盖明细/弹框/堆叠图/RDC×覆盖周期 统一「可用库存金额」口径：金额列/聚合由 inventoryAmt（库存总金额，含风险库存）改为 planAmt（源表「可用库存」金额版）；v83: 修复库存覆盖明细/弹框"可用库存"数量列：改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -10597,7 +10597,7 @@ function renderSlowMoving() {
   var kpi = {
     skuCount: new Set(slow6.map(function(d) { return d.sku; })).size,
     newCount: new Set(newSlow.map(function(d) { return d.sku; })).size,
-    totalQty: slow6.reduce(function(s,d) { return s + (d.availQtyPlan || d.availableQty || 0); }, 0),
+    totalQty: slow6.reduce(function(s,d) { return s + (d.availQtyPlan || 0); }, 0),
     totalAmt: slow6.reduce(function(s,d) { return s + (d.planAmt || 0); }, 0) / 1000
   };
   var cov5Map = {};
@@ -10670,7 +10670,7 @@ function renderSlowMoving() {
     var isNew = !slow5Keys.has(key);
     var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, demand: demand, fut: fut, fut5: fut5, expiryRatio: expiryRatio, isNew: isNew });
     var rc = diag.rc, adv = diag.adv;
-    return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan || d.availableQty || 0, inventoryAmt: d.planAmt, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: isNew, cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, rootCause: rc, advice: adv };
+    return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan || 0, inventoryAmt: d.planAmt || 0, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: isNew, cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, rootCause: rc, advice: adv };
   }).sort(function(a, b) { return b.inventoryAmt - a.inventoryAmt; });
   window._slowMovingAll = detailRows;
   window._slowMovingNew = detailRows.filter(function(d) { return d.isNew; }).slice(0, 20);
@@ -10878,7 +10878,7 @@ function renderSlowMoving() {
   Object.keys(brandRdcSkus).forEach(function(b) { Object.keys(brandRdcSkus[b]).forEach(function(rdc) { brandRdcSkus[b][rdc].sort(function(a, c) { return (c.inventoryAmt || 0) - (a.inventoryAmt || 0); }); }); });
   window._causeMatrix.brandRdcSkus = brandRdcSkus;
 
-  var trendQty = [slow5, slow6].map(function(arr) { return arr.reduce(function(s,d) { return s + (d.availQtyPlan || d.availableQty || 0); }, 0); });
+  var trendQty = [slow5, slow6].map(function(arr) { return arr.reduce(function(s,d) { return s + (d.availQtyPlan || 0); }, 0); });
 
   var rdcLabel = rdcFilter === 'all' ? '全部RDC' : rdcFilter;
   var hainanLabel = hainanFilter === 'all' ? '全部' : hainanFilter === 'yes' ? '仅海南花露水' : '不含海南花露水';
