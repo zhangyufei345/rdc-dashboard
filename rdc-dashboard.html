@@ -1702,7 +1702,7 @@ function renderOverview() {
 
   // 驾驶舱聚合（v52：1:1 复刻 overview-preview，仅数据替换为真实）
   const boxSpecOf = code => { const bs = window._boxSpec && window._boxSpec[String(code)]; return (bs && bs > 0) ? bs : null; };
-  let orderBoxes = 0, firstBoxes = 0;
+  let orderBoxes = 0, firstBoxes = 0, waitBoxes = 0;
   const custSet = new Set(), brandSetC = new Set();
   const rdcAgg = {}; RDC_LIST.forEach(r => rdcAgg[r] = { orderQty: 0, fulfillQty: 0, firstQty: 0 });
   monthOrders.forEach(d => {
@@ -1710,6 +1710,9 @@ function renderOverview() {
     const ob = d.orderQty || 0, fb = d.firstDayQty || 0;
     orderBoxes += bs ? ob / bs : ob;
     firstBoxes += bs ? fb / bs : fb;
+    // 当月待发 = (总订单量 - 总履约数量) / 箱规
+    const remaining = Math.max(0, ob - (d.totalFulfillQty || 0));
+    waitBoxes += bs ? remaining / bs : remaining;
     if (d.customerGroup) custSet.add(d.customerGroup);
     if (d.brand) brandSetC.add(d.brand);
     if (d.warehouse && rdcAgg[d.warehouse]) {
@@ -1718,7 +1721,7 @@ function renderOverview() {
       rdcAgg[d.warehouse].firstQty += fb;
     }
   });
-  const waitBoxes = Math.max(0, orderBoxes - firstBoxes);
+  // waitBoxes 已按 (总订单量 - 总履约数量) / 箱规 累计完成
   // v76: 订单数量 = 当前筛选月份（monthOrders）内按销售单号去重后的订单数（不是订单行数）
   const orderCount = new Set(monthOrders.map(d => d.orderNo).filter(Boolean)).size;
   const urgentSkus = new Set();
@@ -1928,7 +1931,7 @@ function renderOverview() {
               </div>
               <div class="center-stat">
                 <div class="v" style="color:#f97316">${formatNum(Math.round(waitBoxes))}</div>
-                <div class="l">待发</div>
+                <div class="l">当月待发</div>
               </div>
               <div class="center-stat">
                 <div class="v" style="color:#ef4444">${orderCount}<span style="font-size:11px;color:#fca5a5;margin-left:2px">笔</span></div>
