@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 88; // v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU——仅保留 availQtyPlan>0 的 SKU（覆盖月数命中+非排除品+有可用库存）；慢动SKU数 KPI 随之准确（被剔除项可用库存/金额均为0，金额类KPI数值不变）；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动：cov7显示 8月~次年1月(cov08~cov13)，修复此前硬编码 6~11 月导致月份错位；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列，仅保留"当月值+环比"；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 89; // v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug（原按 split('-')[1] 取月份得 '01'），改为完整映射表使次年1月需求正确落入 cov13；影响所有使用 cov13 的模块（库存覆盖明细/慢动品/补货建议/库存结构）；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU——仅保留 availQtyPlan>0 的 SKU（覆盖月数命中+非排除品+有可用库存）；慢动SKU数 KPI 随之准确；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动：cov7显示 8月~次年1月(cov08~cov13)；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9715,10 +9715,14 @@ function parseInventoryExcel(rawData) {
       // 数量字段：7月"可用库存"出现两次（金额版在前/数量版在后），取最后一次出现 = 数量版
       const C_QTY_AVAIL = colIdx('可用库存（个）') >= 0 ? colIdx('可用库存（个）') : colLastIdx('可用库存');
       // 未来需求: cov06..cov13 = 2026-06..2027-01（按列名匹配；5月 06-11、6月 07-12、7月 08-13 各 6 个月）
+      // 注意：不能只用 split('-')[1] 取月份，否则 2027-01 会映射到 cov01 而不是 cov13。
       const C_DEMAND = {};
-      ['2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12','2027-01'].forEach((n) => {
-        const covIdx = parseInt(n.split('-')[1], 10).toString().padStart(2, '0');
-        C_DEMAND['cov' + covIdx] = colIdx(n);
+      const COV_MONTH_MAP = {
+        '2026-06':'cov06','2026-07':'cov07','2026-08':'cov08','2026-09':'cov09',
+        '2026-10':'cov10','2026-11':'cov11','2026-12':'cov12','2027-01':'cov13'
+      };
+      Object.keys(COV_MONTH_MAP).forEach((n) => {
+        C_DEMAND[COV_MONTH_MAP[n]] = colIdx(n);
       });
       const C_COVERAGE = colIdx('库存覆盖月数') >= 0 ? colIdx('库存覆盖月数') : colIdx('库存覆盖');
       const C_COV_LEVEL = colIdx('覆盖周数分类') >= 0 ? colIdx('覆盖周数分类') : colIdx('覆盖月数分类');
