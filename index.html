@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 82; // v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图（v3.1.2 随交叉洞察卡片删除，现独立卡片恢复）；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 83; // v83: 修复库存覆盖明细/弹框"可用库存"列：改用 availQtyPlan（源表「可用库存」数量版），原 availableQty 实际为「库存总数量」导致 09380 等 SKU 显示 red+orange 之和；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -10408,7 +10408,7 @@ function renderDrillModal() {
       }).join('') + '</tbody></table>';
   } else {
     html += '<table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>可用库存</th><th>金额</th><th>7月</th><th>8月</th><th>9月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
-      pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td class="num">' + formatNum(d.cov09) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
+      pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availQtyPlan || 0) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td class="num">' + formatNum(d.cov09) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table>';
   }
 
   html += '<div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center">' +
@@ -10469,7 +10469,7 @@ function renderInventoryCoverageDetail() {
   }
 
   html += '<div class="card"><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">金额</th><th class="num">6月</th><th class="num">7月</th><th class="num">8月</th><th class="num">9月</th><th class="num">10月</th><th class="num">11月</th><th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
-    pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availableQty) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov06) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td class="num">' + formatNum(d.cov09) + '</td><td class="num">' + formatNum(d.cov10) + '</td><td class="num">' + formatNum(d.cov11) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table></div>';
+    pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availQtyPlan || 0) + '</td><td class="num">' + formatMoney(d.inventoryAmt) + '</td><td class="num">' + formatNum(d.cov06) + '</td><td class="num">' + formatNum(d.cov07) + '</td><td class="num">' + formatNum(d.cov08) + '</td><td class="num">' + formatNum(d.cov09) + '</td><td class="num">' + formatNum(d.cov10) + '</td><td class="num">' + formatNum(d.cov11) + '</td><td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table></div>';
 
   html += '<div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center">' +
     '<button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._invCoverageDetailPage=Math.max(1,window._invCoverageDetailPage-1);renderInventoryCoverageDetail()" ' + (p<=1?'disabled':'') + '>上一页</button>' +
@@ -10529,7 +10529,7 @@ function exportInventoryCoverageDetail() {
   data.forEach(d => {
     csv += [
       d.rdc || '', d.sku || '', d.skuName || '', d.brand || '',
-      d.availableQty || 0, d.inventoryAmt || 0, d.cov07 || 0, d.cov08 || 0, d.cov09 || 0, d.cov10 || 0, d.cov11 || 0, d.cov12 || 0,
+      d.availQtyPlan || 0, d.inventoryAmt || 0, d.cov07 || 0, d.cov08 || 0, d.cov09 || 0, d.cov10 || 0, d.cov11 || 0, d.cov12 || 0,
       d.coverageLevel || '', d.isHainan ? '是' : '否'
     ].join(',') + '\n';
   });
