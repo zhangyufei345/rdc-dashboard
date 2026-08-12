@@ -1,4 +1,4 @@
-<!-- RDC运营数据看板 v3.1.5 (deploy-2026-08-11) 修复订单数据洞察页 TypeError: Cannot read properties of null (reading 'setOption')。根因：v3.1.2 删除"⚡ 交叉洞察"卡片时，移除了 <div id="oi-chart-trans-ship"> 容器，但 renderOrderInsight() 内仍保留"图6：转储入库 vs 实际出货"的 echarts.init+setOption 调用，导致 DOM null 报错。修复：删除该图表渲染块（保留 buildSkuTop5/compareMonth/transShipMonthLabel 等变量/函数，避免破坏调用）。 -->
+<!-- RDC运营数据看板 v3.1.6 (deploy-2026-08-12) 恢复"订单数据洞察"页"转储 vs 出货 SKU 差异明细"上方的"转储入库 vs 实际出货（按RDC）"双轴趋势图。v3.1.2 删除整个"⚡ 交叉洞察"卡片时一并移除了该图，现按用户要求仅恢复趋势图（不恢复卡片内 3 个首日满足率 KPI 与库存覆盖预警段）。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 81; // v81: 接入7月库存覆盖数据/7月库存状态分析；新增 status7/cov7/expiry7，当前月滚动到7月(基准=6月)；覆盖需求窗 cov08~cov13；可销售判定按「快报月报-红橙黄预警=可用库存」；buildExpiryMap 按表头名定位列(7月字段序不同)；结构页月份封顶到当前月
+const DB_VERSION = 82; // v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图（v3.1.2 随交叉洞察卡片删除，现独立卡片恢复）；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -3490,6 +3490,14 @@ function renderOrderInsight() {
       '</tr></thead><tbody>' + detailRows + '</tbody></table></div>' +
     '</div>' +
 
+    // 转储入库 vs 实际出货趋势图（按 RDC）—— 2026-08-12 恢复
+    '<div class="card" style="margin-bottom:16px">' +
+      '<div class="card-header"><span class="card-title">🚚 转储入库 vs 实际出货（按RDC）— ' + transShipMonthLabel + '</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">差异 = 转储入库 − 实际出货</span></div>' +
+      (compareMonth
+        ? '<div class="chart-container" style="height:280px" id="oi-chart-trans-ship"></div>'
+        : '<div style="padding:24px 8px;font-size:12px;color:var(--text-secondary)">当前筛选月份暂无转储数据，无法对比。</div>') +
+    '</div>' +
+
     // ====== SKU 差异明细表（可筛选 / 导出）======
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">📋 转储 vs 出货 SKU 差异明细（' + transShipMonthLabel + '）— 单位：' + u + '</span>' +
@@ -3608,6 +3616,49 @@ function renderOrderInsight() {
       color: TYPE_COLORS[t]
     }))
   });
+
+  // 图6：转储入库 vs 实际出货（双轴图）—— 2026-08-12 恢复
+  if (compareMonth) {
+    const c6 = initChart('oi-chart-trans-ship');
+    c6.setOption({
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 }, formatter: function(params) {
+        const rdc = params[0].axisValue;
+        const trans = params[0].value || 0;
+        const ship = params[1].value || 0;
+        const diff = params[2].value || 0;
+        let h = '<strong>' + rdc + ' — ' + transShipMonthLabel + '</strong><br/>';
+        h += '转储入库：' + fmtN(Math.round(trans)) + ' ' + u + '<br/>';
+        h += '实际出货：' + fmtN(Math.round(ship)) + ' ' + u + '<br/>';
+        h += '差异（库存增减）：' + fmtN(Math.round(diff)) + ' ' + u + '<br/>';
+        const top = buildSkuTop5(rdc);
+        if (top.length) {
+          h += '<div style="margin-top:4px;font-weight:600">差异最大 TOP5 SKU</div>';
+          h += '<table style="border-collapse:collapse;font-size:10px;margin-top:2px">' +
+            '<tr style="color:#94a3b8"><td style="padding:1px 5px">SKU</td><td style="padding:1px 5px">名称</td><td style="padding:1px 5px">差异</td><td style="padding:1px 5px">转储</td><td style="padding:1px 5px">出货</td><td style="padding:1px 5px">订单</td><td style="padding:1px 5px">根因</td></tr>';
+          top.forEach(it => {
+            const nm = it.skuName ? ('<span title="' + it.skuName + '">' + (it.skuName.length > 8 ? it.skuName.slice(0, 8) + '…' : it.skuName) + '</span>') : '<span style="color:#94a3b8">—</span>';
+            h += '<tr><td style="padding:1px 5px">' + it.sku + '</td><td style="padding:1px 5px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nm + '</td><td style="padding:1px 5px">' + fmtN(it.diff) + '</td><td style="padding:1px 5px">' + fmtN(it.trans) + '</td><td style="padding:1px 5px">' + fmtN(it.ship) + '</td><td style="padding:1px 5px">' + fmtN(it.order) + '</td><td style="padding:1px 5px">' + it.rootCause + '</td></tr>';
+          });
+          h += '</table><div style="font-size:9px;color:#94a3b8;margin-top:3px">↳ 下方明细表可查看全部并导出</div>';
+        } else {
+          h += '<div style="color:#94a3b8;margin-top:4px">该RDC无SKU级明细</div>';
+        }
+        return h;
+      }},
+      legend: { data: ['转储入库', '实际出货', '差异（库存增减）'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+      grid: { left: 65, right: 55, top: 35, bottom: 30 },
+      xAxis: { type: 'category', data: transShipRdcs, axisLabel: { fontSize: 10, interval: 0 } },
+      yAxis: [
+        { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+        { type: 'value', name: '差异' + u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 }, splitLine: { show: false } }
+      ],
+      series: [
+        { name: '转储入库', type: 'bar', barWidth: 16, data: transShipRdcs.map(r => transByRdc[r] || 0), color: '#3B82F6' },
+        { name: '实际出货', type: 'bar', barWidth: 16, data: transShipRdcs.map(r => shipByRdc[r] || 0), color: '#10B981' },
+        { name: '差异（库存增减）', type: 'line', yAxisIndex: 1, symbol: 'circle', symbolSize: 7, lineStyle: { width: 2 }, data: transShipRdcs.map(r => diffByRdc[r] || 0), color: '#F59E0B' }
+      ]
+    });
+  }
 
   renderOiSkuDetailTable();
 }
