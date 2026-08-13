@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 89; // v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug（原按 split('-')[1] 取月份得 '01'），改为完整映射表使次年1月需求正确落入 cov13；影响所有使用 cov13 的模块（库存覆盖明细/慢动品/补货建议/库存结构）；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU——仅保留 availQtyPlan>0 的 SKU（覆盖月数命中+非排除品+有可用库存）；慢动SKU数 KPI 随之准确；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动：cov7显示 8月~次年1月(cov08~cov13)；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 90; // v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2736,29 +2736,30 @@ function renderFulfillmentHistoryCharts() {
   const H = dataStore.history.fulfillment;
   const rdc = window._fulHtyRdc || 'all';
 
-  // ========== 当月实时聚合：从 orderDetail 按 RDC×月聚合 首日已满足/订单总量 ==========
-  // 历史值优先（来自 history.fulfillment），当年各月实时计算（用户要求后续根据订单数据实时更新）
-  function liveMonthlyFulfillment(rdcName, ym) {
-    let sFirst = 0, sOrder = 0;
+  // ========== 当月实时聚合：从 orderDetail 按 RDC×月聚合 ==========
+  // type='daily' 用首日排单 / 订单总量；type='monthly' 用总履约排单 / 订单总量
+  // 2026 年优先走实时聚合（避免 history.json 陈旧数据覆盖最新订单数据），实时无数据再回退 history
+  function liveFulfillmentByType(rdcName, ym, type) {
+    let sNum = 0, sOrder = 0;
     (dataStore.orderDetail || []).forEach(function(d) {
       if (d.warehouse !== rdcName) return;
       if (!d.dateStr || d.dateStr.slice(0, 7) !== ym) return;
-      sFirst += d.firstDayQty || 0;
       sOrder += d.orderQty || 0;
+      sNum += (type === 'monthly' ? (d.totalFulfillQty || 0) : (d.firstDayQty || 0));
     });
     if (sOrder <= 0) return null;
-    return sFirst / sOrder;
+    return sNum / sOrder;
   }
   function getDailyRate(rdcName, year, monthIdx0) {
-    const yrMap = H[year] && H[year].daily;
-    const hist = yrMap && yrMap[rdcName] ? yrMap[rdcName][monthIdx0] : null;
-    if (hist != null) return hist;
-    // 当年各月（含最新月）实时聚合
+    // 2026 年优先实时聚合（日满足率），无数据再回退 history
     if (year === '2026') {
       const ym = '2026-' + String(monthIdx0 + 1).padStart(2, '0');
-      return liveMonthlyFulfillment(rdcName, ym);
+      const live = liveFulfillmentByType(rdcName, ym, 'daily');
+      if (live != null) return live;
     }
-    return null;
+    const yrMap = H[year] && H[year].daily;
+    const hist = yrMap && yrMap[rdcName] ? yrMap[rdcName][monthIdx0] : null;
+    return hist != null ? hist : null;
   }
 
   // 动态月份：1-N 月（来自 window._availableMonths）
@@ -2868,13 +2869,14 @@ function renderFulfillmentHistoryCharts() {
   function avgOf(type, year, idxs) {
     let s = 0, c = 0;
     rdcList.forEach(r => { idxs.forEach(i => {
+      // 2026 年优先实时聚合，避免 history.json 陈旧值覆盖
+      if (year === '2026') {
+        const ym = '2026-' + String(i + 1).padStart(2, '0');
+        const live = liveFulfillmentByType(r, ym, type);
+        if (live != null) { s += live; c++; return; }
+      }
       const v = H[year][type][r] && H[year][type][r][i];
       if (v != null) { s += v; c++; }
-      else if (year === '2026') {
-        const ym = '2026-' + String(i + 1).padStart(2, '0');
-        const live = liveMonthlyFulfillment(r, ym);
-        if (live != null) { s += live; c++; }
-      }
     }); });
     return c ? s / c : 0;
   }
