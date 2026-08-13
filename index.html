@@ -637,7 +637,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 90; // v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 91; // v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -8003,7 +8003,7 @@ function renderInventoryForecast(page, tabBar) {
     cb += '<tr><td style="text-align:left;font-weight:600">'+r[0]+'</td><td>'+Math.round(r[1]).toLocaleString()+'</td><td>'+Math.round(r[2]).toLocaleString()+'</td><td><b>'+r[3].toFixed(2)+'</b></td><td>'+tag+'</td><td style="text-align:left">'+r[5]+'</td></tr>';
   });
   document.getElementById('table-forecast-cover').innerHTML =
-    '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th><th>库存量（支）</th><th>7 月需求（支）</th><th>覆盖月数</th><th>判断</th><th style="text-align:left">说明</th></tr></thead><tbody>'+cb+'</tbody></table>';
+    '<table class="data-table"><thead><tr><th style="text-align:left">RDC</th><th>库存量（支）</th><th>8 月需求（支）</th><th>覆盖月数</th><th>判断</th><th style="text-align:left">说明</th></tr></thead><tbody>'+cb+'</tbody></table>';
 }
 
 // 推演参数变更后自动刷新（被 ⚙ 面板 onchange 调用）
