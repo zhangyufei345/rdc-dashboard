@@ -3257,27 +3257,35 @@ function renderOrderInsight() {
   invWarn.sort((a, b) => b.ratio - a.ratio);
 
   // ====== 交叉洞察：转储入库 vs 实际出货（按 RDC） ======
+  // v94：转储数据是月度更新，图表只显示 T-1（当前筛选月上一个月）的数据。
+  // 例如筛选 8 月时，实际出货与转储入库均展示 7 月数据；若 7 月无转储则回退到更早可用月。
   const transMonths = new Set();
   (dataStore.transship || []).forEach(r => { if (r.dateStr && r.dateStr.length >= 7) transMonths.add(r.dateStr.slice(0, 7)); });
   let compareMonth = window._oiMonth;
   let compareMonthFallback = false;  // 标记是否回退到其他月（避免标题误导）
   if (compareMonth === 'all') {
-    const shipMonths = [...new Set(selRows.map(r => r.month))].sort();
-    compareMonth = shipMonths.slice().reverse().find(m => transMonths.has(m)) || '';
-  } else if (!transMonths.has(compareMonth)) {
-    // 用户选定的月份没有转储数据时，回退到最近月但**明确标注**（避免显示成"07月"误导用户）
+    const shipMonths = [...new Set(rows.map(r => r.month))].sort();
+    const latestShip = shipMonths[shipMonths.length - 1] || '';
+    compareMonth = latestShip ? getPrevMonth(latestShip) : '';
+  } else {
+    compareMonth = getPrevMonth(compareMonth);
+  }
+  if (compareMonth && !transMonths.has(compareMonth)) {
     const arr = [...transMonths].sort();
     const fallback = arr.filter(m => m <= compareMonth).pop() || arr[arr.length - 1] || '';
-    if (fallback && fallback !== compareMonth) {
+    if (fallback) {
       compareMonth = fallback;
       compareMonthFallback = true;
     } else {
       compareMonth = '';
     }
   }
-  // v93：实际出货跟随窗口筛选（selRows 已按 window._oiMonth + 海南过滤），转储单独用 compareMonth
-  // ——之前在 fallback 时把实际出货也强制改成 compareMonth 的数据，导致图表与上方筛选不联动
-  const compareRows = compareMonth ? selRows : [];
+  // 实际出货与转储均统一使用 T-1 月（compareMonth），与上方筛选的 T 月解耦
+  const compareRows = compareMonth ? rows.filter(r => {
+    if (r.month !== compareMonth) return false;
+    if (window._oiHainan === 'all') return true;
+    return window._oiHainan === 'yes' ? r.isHainan : !r.isHainan;
+  }) : [];
   const compareRowsNoFree = compareRows.filter(r => r.type !== '免费单'); // 转储vs出货模块排除免费单出货/需求
   const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth) && !skuIsHainan[r.material]) : [];
   const shipByRdc = {}, transByRdc = {};
@@ -3307,9 +3315,9 @@ function renderOrderInsight() {
   if (transShipRdcs.length === 0) transShipRdcs.push(...RDC_LIST);
   const diffByRdc = {};
   transShipRdcs.forEach(rdc => { diffByRdc[rdc] = (transByRdc[rdc] || 0) - (shipByRdc[rdc] || 0); });
-  const transShipMonthLabel = compareMonthFallback
-    ? ('实际出货 ' + window._oiMonth.replace('2026-', '') + '月，转储对比 ' + compareMonth.replace('2026-', '') + '月（最近可用）')
-    : (compareMonth ? ('实际出货 vs 转储入库 · ' + compareMonth.replace('2026-', '') + '月') : '无转储数据');
+  const transShipMonthLabel = compareMonth
+    ? (compareMonth.replace('2026-', '') + '月' + (compareMonthFallback ? '（回退到最近可用月）' : ''))
+    : '无转储数据';
   // ====== SKU 级差异明细（转储 vs 出货 + 期初库存/未来需求 + 根因）======
   // 期初库存基准：取 targetMonth 上月最近可用的覆盖数据（5/6/7月 sheet 滚动，取最新可用）
   const covBase = getCovBaseForMonth(compareMonth);
