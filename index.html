@@ -3083,18 +3083,33 @@ function getTopShortageSKUsByDay(rdc, dateStr, limit, channel) {
   });
   const top5 = arr.slice(0, limit);
   if (top5.length === 0) return top5;
-  // v100: 在途箱数 / 大仓供应 仍取自缺货报告（shortage），按 (dateStr, RDC) 关联回填
+  // v100.3: 在途箱数 / 大仓供应 仍取自缺货报告（shortage）——按 (dateStr, materialCode) 关联，每 SKU 独立取值
+  // - 在途箱数：缺货报告 d[rdcKey] 是「该 SKU 在该 RDC 的缺货箱」；d[transitKey] 是「该 SKU 在该 RDC 的在途箱」
+  //   所以『按 SKU 维度的在途』= d.rdcTransitTotal（缺货报告 col11，该 SKU 在所有 RDC 在途总和）
+  // - 大仓供应：d.dcSupply（缺货报告 col9，大仓级状态）
   const rdcKey = (rdc && rdc !== 'all') ? getRDCShortageKey(rdc) : null;
-  const shortageRows = (dataStore.shortage || []).filter(s => s.dateStr === dateStr && (!rdcKey || s[rdcKey] > 0));
-  // RDC 级在途总箱数：取该 RDC 当天任一条有值者（缺货报告中在途为 RDC 级字段）
-  let rdcTransit = 0;
-  for (let i = 0; i < shortageRows.length; i++) { if ((shortageRows[i].rdcTransitTotal || 0) > 0) { rdcTransit = shortageRows[i].rdcTransitTotal; break; } }
-  // 每 SKU 的大仓供应状态
-  const supplyBySku = {};
-  shortageRows.forEach(s => { if (s.materialCode && s.dcSupply && !supplyBySku[s.materialCode]) supplyBySku[s.materialCode] = s.dcSupply; });
+  const transitKeyForRdc = rdc ? (RDC_TRANSIT_KEY[rdc] || null) : null;
+  const shortageRows = (dataStore.shortage || []).filter(s => s.dateStr === dateStr);
+  const transitBySku = {};   // materialCode -> 该 SKU 在所有 RDC 在途总箱数（rdc='all'）或 在该 RDC 的在途箱（rdc 指定）
+  const supplyBySku = {};    // materialCode -> 大仓供应状态文本
+  shortageRows.forEach(s => {
+    if (!s.materialCode) return;
+    let transit;
+    if (transitKeyForRdc && (s[transitKeyForRdc] || 0) > 0) {
+      transit = s[transitKeyForRdc];
+    } else if ((s.rdcTransitTotal || 0) > 0) {
+      transit = s.rdcTransitTotal;
+    }
+    if (transit && transitBySku[s.materialCode] === undefined) {
+      transitBySku[s.materialCode] = transit;
+    }
+    if (s.dcSupply && !supplyBySku[s.materialCode]) {
+      supplyBySku[s.materialCode] = s.dcSupply;
+    }
+  });
   top5.forEach(t => {
-    t.transit = rdcTransit;        // 在途箱数（缺货报告）
-    t.dcSupply = supplyBySku[t.materialCode] || '';  // 大仓供应（缺货报告）
+    t.transit = transitBySku[t.materialCode] || 0;    // 在途箱数（缺货报告，每 SKU 独立）
+    t.dcSupply = supplyBySku[t.materialCode] || '';   // 大仓供应（缺货报告，每 SKU 独立）
   });
   return top5;
 }
