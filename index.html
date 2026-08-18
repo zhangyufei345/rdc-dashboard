@@ -654,7 +654,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 99; // v99: 修复日订单满足曲线 hover tooltip 每天显示同一组TOP5——原本 `trendTop5 = getTopShortageSKUsByMonth(..., heatMonth, 5)` 在 formatter 外只算一次(整月同一组)，改为 formatter 内按 hover 当天 `getTopShortageSKUsByDay(trendRdc, fullDate, 5)` 动态聚合；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 100; // v100: 日订单满足趋势图 hover tooltip 主列"缺货箱"改为"未清箱数"——来源从缺货报告改为订单明细(orderDetail.firstDayShort 首日未清支数÷箱规=未清箱数)，按渠道(KA/经销商)分两段显示各自当日未清箱数 TOP5；"在途箱/供应"两列保留，仍取自缺货报告(shortage)按 (dateStr,RDC) 关联回填；v99: 修复日订单满足曲线 hover tooltip 每天显示同一组TOP5——原本 `trendTop5 = getTopShortageSKUsByMonth(..., heatMonth, 5)` 在 formatter 外只算一次(整月同一组)，改为 formatter 内按 hover 当天 `getTopShortageSKUsByDay(trendRdc, fullDate, 5)` 动态聚合；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1682,13 +1682,14 @@ function renderOverview() {
       : '2026-08');
 
   // 通用 TOP5 缺货 SKU tooltip HTML 构造
-  function buildTop5TooltipHtml(top5, title) {
+  function buildTop5TooltipHtml(top5, title, boxLabel) {
+    const boxTitle = boxLabel || '缺货箱';
     if (!top5 || top5.length === 0) return '<div style="font-size:11px;color:#64748b;margin-top:4px">' + title + '<br/>暂无 TOP5 缺货 SKU</div>';
     let html = '<div style="font-size:11px;color:#93c5fd;margin:6px 0 4px;border-top:1px solid rgba(148,163,184,0.3);padding-top:4px">' + title + '</div>' +
       '<div style="display:flex;font-size:10px;color:#94a3b8;margin-bottom:2px;padding:0 2px">' +
         '<span style="width:18px">#</span>' +
         '<span style="flex:1;min-width:90px">物料 / 品名</span>' +
-        '<span style="width:48px;text-align:right">缺货箱</span>' +
+        '<span style="width:48px;text-align:right">' + boxTitle + '</span>' +
         '<span style="width:48px;text-align:right">在途箱</span>' +
         '<span style="width:40px;text-align:center">供应</span>' +
       '</div>';
@@ -2145,10 +2146,13 @@ function renderOverview() {
                 '<span style="flex:1">' + p.seriesName + '</span>' +
                 '<span style="font-weight:600">' + (p.value != null ? (p.value * 100).toFixed(1) + '%' : '-') + '</span></div>';
             });
-            // v99: 按 hover 当天日期动态聚合缺货TOP5，不再用整月同一组
-            const trendTop5 = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5) : [];
+            // v100: 按 hover 当天日期×渠道动态聚合未清箱数TOP5
+            // 主列"未清箱数"=订单明细首日未清支数÷箱规；"在途箱/供应"仍取自缺货报告
+            const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, 'KA') : [];
+            const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, '经销商') : [];
             const rdcLabel = trendRdc === 'all' ? '全部 RDC' : trendRdc;
-            html += buildTop5TooltipHtml(trendTop5, rdcLabel + ' · ' + fullDate + ' · TOP 5 缺货 SKU');
+            html += buildTop5TooltipHtml(trendTop5Ka, rdcLabel + ' · ' + fullDate + ' · KA · 未清箱数 TOP 5', '未清箱数');
+            html += buildTop5TooltipHtml(trendTop5Jx, rdcLabel + ' · ' + fullDate + ' · 经销商 · 未清箱数 TOP 5', '未清箱数');
             return html;
           }
         },
@@ -3034,29 +3038,62 @@ function getTopShortageSKUsByMonth(brand, rdc, month, limit) {
   return Object.values(map).sort((a, b) => b.boxes - a.boxes).slice(0, limit);
 }
 
-// v99: 按指定日期×RDC聚合缺货TOP5（用于日订单满足曲线hover tooltip，每天动态取当天的TOP5）
-// 与 getTopShortageSKUsByMonth 的差别：固定 dateStr（不再取"最新一天"），返回的 titles 用于日期级别
-function getTopShortageSKUsByDay(rdc, dateStr, limit) {
+// v100: 按指定日期×RDC×渠道聚合**未清箱数**TOP5（用于日订单满足曲线hover tooltip）
+// 数据源：dataStore.orderDetail（订单明细），字段 firstDayShort（首日未清支数 = 订单支数 - 首日排单支数）
+// 换算：先按 SKU 累加未清支数，再除以 boxSpecMap[skuCode]（产品主数据「箱规转化因子」sheet）得到未清箱数
+// 渠道：channel 可传 'KA' / '经销商' / '其他' / 'all'（默认 'all'）；用 normalizeTrendChannel 把原始 channel 值归一
+// 排序规则：箱数 desc；缺箱规的 SKU 排在末尾（用未清支数兜底，避免在无箱规 SKU 上一支等于一箱的尺度错乱）
+function getTopShortageSKUsByDay(rdc, dateStr, limit, channel) {
   limit = limit || 5;
   if (!dateStr) return [];
-  const rdcShortKeyMap = { '华南RDC': 'huananShort', '华北RDC': 'huabeiShort', '东北RDC': 'dongbeiShort', '西北RDC': 'xibeiShort', '华中RDC': 'huazhongShort', '西南RDC': 'xinanShort' };
-  let data = (dataStore.shortage || []).filter(d => d.dateStr === dateStr);
-  const rdcKey = rdc && rdc !== 'all' ? rdcShortKeyMap[rdc] : null;
-  if (rdcKey) data = data.filter(d => d[rdcKey] > 0);
-  const map = {};
-  data.forEach(d => {
-    if (!d.materialCode) return;
-    const boxes = rdcKey ? (d[rdcKey] || 0) : (d.rdcShortBoxes || 0);
-    const transitKey = rdcKey ? RDC_TRANSIT_KEY[rdc] : null;
-    const transit = transitKey ? (d[transitKey] || 0) : (d.rdcTransitTotal || 0);
-    if (boxes <= 0) return;
-    if (!map[d.materialCode]) {
-      map[d.materialCode] = { materialCode: d.materialCode, materialName: d.materialName || '', brand: d.brand || '', boxes: 0, transit: 0, dcSupply: d.dcSupply || '' };
+  const targetCh = channel || 'all';
+  const boxSpecOf = code => { const bs = window._boxSpec && window._boxSpec[String(code)]; return (bs && bs > 0) ? bs : null; };
+  const filtered = (dataStore.orderDetail || []).filter(d => {
+    if (!d || d.dateStr !== dateStr) return false;
+    if (rdc && rdc !== 'all' && d.warehouse !== rdc) return false;
+    if (targetCh !== 'all') {
+      const ch = normalizeTrendChannel(d.channel);
+      if (ch !== targetCh) return false;
     }
-    map[d.materialCode].boxes += boxes;
-    map[d.materialCode].transit += transit;
+    return (d.firstDayShort || 0) > 0;
   });
-  return Object.values(map).sort((a, b) => b.boxes - a.boxes).slice(0, limit);
+  const map = {};
+  filtered.forEach(d => {
+    const code = d.skuCode;
+    if (!code) return;
+    if (!map[code]) {
+      map[code] = { materialCode: code, materialName: d.skuName || '', brand: d.brand || '', units: 0, boxes: 0, hasSpec: false };
+    }
+    map[code].units += d.firstDayShort || 0;
+    const bs = boxSpecOf(code);
+    if (bs) {
+      map[code].boxes += (d.firstDayShort || 0) / bs;
+      map[code].hasSpec = true;
+    }
+  });
+  const arr = Object.values(map);
+  arr.sort((a, b) => {
+    if (a.hasSpec && !b.hasSpec) return -1;
+    if (!a.hasSpec && b.hasSpec) return 1;
+    if (a.hasSpec && b.hasSpec) return b.boxes - a.boxes;
+    return b.units - a.units;
+  });
+  const top5 = arr.slice(0, limit);
+  if (top5.length === 0) return top5;
+  // v100: 在途箱数 / 大仓供应 仍取自缺货报告（shortage），按 (dateStr, RDC) 关联回填
+  const rdcKey = (rdc && rdc !== 'all') ? getRDCShortageKey(rdc) : null;
+  const shortageRows = (dataStore.shortage || []).filter(s => s.dateStr === dateStr && (!rdcKey || s[rdcKey] > 0));
+  // RDC 级在途总箱数：取该 RDC 当天任一条有值者（缺货报告中在途为 RDC 级字段）
+  let rdcTransit = 0;
+  for (let i = 0; i < shortageRows.length; i++) { if ((shortageRows[i].rdcTransitTotal || 0) > 0) { rdcTransit = shortageRows[i].rdcTransitTotal; break; } }
+  // 每 SKU 的大仓供应状态
+  const supplyBySku = {};
+  shortageRows.forEach(s => { if (s.materialCode && s.dcSupply && !supplyBySku[s.materialCode]) supplyBySku[s.materialCode] = s.dcSupply; });
+  top5.forEach(t => {
+    t.transit = rdcTransit;        // 在途箱数（缺货报告）
+    t.dcSupply = supplyBySku[t.materialCode] || '';  // 大仓供应（缺货报告）
+  });
+  return top5;
 }
 
 // ============ 订单数据洞察（普通 / 特殊价格 / 免费单，品牌×客户×RDC 环比） ============
