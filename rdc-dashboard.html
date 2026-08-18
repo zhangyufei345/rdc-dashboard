@@ -604,6 +604,7 @@ function getTopFirstDayShortSKUs(dateStr, rdc, limit) {
 
 // 按品牌×RDC×时间范围聚合首日缺货TOP（用于品牌矩阵弹框）
 // timeRange: { type: 'day'|'month'|'all', dateStr: 'YYYY-MM-DD', month: 'YYYY-MM' }
+// v98: 在途/大仓供应从缺货汇总按 (日期+RDC+SKU编码) 补全；日度 tooltip "在途箱"与"供应"列不再为"—"
 function getTopFirstDayShortSKUsByBrand(brand, rdc, timeRange, limit) {
   limit = limit || 5;
   if (!brand || !rdc) return [];
@@ -615,9 +616,25 @@ function getTopFirstDayShortSKUsByBrand(brand, rdc, timeRange, limit) {
     if (tr.type === 'month' && (!d.dateStr || !d.dateStr.startsWith(tr.month))) return false;
     return true;
   }).forEach(d => {
-    if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0 };
+    if (!dedup[d.skuCode]) dedup[d.skuCode] = { code: d.skuCode, name: d.skuName, gap: 0, transit: 0, supply: '' };
     dedup[d.skuCode].gap += d.firstDayShort;
   });
+  // 日度：从缺货汇总按 (dateStr + RDC + materialCode) 补在途箱数 + 大仓供应
+  // 月度/全期：保持空（日度场景下才需要补，单 SKU × 全月没有明确"在途快照日"）
+  if (tr.type === 'day' && tr.dateStr && dataStore.shortage && dataStore.shortage.length > 0) {
+    const rdcKeyMap = { '东北RDC':'dongbeiTransit','华南RDC':'huananTransit','西北RDC':'xibeiTransit','华中RDC':'huazhongTransit','西南RDC':'xinanTransit','华北RDC':'huabeiTransit','华东RDC':'huadongTransit' };
+    const transitKey = rdcKeyMap[rdc];
+    if (transitKey) {
+      dataStore.shortage.forEach(s => {
+        if (s.dateStr !== tr.dateStr) return;
+        const rec = dedup[s.materialCode];
+        if (!rec) return;
+        const t = s[transitKey] || 0;
+        if (t > 0) rec.transit = Math.max(rec.transit, t); // 该日该RDC在途快照（取大值，避免重复行累加误差）
+        if (!rec.supply && s.dcSupply) rec.supply = s.dcSupply;
+      });
+    }
+  }
   return Object.values(dedup).sort((a,b) => b.gap - a.gap).slice(0, limit);
 }
 
@@ -637,7 +654,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 97; // v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 98; // v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2333,7 +2350,8 @@ function renderHeatMatrix() {
           } else {
             const bs = window._boxSpec && window._boxSpec[String(d.code)];
             const boxes = (bs && bs > 0) ? Math.round(d.gap / bs) : d.gap;
-            return { code: d.code, name: d.name, boxes: boxes, transit: '', supply: '' };
+            // v98: 日度在途/供应由 getTopFirstDayShortSKUsByBrand 从缺货汇总按 (日期+RDC+SKU) 补全
+            return { code: d.code, name: d.name, boxes: boxes, transit: d.transit || 0, supply: d.supply || '' };
           }
         });
         let html = rdc + ' · ' + brand + '<br/>' + rateLabel + '：<b>' + (p.value[2]*100).toFixed(1) + '%</b>';
