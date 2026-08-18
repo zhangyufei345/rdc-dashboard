@@ -654,7 +654,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 102; // v102: 撤销 v101 的"按 hover series 切分 top5"逻辑——用户要求恢复 v100 的 KA+经销商两段同时显示模式（v101 切分后切换 series 时容易出现显示不全的情况）；保留 v101 的 tooltip.position 自适应（鼠标靠右缘时改放鼠标左侧）；v100.x 系列: v100.5 wrapper 修复压扁，v100.4 向上取整，v100.3 在途/供应每 SKU 独立，v100.2 normalizeTrendChannel 真正全局，v100 重写 tooltip 主列"未清箱数"v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 103; // v103: position 函数加强兜底——Y 轴上下都判断越界，兜底把 tooltip 顶部贴画布顶部；tooltip 容器加 max-height:none / overflow:visible 解除 ECharts 内联样式对内容的高度截断；保留 KA+经销商两段同时显示模式；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2133,20 +2133,37 @@ function renderOverview() {
       chartTrend.setOption({
         title: { text: trendRdc === 'all' ? '全部 RDC 聚合' : trendRdc, left: 'center', top: 0, textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 'normal' } },
         tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
-          extraCssText: 'max-width:480px;box-sizing:border-box;padding:8px 10px',
-          // v101: tooltip 位置自适应——当鼠标靠近画布右缘，tooltip 在右侧会被截断时，自动弹到鼠标左侧
+          extraCssText: 'max-width:480px;max-height:none;overflow:visible;box-sizing:border-box;padding:8px 10px',
+          // v102: tooltip 位置自适应——四周都判断越界，确保 tooltip 永远完全显示在画布内
+          // 同时把整体高度限制解除（max-height:none），防止 ECharts 内部 CSS 把内容截掉
           position: function(point, params, dom, rect, size) {
             const viewW = size.viewSize[0];
+            const viewH = size.viewSize[1];
             const tipW = size.contentSize[0];
+            const tipH = size.contentSize[1];
             const offset = 14;
-            let x = point[0] + offset;  // 默认 tooltip 在鼠标右侧
-            // 如果放右侧会越出画布右边界，改放到鼠标左侧
+            // X 轴：默认右侧，右侧越界则左侧，再不行贴左缘
+            let x = point[0] + offset;
             if (x + tipW > viewW - 8) {
               x = point[0] - tipW - offset;
-              if (x < 8) x = 8;  // 万一左侧也不够放，至少贴左缘
+              if (x < 8) x = 8;
+            } else if (x < 8) {
+              x = 8;
             }
-            let y = point[1] - size.contentSize[1] - offset;
-            if (y < 8) y = point[1] + offset;  // 上方放不下则放下方
+            // Y 轴：先尝试上方（默认），再下方，都不够则把 tooltip 顶到能完整显示的位置
+            let y = point[1] - tipH - offset;
+            if (y >= 8) {
+              // 上方放得下，不动
+            } else {
+              // 上方放不下，改下方
+              y = point[1] + offset;
+              if (y + tipH > viewH - 8) {
+                // 下方也放不下，则把 tooltip 顶部紧贴画布顶部，让底部自然展开
+                y = 8;
+              }
+            }
+            // 兜底：极端情况 tooltip 比画布还高，至少顶部贴边
+            if (y + tipH > viewH - 8) y = 8;
             return [x, y];
           },
           formatter: function(params) {
