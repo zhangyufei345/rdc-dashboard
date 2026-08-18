@@ -2096,15 +2096,6 @@ function renderOverview() {
     });
   }
 
-  // 渠道归一化：把订单明细里的 channel 原始值归一为 'KA' / '经销商' / '其他'
-  // 必须放全局作用域，因为 getTopShortageSKUsByDay（在外部）也会调用
-  function normalizeTrendChannel(ch) {
-    const s = String(ch || '').trim().toUpperCase();
-    if (s === 'KA' || s === 'KA直营' || s === 'KA直营店' || s.indexOf('KA') === 0) return 'KA';
-    if (s.indexOf('经销') >= 0 || s === 'DEALER' || s === 'JX') return '经销商';
-    return '其他';
-  }
-
   // 2. 日订单满足率趋势（近 7 个工作日；全部/单个 RDC 均显示 KA+经销商双曲线，v61）
   const trendRdc = window._trendRdc || 'all';
   const trendDayMap = {};
@@ -2404,6 +2395,15 @@ function renderHeatMatrix() {
       return (p.value[2]*100).toFixed(0)+'%';
     } }, itemStyle: { borderColor: '#0a0e27', borderWidth: 1 } }]
   });
+}
+
+// 渠道归一化（全局）：把订单明细里的 channel 原始值归一为 'KA' / '经销商' / '其他'
+// 必须放全局作用域：renderOverview 内部的 trend 渲染 + getTopShortageSKUsByDay（3058）两处都会调用
+function normalizeTrendChannel(ch) {
+  const s = String(ch || '').trim().toUpperCase();
+  if (s === 'KA' || s === 'KA直营' || s === 'KA直营店' || s.indexOf('KA') === 0) return 'KA';
+  if (s.indexOf('经销') >= 0 || s === 'DEALER' || s === 'JX') return '经销商';
+  return '其他';
 }
 
 // 日度订单满足率历史趋势卡片（HTML 部分）
