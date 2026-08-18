@@ -659,7 +659,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 105; // v105: trend tooltip 终极修复底部被截——appendToBody:true 让 tooltip 挂到 body 脱离 .chart-area(220px/overflow) 裁剪 + position 改为按视口夹取（不再用容器 220px 高度作约束）；删除 window.__trendTooltipDebug 调试代码；v104: 给 page-overview/.card/.mindmap-grid 等加 overflow:visible !important 防 ECharts tooltip 被祖先 overflow 截断；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 106; // v106: 日订单满足趋势图 hover tooltip TOP5→TOP3；v105: trend tooltip 终极修复底部被截——appendToBody:true 让 tooltip 挂到 body 脱离 .chart-area(220px/overflow) 裁剪 + position 改为按视口夹取（不再用容器 220px 高度作约束）；删除 window.__trendTooltipDebug 调试代码；v104: 给 page-overview/.card/.mindmap-grid 等加 overflow:visible !important 防 ECharts tooltip 被祖先 overflow 截断；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2180,8 +2180,8 @@ function renderOverview() {
                 '<span style="font-weight:600">' + (p.value != null ? (p.value * 100).toFixed(1) + '%' : '-') + '</span></div>';
             });
             // v100.6 恢复（用户要求）：KA + 经销商两段 top5 同时显示
-            const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, 'KA') : [];
-            const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, '经销商') : [];
+            const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 3, 'KA') : [];
+            const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 3, '经销商') : [];
             const rdcLabel = trendRdc === 'all' ? '全部 RDC' : trendRdc;
             // v104: 空数据时不渲染该段的标题表头——避免用户误以为"被截"，明确"无未清 SKU"
             html += trendTop5Ka.length > 0
