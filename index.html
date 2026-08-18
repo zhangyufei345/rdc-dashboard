@@ -1682,8 +1682,10 @@ function renderOverview() {
       : '2026-08');
 
   // 通用 TOP5 缺货 SKU tooltip HTML 构造
-  function buildTop5TooltipHtml(top5, title, boxLabel) {
+  // boxCeil=true 时「主列（缺货箱/未清箱数）」用 Math.ceil 向上取整（用于日订单曲线的"未清箱数"，不显示小数）
+  function buildTop5TooltipHtml(top5, title, boxLabel, boxCeil) {
     const boxTitle = boxLabel || '缺货箱';
+    const ceilBox = !!boxCeil;
     if (!top5 || top5.length === 0) return '<div style="font-size:11px;color:#64748b;margin-top:4px">' + title + '<br/>暂无 TOP5 缺货 SKU</div>';
     let html = '<div style="font-size:11px;color:#93c5fd;margin:6px 0 4px;border-top:1px solid rgba(148,163,184,0.3);padding-top:4px">' + title + '</div>' +
       '<div style="display:flex;font-size:10px;color:#94a3b8;margin-bottom:2px;padding:0 2px">' +
@@ -1697,10 +1699,11 @@ function renderOverview() {
       const supplyTxt = String(d.dcSupply || '');
       const supplyColor = supplyTxt.indexOf('紧张') >= 0 ? '#fca5a5' : (supplyTxt.indexOf('缺货') >= 0 ? '#fdba74' : '#86efac');
       const supplyLabel = supplyTxt.indexOf('紧张') >= 0 ? '紧张' : (supplyTxt.indexOf('缺货') >= 0 ? '缺货' : '正常');
+      const boxTxt = ceilBox ? String(Math.ceil(Number(d.boxes) || 0)) : formatNum(d.boxes);
       html += '<div style="display:flex;font-size:11px;line-height:1.5;padding:1px 2px">' +
         '<span style="width:18px;color:#94a3b8">' + (i+1) + '</span>' +
         '<span style="flex:1;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:#e2e8f0">' + d.materialCode + '</span> <span style="color:#64748b">' + (d.materialName || '').slice(0,10) + '</span></span>' +
-        '<span style="width:48px;text-align:right;color:#fca5a5;font-weight:600">' + formatNum(d.boxes) + '</span>' +
+        '<span style="width:48px;text-align:right;color:#fca5a5;font-weight:600">' + boxTxt + '</span>' +
         '<span style="width:48px;text-align:right;color:#e2e8f0">' + formatNum(d.transit) + '</span>' +
         '<span style="width:40px;text-align:center;color:' + supplyColor + '">' + supplyLabel + '</span>' +
       '</div>';
@@ -2145,8 +2148,8 @@ function renderOverview() {
             const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, 'KA') : [];
             const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, '经销商') : [];
             const rdcLabel = trendRdc === 'all' ? '全部 RDC' : trendRdc;
-            html += buildTop5TooltipHtml(trendTop5Ka, rdcLabel + ' · ' + fullDate + ' · KA · 未清箱数 TOP 5', '未清箱数');
-            html += buildTop5TooltipHtml(trendTop5Jx, rdcLabel + ' · ' + fullDate + ' · 经销商 · 未清箱数 TOP 5', '未清箱数');
+            html += buildTop5TooltipHtml(trendTop5Ka, rdcLabel + ' · ' + fullDate + ' · KA · 未清箱数 TOP 5', '未清箱数', true);
+            html += buildTop5TooltipHtml(trendTop5Jx, rdcLabel + ' · ' + fullDate + ' · 经销商 · 未清箱数 TOP 5', '未清箱数', true);
             return html;
           }
         },
