@@ -654,7 +654,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 100; // v100: 日订单满足趋势图 hover tooltip 主列"缺货箱"改为"未清箱数"——来源从缺货报告改为订单明细(orderDetail.firstDayShort 首日未清支数÷箱规=未清箱数)，按渠道(KA/经销商)分两段显示各自当日未清箱数 TOP5；"在途箱/供应"两列保留，仍取自缺货报告(shortage)按 (dateStr,RDC) 关联回填；v99: 修复日订单满足曲线 hover tooltip 每天显示同一组TOP5——原本 `trendTop5 = getTopShortageSKUsByMonth(..., heatMonth, 5)` 在 formatter 外只算一次(整月同一组)，改为 formatter 内按 hover 当天 `getTopShortageSKUsByDay(trendRdc, fullDate, 5)` 动态聚合；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 101; // v101: trend tooltip 按鼠标 hover 的 series 切分展示——停在 KA 线只显示 KA top5、经销商同理；同时新增 tooltip.position 自适应（鼠标靠近画布右缘且 tooltip 在右侧越界时改放鼠标左侧）；v100.x 系列: v100.5 加 max-width/min-width wrapper 修复压扁，v100.4 未清箱数向上取整，v100.3 在途/供应每 SKU 独立，v100.2 真正把 normalizeTrendChannel 提到全局（v100.1 修复误留在 renderOverview 内），v100 重写日订单趋势 tooltip 主列"未清箱数"且按 KA/经销商 分两段渲染v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2129,10 +2129,34 @@ function renderOverview() {
         { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
         { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
       ];
+      // v100.6: 跟踪当前 hover 的 series——只在鼠标停在某条线 marker 上时才显示对应的 top5
+      // trend hover 同时在两根线间跳时，使用最后一次 mouseover 的 seriesName（KA / 经销商）
+      const _trendActiveSeriesName = { current: null };
+      chartTrend.on('mouseover', function(p) {
+        if (p && p.seriesName) _trendActiveSeriesName.current = p.seriesName;
+      });
+      chartTrend.on('mouseout', function() {
+        _trendActiveSeriesName.current = null;
+      });
       chartTrend.setOption({
         title: { text: trendRdc === 'all' ? '全部 RDC 聚合' : trendRdc, left: 'center', top: 0, textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 'normal' } },
         tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
           extraCssText: 'max-width:480px;box-sizing:border-box;padding:8px 10px',
+          // v100.6: tooltip 位置自适应——当鼠标靠近画布左边缘、tooltip 在右侧会被截断时，自动弹到鼠标左侧
+          position: function(point, params, dom, rect, size) {
+            const viewW = size.viewSize[0];
+            const tipW = size.contentSize[0];
+            const offset = 14;
+            let x = point[0] + offset;  // 默认 tooltip 在鼠标右侧
+            // 如果放右侧会越出画布右边界，改放到鼠标左侧
+            if (x + tipW > viewW - 8) {
+              x = point[0] - tipW - offset;
+              if (x < 8) x = 8;  // 万一左侧也不够放，至少贴左缘
+            }
+            let y = point[1] - size.contentSize[1] - offset;
+            if (y < 8) y = point[1] + offset;  // 上方放不下则放下方
+            return [x, y];
+          },
           formatter: function(params) {
             const idx = params[0] && typeof params[0].dataIndex === 'number' ? params[0].dataIndex : -1;
             const fullDate = (idx >= 0 && idx < trendLast7.length) ? trendLast7[idx] : '';
@@ -2146,13 +2170,16 @@ function renderOverview() {
                 '<span style="flex:1">' + p.seriesName + '</span>' +
                 '<span style="font-weight:600">' + (p.value != null ? (p.value * 100).toFixed(1) + '%' : '-') + '</span></div>';
             });
-            // v100: 按 hover 当天日期×渠道动态聚合未清箱数TOP5
-            // 主列"未清箱数"=订单明细首日未清支数÷箱规；"在途箱/供应"仍取自缺货报告
-            const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, 'KA') : [];
-            const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, '经销商') : [];
+            // v100.6: 按当前 hover 的 series 显示对应 top5——停在 KA 线附近只显示 KA、停经销商只显示经销商
+            const activeName = _trendActiveSeriesName.current;
             const rdcLabel = trendRdc === 'all' ? '全部 RDC' : trendRdc;
-            html += buildTop5TooltipHtml(trendTop5Ka, rdcLabel + ' · ' + fullDate + ' · KA · 未清箱数 TOP 5', '未清箱数', true);
-            html += buildTop5TooltipHtml(trendTop5Jx, rdcLabel + ' · ' + fullDate + ' · 经销商 · 未清箱数 TOP 5', '未清箱数', true);
+            if (activeName === 'KA 满足率') {
+              const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, 'KA') : [];
+              html += buildTop5TooltipHtml(trendTop5Ka, rdcLabel + ' · ' + fullDate + ' · KA · 未清箱数 TOP 5', '未清箱数', true);
+            } else if (activeName === '经销商 满足率') {
+              const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, '经销商') : [];
+              html += buildTop5TooltipHtml(trendTop5Jx, rdcLabel + ' · ' + fullDate + ' · 经销商 · 未清箱数 TOP 5', '未清箱数', true);
+            }
             html += '</div>';  // v100.5: 闭合 min-width wrapper
             return html;
           }
