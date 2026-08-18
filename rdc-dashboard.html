@@ -659,7 +659,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 104; // v104: 给 page-overview/.card/.mindmap-grid 等加 overflow:visible !important 防 ECharts tooltip 被祖先 overflow 截断；top5 空数据时不再渲染标题+表头避免被误以为"被截"，改为简洁"当日无未清 SKU"提示；formatter 加 console.log 调试开关 window.__trendTooltipDebug；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 105; // v105: trend tooltip 终极修复底部被截——appendToBody:true 让 tooltip 挂到 body 脱离 .chart-area(220px/overflow) 裁剪 + position 改为按视口夹取（不再用容器 220px 高度作约束）；删除 window.__trendTooltipDebug 调试代码；v104: 给 page-overview/.card/.mindmap-grid 等加 overflow:visible !important 防 ECharts tooltip 被祖先 overflow 截断；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -2138,37 +2138,32 @@ function renderOverview() {
       chartTrend.setOption({
         title: { text: trendRdc === 'all' ? '全部 RDC 聚合' : trendRdc, left: 'center', top: 0, textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 'normal' } },
         tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
-          extraCssText: 'max-width:480px;max-height:none;overflow:visible;box-sizing:border-box;padding:8px 10px',
-          // v102: tooltip 位置自适应——四周都判断越界，确保 tooltip 永远完全显示在画布内
-          // 同时把整体高度限制解除（max-height:none），防止 ECharts 内部 CSS 把内容截掉
+          extraCssText: 'max-width:480px;overflow:visible;box-sizing:border-box;padding:8px 10px',
+          // v105: appendToBody 让 tooltip DOM 挂到 body，彻底脱离 .chart-area(220px/overflow) 的裁剪，从而能完整显示
+          // 坐标语义：position 回调返回「容器本地坐标」（与 point 同系）；ECharts 内部 makeStyleCoord 会叠加容器文档偏移转成文档坐标
+          // 故这里返回容器本地坐标，但把夹取边界从「容器 220px」换成「视口」——既保证完整可见，又不受容器高度裁剪限制
+          appendToBody: true,
+          confine: false,
           position: function(point, params, dom, rect, size) {
-            const viewW = size.viewSize[0];
-            const viewH = size.viewSize[1];
             const tipW = size.contentSize[0];
             const tipH = size.contentSize[1];
             const offset = 14;
-            // X 轴：默认右侧，右侧越界则左侧，再不行贴左缘
+            const margin = 8;
+            const cr = chartTrend.getDom().getBoundingClientRect();
+            const vw = window.innerWidth, vh = window.innerHeight;
+            // 本地坐标 = 文档坐标 - 容器偏移；视口允许范围换算到本地（滚动量在 ECharts 叠加时抵消，无需 scrollX/Y）
+            const xMin = margin - cr.left;
+            const xMax = vw - tipW - margin - cr.left;
             let x = point[0] + offset;
-            if (x + tipW > viewW - 8) {
-              x = point[0] - tipW - offset;
-              if (x < 8) x = 8;
-            } else if (x < 8) {
-              x = 8;
-            }
-            // Y 轴：先尝试上方（默认），再下方，都不够则把 tooltip 顶到能完整显示的位置
-            let y = point[1] - tipH - offset;
-            if (y >= 8) {
-              // 上方放得下，不动
-            } else {
-              // 上方放不下，改下方
-              y = point[1] + offset;
-              if (y + tipH > viewH - 8) {
-                // 下方也放不下，则把 tooltip 顶部紧贴画布顶部，让底部自然展开
-                y = 8;
-              }
-            }
-            // 兜底：极端情况 tooltip 比画布还高，至少顶部贴边
-            if (y + tipH > viewH - 8) y = 8;
+            if (x > xMax) x = point[0] - tipW - offset;   // 右侧越界 → 翻到鼠标左侧
+            if (x < xMin) x = xMin;
+            if (x > xMax) x = xMax;
+            const yMin = margin - cr.top;
+            const yMax = vh - tipH - margin - cr.top;
+            let y = point[1] - tipH - offset;             // 默认放在上方
+            if (y < yMin) y = point[1] + offset;          // 上方放不下 → 放下方
+            if (y > yMax) y = yMax;                       // 下方也越界 → 顶部贴可视区
+            if (y < yMin) y = yMin;
             return [x, y];
           },
           formatter: function(params) {
@@ -2187,13 +2182,6 @@ function renderOverview() {
             // v100.6 恢复（用户要求）：KA + 经销商两段 top5 同时显示
             const trendTop5Ka = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, 'KA') : [];
             const trendTop5Jx = fullDate ? getTopShortageSKUsByDay(trendRdc, fullDate, 5, '经销商') : [];
-            // v104 debug: 打印 trend tooltip 用的两个 top5 数组的真实数据，便于排查"经销商"段为什么只显示标题表头
-            if (window.__trendTooltipDebug) {
-              try {
-                console.log('[trend tooltip v104]', { fullDate, trendRdc, kaCount: trendTop5Ka.length, jxCount: trendTop5Jx.length,
-                  kaSample: trendTop5Ka[0], jxSample: trendTop5Jx[0] });
-              } catch (e) {}
-            }
             const rdcLabel = trendRdc === 'all' ? '全部 RDC' : trendRdc;
             // v104: 空数据时不渲染该段的标题表头——避免用户误以为"被截"，明确"无未清 SKU"
             html += trendTop5Ka.length > 0
