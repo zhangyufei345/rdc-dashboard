@@ -2132,11 +2132,14 @@ function renderOverview() {
       chartTrend.setOption({
         title: { text: trendRdc === 'all' ? '全部 RDC 聚合' : trendRdc, left: 'center', top: 0, textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 'normal' } },
         tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.95)', borderColor: 'rgba(99,179,237,0.3)', textStyle: { color: '#e2e8f0' },
+          extraCssText: 'max-width:480px;box-sizing:border-box;padding:8px 10px',
           formatter: function(params) {
             const idx = params[0] && typeof params[0].dataIndex === 'number' ? params[0].dataIndex : -1;
             const fullDate = (idx >= 0 && idx < trendLast7.length) ? trendLast7[idx] : '';
             const dayLabel = params[0] && params[0].name ? params[0].name : '';
-            let html = '<div style="font-weight:600;margin-bottom:4px">' + dayLabel + '</div>';
+            // v100.5: 整体包一层 min-width wrapper，保证下面 buildTop5TooltipHtml 的 flex:1（物料/品名列）不被压扁
+            let html = '<div style="min-width:380px;box-sizing:border-box">' +
+              '<div style="font-weight:600;margin-bottom:4px">' + dayLabel + '</div>';
             params.forEach(p => {
               const color = p.seriesName === 'KA 满足率' ? '#60a5fa' : '#34d399';
               html += '<div style="display:flex;align-items:center;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';margin-right:6px"></span>' +
@@ -2150,6 +2153,7 @@ function renderOverview() {
             const rdcLabel = trendRdc === 'all' ? '全部 RDC' : trendRdc;
             html += buildTop5TooltipHtml(trendTop5Ka, rdcLabel + ' · ' + fullDate + ' · KA · 未清箱数 TOP 5', '未清箱数', true);
             html += buildTop5TooltipHtml(trendTop5Jx, rdcLabel + ' · ' + fullDate + ' · 经销商 · 未清箱数 TOP 5', '未清箱数', true);
+            html += '</div>';  // v100.5: 闭合 min-width wrapper
             return html;
           }
         },
