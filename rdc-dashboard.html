@@ -659,7 +659,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 107; // v107: trend tooltip 标题"未清箱数 TOP 5"→"TOP 3"(与 limit=3 一致)；v106: 日订单满足趋势图 hover tooltip TOP5→TOP3；v105: trend tooltip 终极修复底部被截——appendToBody:true 让 tooltip 挂到 body 脱离 .chart-area(220px/overflow) 裁剪 + position 改为按视口夹取（不再用容器 220px 高度作约束）；删除 window.__trendTooltipDebug 调试代码；v104: 给 page-overview/.card/.mindmap-grid 等加 overflow:visible !important 防 ECharts tooltip 被祖先 overflow 截断；v98: 修复品牌×RDC满足率矩阵(日度)TOP5缺货SKU tooltip"在途/供应"列显示"—"——getTopFirstDayShortSKUsByBrand 从缺货汇总按 (dateStr+RDC+materialCode) 补全在途箱数与大仓供应；v97: 订单数据更新——用户引用 S盘工作目录「8月RDC订单满足汇总.xlsx」(8/18 17:30版) cp 覆盖 data.xlsx 并重跑 JSON(data.json 12524行，订单明细10727行，仍仅8月口径)；v96: 品牌×RDC满足率矩阵无订单格改灰色(#6b7280)；v95: 订单数据更新-8/17版(仅8月9378行)；v94: 订单数据更新-8/14版(43257行)；v93: 订单洞察「转储入库 vs 实际出货」联动修复；DB_VERSION 92->93；v91: 修正"当前库存 vs 未来需求覆盖分析"表头：需求列实际取的是 cov08（8月需求），但表头误写为"7月需求"，改为"8月需求"；v90: 修复"日订单满足率同比对比"2026年数据展示陈旧问题：history.json 8/6 写入的 8 月值是部分数据（华南 65.4%），现改为 2026 年优先从当前 orderDetail 实时聚合，并更新 history.json 2026-05~08 满足率；v89: 修复 parseCoverageSheet 中 2027-01 被错误映射到 cov01 的 bug；v88: 慢动品剔除"可用库存=0"的纯风险/无货 SKU；v87: 库存覆盖明细未来6个月表头随覆盖数据源滚动；v86: 删除"年度同比概览"表格中的"同比（vs 2025年X月）"列；v85: 慢动品页 `d.availQtyPlan || d.availableQty` 的 || 回退改为纯 availQtyPlan||0；v84: 库存覆盖明细统一「可用库存金额」口径 inventoryAmt→planAmt；v83: 库存覆盖明细"可用库存"数量列改用 availQtyPlan；v82: 恢复订单洞察页"转储入库 vs 实际出货（按RDC）"趋势图；v81: 接入7月库存覆盖数据/7月库存状态分析；当前月滚动到7月(基准=6月)
+const DB_VERSION = 108; // v108: 新增「分仓计划监控」模块(plan-monitor) + 需求满足分析/业务需求可信度合并为「业务需求可信度」内部TAB；分仓计划(cov08/支) vs 订单出货(firstDayQty/支) 完成率诊断 + 跳转补货建议联动
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -1521,7 +1521,8 @@ function renderPage(page) {
       case 'inventory-coverage-detail': renderInventoryCoverageDetail(); break;
       case 'slow-moving': renderSlowMoving(); break;
       case 'slow-moving-logic': renderSlowMovingLogic(); break;
-      case 'biz-demand': renderBizDemand(); break;
+      case 'biz-demand': renderBizDemandCombined(); break;
+      case 'plan-monitor': renderPlanMonitor(); break;
       case 'biz-demand-detail': renderBizDemandDetail(); break;
       case 'biz-demand-dacr': renderBizDemandDACR(); break;
       case 'data': renderDataPage(); break;
@@ -7441,7 +7442,11 @@ function renderReplenishment() {
     '<div>• 可通过顶部月份选择器切换不同月份的分析数据</div>' +
     '</div></div>';
 
-  page.innerHTML = '<div class="filter-bar"><span style="font-size:12px;color:var(--text-secondary)">注：补货建议根据 ' + latestDate + ' 的缺货数据和近60天历史订单生成（含上月数据）</span></div>' +
+  var planBanner = '';
+  if (window._planMonitorSku) {
+    planBanner = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;margin-bottom:12px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;font-size:12px;color:#1E40AF"><span>🔗 来自「分仓计划监控」跳转：SKU <b style="font-family:monospace;margin:0 4px">' + window._planMonitorSku + '</b>（RDC：' + (window._replRdc || '全部') + '）</span><span style="color:#64748B">分仓计划完成率请在分仓计划监控查看；下方按当前RDC展示补货建议。</span><button onclick="window._planMonitorSku=null;navigateTo(\'plan-monitor\')" style="margin-left:auto;padding:4px 12px;border:1px solid #BFDBFE;border-radius:6px;background:#fff;cursor:pointer;font-size:12px">← 返回分仓计划监控</button><button onclick="window._planMonitorSku=null;renderReplenishment()" style="padding:4px 12px;border:1px solid #BFDBFE;border-radius:6px;background:#fff;cursor:pointer;font-size:12px">清除</button></div>';
+  }
+  page.innerHTML = planBanner + '<div class="filter-bar"><span style="font-size:12px;color:var(--text-secondary)">注：补货建议根据 ' + latestDate + ' 的缺货数据和近60天历史订单生成（含上月数据）</span></div>' +
     dailyHtml + midHtml + helpHtml;
 
   // Register global functions
@@ -8790,8 +8795,8 @@ function init() {
           <div class="menu-group-body collapsed" data-group="forecast">
           <div class="menu-item" data-page="replenishment" onclick="navigateTo('replenishment')"><span class="icon">🎯</span>补货建议</div>
           <div class="menu-item" data-page="shortage-compare" onclick="navigateTo('shortage-compare')"><span class="icon">⚖</span>缺货差异维护</div>
-          <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>需求满足分析</div>
-          <div class="menu-item menu-sub" data-page="biz-demand-dacr" onclick="navigateTo('biz-demand-dacr')"><span class="icon">📊</span>业务需求可信度</div>
+          <div class="menu-item" data-page="plan-monitor" onclick="navigateTo('plan-monitor')"><span class="icon">📊</span>分仓计划监控</div>
+          <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>业务需求可信度</div>
           </div>
           <div class="menu-group-header collapsed" onclick="toggleMenuGroup(this)"><span class="arrow">▼</span>📋 库存分析</div>
           <div class="menu-group-body collapsed" data-group="inventory">
@@ -8836,6 +8841,7 @@ function init() {
           <div class="page" id="page-slow-moving"></div>
           <div class="page" id="page-slow-moving-logic"></div>
           <div class="page" id="page-biz-demand"></div>
+          <div class="page" id="page-plan-monitor"></div>
           <div class="page" id="page-biz-demand-detail"></div>
           <div class="page" id="page-biz-demand-dacr"></div>
         </main>
@@ -11845,9 +11851,9 @@ function navigateToBizDemandDetail(month, rdc, channel) {
 }
 
 // ========== 业务需求可信度（DACR）分析 ==========
-function renderBizDemandDACR() {
+function renderBizDemandDACR(targetId) {
   setTitle('业务需求可信度（DACR）');
-  const page = document.getElementById('page-biz-demand-dacr');
+  const page = document.getElementById(targetId || 'page-biz-demand-dacr');
   if (!dataStore.loaded || !dataStore.bizDemand || dataStore.bizDemand.length === 0) {
     page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">暂无业务需求数据</div>';
     return;
@@ -12085,9 +12091,197 @@ function exportDACR() {
   downloadFile('业务需求可信度DACR+补货建议_' + new Date().toISOString().slice(0,10) + '.csv', csv);
 }
 
-function renderBizDemand() {
-  setTitle('需求满足分析');
+// ============ 业务需求可信度（合并 TAB：需求满足分析 + 业务需求可信度）============
+function renderBizDemandCombined() {
+  setTitle('业务需求可信度');
   const page = document.getElementById('page-biz-demand');
+  page.innerHTML = '<div style="display:flex;gap:8px;padding:14px 20px 0;flex-wrap:wrap">' +
+    '<button class="bd-tab" data-tab="dm" onclick="switchBizDemandCombined(\'dm\')" style="padding:9px 18px;border:1px solid var(--border-card);border-bottom:none;border-radius:8px 8px 0 0;background:transparent;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary)">📋 需求满足分析</button>' +
+    '<button class="bd-tab" data-tab="dacr" onclick="switchBizDemandCombined(\'dacr\')" style="padding:9px 18px;border:1px solid var(--border-card);border-bottom:none;border-radius:8px 8px 0 0;background:transparent;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary)">📊 业务需求可信度</button>' +
+    '</div>' +
+    '<div id="bd-tab-dm"></div>' +
+    '<div id="bd-tab-dacr" style="display:none"></div>';
+  switchBizDemandCombined('dm');
+}
+
+function switchBizDemandCombined(tab) {
+  const tabs = document.querySelectorAll('.bd-tab');
+  tabs.forEach(function(b) {
+    const on = b.dataset.tab === tab;
+    b.style.background = on ? 'var(--bg-card)' : 'transparent';
+    b.style.color = on ? 'var(--color-blue)' : 'var(--text-secondary)';
+    b.style.borderColor = on ? 'var(--color-blue)' : 'var(--border-card)';
+  });
+  const dm = document.getElementById('bd-tab-dm');
+  const dacr = document.getElementById('bd-tab-dacr');
+  if (tab === 'dm') { dm.style.display = 'block'; dacr.style.display = 'none'; renderBizDemand('bd-tab-dm'); }
+  else { dm.style.display = 'none'; dacr.style.display = 'block'; renderBizDemandDACR('bd-tab-dacr'); }
+}
+
+// ============ 分仓计划监控 ============
+function planCompColor(c) {
+  if (c < 0.7) return '#DC2626';
+  if (c < 1.0) return '#D97706';
+  if (c <= 1.1) return '#15803D';
+  return '#2563EB';
+}
+
+function jumpToReplenish(sku, rdc) {
+  window._planMonitorSku = sku;
+  window._replRdc = rdc;
+  navigateTo('replenishment');
+}
+
+function renderPlanMonitor() {
+  setTitle('分仓计划监控');
+  const page = document.getElementById('page-plan-monitor');
+  const inv = dataStore.inventory || {};
+  const covSource = inv.cov7 ? 'cov7' : (inv.cov6 ? 'cov6' : 'cov5');
+  const cov7 = inv[covSource] || [];
+  const orders = dataStore.orderDetail || [];
+  if (!cov7.length || !orders.length) {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📊</div><div style="font-size:var(--font-size-lg)">暂无数据</div><div style="font-size:12px;margin-top:8px">需含「7月库存覆盖数据」(cov7) 与订单明细</div></div>';
+    return;
+  }
+  const rdcFilter = window._planRdc || 'all';
+  window._planRdc = rdcFilter;
+  const hainan = window._invHainan || 'all';
+  const cfg = getCovMonthConfig(covSource);
+  const targetField = cfg.fields[0];
+  const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
+  const targetMonth = COV_TO_YM[targetField] || '2026-08';
+  const targetLabel = cfg.labels[0];
+  const now = new Date();
+  const ym = targetMonth.split('-');
+  const daysInMonth = new Date(+ym[0], +ym[1], 0).getDate();
+  const dayOfMonth = Math.min(now.getDate(), daysInMonth);
+  const monthElapsed = dayOfMonth / daysInMonth;
+
+  function isH(sku) { return !!(sku && typeof skuIsHainan !== 'undefined' && skuIsHainan[sku]); }
+
+  // 聚合出货（支）：SKU×RDC，当月，跟随海南花露水筛选
+  const shipMap = {};
+  orders.forEach(function(d) {
+    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
+    if (hainan === 'yes' && !isH(d.skuCode)) return;
+    if (hainan === 'no' && isH(d.skuCode)) return;
+    const rdc = normalizeRdcName(d.warehouse);
+    if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
+    const key = (d.skuCode || '') + '|' + rdc;
+    shipMap[key] = (shipMap[key] || 0) + (d.firstDayQty || 0);
+  });
+
+  // 计算偏差
+  const rows = [];
+  cov7.forEach(function(d) {
+    const plan = d[targetField] || 0;
+    if (plan <= 0) return;
+    if (hainan === 'yes' && !isH(d.sku)) return;
+    if (hainan === 'no' && isH(d.sku)) return;
+    const rdc = d.rdc;
+    if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
+    const key = (d.sku || '') + '|' + rdc;
+    const shipped = shipMap[key] || 0;
+    const comp = plan > 0 ? shipped / plan : 0;
+    const forecast = monthElapsed > 0 ? Math.min(comp / monthElapsed, 3) : 0;
+    let status, advice;
+    if (comp < 0.7) {
+      status = '滞后';
+      advice = (d.availQtyPlan || 0) <= 0 ? '触发补货建议加大（无可用库存）' : '诊断需求下降/慢动（有可用库存）';
+    } else if (comp > 1.1) {
+      status = '超额';
+      advice = (d.availQtyPlan || 0) <= 0 ? '建议下月计划上调 + 提前补货' : '建议下月分仓计划下调';
+    } else {
+      status = '正常';
+      advice = '保持';
+    }
+    rows.push({ sku:d.sku, skuName:d.skuName, brand:d.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice, avail:d.availQtyPlan||0 });
+  });
+  rows.sort(function(a, b) { return a.comp - b.comp; });
+  window._planMonitorRows = rows;
+
+  // KPI
+  const totalPlan = rows.reduce(function(s, r) { return s + r.plan; }, 0);
+  const totalShipped = rows.reduce(function(s, r) { return s + r.shipped; }, 0);
+  const overall = totalPlan > 0 ? totalShipped / totalPlan * 100 : 0;
+  const overCnt = rows.filter(function(r) { return r.status === '超额'; }).length;
+  const lagCnt = rows.filter(function(r) { return r.status === '滞后'; }).length;
+  const addCnt = rows.filter(function(r) { return r.status === '滞后' && r.avail <= 0; }).length;
+
+  // RDC 汇总
+  const rdcMap = {};
+  rows.forEach(function(r) { if (!rdcMap[r.rdc]) rdcMap[r.rdc] = { plan:0, shipped:0 }; rdcMap[r.rdc].plan += r.plan; rdcMap[r.rdc].shipped += r.shipped; });
+  const rdcList = Object.keys(rdcMap).sort();
+
+  // 筛选下拉
+  const allRdcs = [...new Set(cov7.map(function(d){ return d.rdc; }).filter(Boolean))].sort();
+
+  let html = '';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:16px 20px;background:var(--bg-card);border-radius:12px;margin-bottom:16px;align-items:center">';
+  html += '<span style="font-size:13px;font-weight:600;color:var(--text-primary)">📊 分仓计划监控</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary)">目标月：'+targetLabel+'（'+targetMonth+'）｜计划口径：'+covSource.toUpperCase()+' 覆盖表首列需求（支）</span>';
+  html += '<select onchange="window._planRdc=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
+  html += '<select onchange="window._invHainan=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(hainan==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainan==='yes'?' selected':'')+'>仅海南花露水</option><option value="no"'+(hainan==='no'?' selected':'')+'>不含海南花露水</option></select>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月出货(支)/分仓计划(支)；全月预测=完成率÷已过天数占比</span>';
+  html += '</div>';
+
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">';
+  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
+  html += '<div class="kpi-card green"><div class="kpi-label">超额完成 SKU（&gt;110%）</div><div class="kpi-value">'+overCnt+'</div></div>';
+  html += '<div class="kpi-card red"><div class="kpi-label">滞后 SKU（&lt;70%）</div><div class="kpi-value">'+lagCnt+'</div></div>';
+  html += '<div class="kpi-card orange"><div class="kpi-label">需追加补货 SKU（滞后+无可用库存）</div><div class="kpi-value">'+addCnt+'</div></div>';
+  html += '</div>';
+
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">各 RDC 计划完成率</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th class="num">计划(支)</th><th class="num">出货(支)</th><th class="num">完成率</th></tr></thead><tbody>';
+  if (rdcList.length === 0) html += '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-secondary)">无数据</td></tr>';
+  rdcList.forEach(function(r) {
+    const m = rdcMap[r];
+    const c = m.plan > 0 ? m.shipped / m.plan : 0;
+    html += '<tr><td>'+r+'</td><td class="num">'+formatNum(m.plan)+'</td><td class="num">'+formatNum(m.shipped)+'</td><td class="num" style="color:'+planCompColor(c)+';font-weight:700">'+(c*100).toFixed(1)+'%</td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+
+  html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">SKU 分仓计划偏差明细（按计划完成率升序）</span><button class="btn-export" onclick="exportPlanMonitor()">导出CSV</button></div>';
+  html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table"><thead><tr>';
+  html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">出货(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
+  html += '</tr></thead><tbody>';
+  if (rows.length === 0) html += '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>';
+  rows.forEach(function(r) {
+    const compColor = planCompColor(r.comp);
+    const compBg = r.comp < 0.7 ? '#FEE2E2' : r.comp < 1.0 ? '#FFFBEB' : r.comp <= 1.1 ? '#DCFCE7' : '#DBEAFE';
+    const statusColor = r.status==='滞后' ? '#DC2626' : r.status==='超额' ? '#15803D' : '#D97706';
+    html += '<tr>';
+    html += '<td style="position:sticky;left:0;background:inherit;font-family:monospace">'+r.sku+'</td>';
+    html += '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td>';
+    html += '<td>'+(r.brand||'—')+'</td>';
+    html += '<td>'+r.rdc+'</td>';
+    html += '<td class="num">'+formatNum(r.plan)+'</td>';
+    html += '<td class="num">'+formatNum(r.shipped)+'</td>';
+    html += '<td class="num" style="color:'+compColor+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
+    html += '<td class="num" style="color:'+compColor+'">'+(r.forecast*100).toFixed(1)+'%</td>';
+    html += '<td style="background:'+compBg+';color:'+statusColor+';font-weight:600">'+r.status+'</td>';
+    html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
+    html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+r.sku+'\',\''+r.rdc+'\')">→ 补货建议</button></td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div></div>';
+
+  page.innerHTML = html;
+}
+
+function exportPlanMonitor() {
+  const rows = window._planMonitorRows || [];
+  if (!rows.length) { showToast('无数据', true); return; }
+  let csv = '\uFEFFSKU,名称,品牌,RDC,计划(支),出货(支),完成率(%),全月预测(%),状态,建议\n';
+  rows.forEach(function(r) {
+    csv += [r.sku, (r.skuName||'').replace(/,/g,'，'), r.brand||'', r.rdc, r.plan, r.shipped, (r.comp*100).toFixed(1), (r.forecast*100).toFixed(1), r.status, r.advice].join(',') + '\n';
+  });
+  downloadFile('分仓计划监控_' + (window._planRdc||'全部RDC') + '_' + new Date().toISOString().slice(0,10) + '.csv', csv);
+}
+
+function renderBizDemand(targetId) {
+  setTitle('需求满足分析');
+  const page = document.getElementById(targetId || 'page-biz-demand');
   if (!dataStore.loaded || !dataStore.bizDemand || dataStore.bizDemand.length === 0) {
     page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📋</div><div style="font-size:var(--font-size-lg)">暂无业务需求数据</div><div style="font-size:12px;margin-top:8px">请确保导入的Excel包含「业务需求满足情况」Sheet</div></div>';
     return;
