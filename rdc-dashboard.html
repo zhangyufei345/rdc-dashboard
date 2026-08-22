@@ -660,7 +660,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 113; // v113: 1) window._skuIsHainan 暴露（修 isH() 永远 false → 不含海南花露水失效 + 品牌矩阵全 100%）；2) 顶部 KPI 补"正常"分类；3) .kpi-card.gray 配色
+const DB_VERSION = 114; // v114: 修复 v113 修复没生效——window._skuIsHainan 暴露挂错位置（renderOrderInsight 函数体内，用户首次进 plan-monitor 还没跑过 → isH 永远 false）。v114 在 parseInventoryExcel 末尾用 cov5/cov6/cov7.d.isHainan 字段构建+暴露。inventory.json 没有'海南花露水历史数据'sheet，故数据源只能用 cov7（col8='是'）。验证：'不含海南花露水'剔除77行/263.5万计划量/完成率33.8%→41.7%
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -9983,6 +9983,38 @@ function parseInventoryExcel(rawData) {
       };
       return m[n] || n;
     }
+
+    // v114: 海南花露水 SKU 集合必须在 parseInventoryExcel 末尾就构建并暴露到 window，
+    // 而不是放在 renderOrderInsight 里（用户首次进入 plan-monitor 时 renderOrderInsight
+    // 还没跑过，window._skuIsHainan 一直是 undefined → isH() 永远 false → 矩阵全 100% + 开关失效）。
+    // 真实数据源：7月库存覆盖数据 col8='海南花露水'='是'（已由 parseCoverageSheet 解析为 d.isHainan）。
+    // 7月库存覆盖数据是 cov7（最新月）；为避免「上月被剔除、下月又出现」，全量扫 cov5/cov6/cov7 取并集。
+    try {
+      const _hSet = {};
+      const _covs = [].concat(dataStore.inventory.cov5 || [], dataStore.inventory.cov6 || [], dataStore.inventory.cov7 || []);
+      for (const d of _covs) {
+        if (d && d.sku && d.isHainan) _hSet[d.sku] = true;
+      }
+      // 兜底：直接扫 rawSheets['7月库存覆盖数据'] col8='是'（防止 parseCoverageSheet 漏解析或字段名漂移）
+      const _rawCov7 = rawSheets && rawSheets['7月库存覆盖数据'];
+      if (_rawCov7 && _rawCov7.length > 1) {
+        const _hH = _rawCov7[1] || [];
+        let _c8 = -1;
+        for (let i = 0; i < _hH.length; i++) {
+          if (String(_hH[i] || '').trim() === '海南花露水') { _c8 = i; break; }
+        }
+        if (_c8 >= 0) {
+          for (let i = 2; i < _rawCov7.length; i++) {
+            const r = _rawCov7[i];
+            if (!r) continue;
+            const sku = String(r[1] || '').trim();
+            if (sku && String(r[_c8] || '').trim() === '是') _hSet[sku] = true;
+          }
+        }
+      }
+      window._skuIsHainan = _hSet;
+      console.log('[HainanMap] parseInventoryExcel 构建 _skuIsHainan, 共', Object.keys(_hSet).length, '个 SKU');
+    } catch(e) { console.warn('[HainanMap] 构建失败:', e); }
 
     return true;
   } catch(e) { console.error('Inventory parse error:', e); return false; }
