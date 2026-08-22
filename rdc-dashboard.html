@@ -12156,6 +12156,8 @@ function renderPlanMonitor() {
   const daysInMonth = new Date(+ym[0], +ym[1], 0).getDate();
   const dayOfMonth = Math.min(now.getDate(), daysInMonth);
   const monthElapsed = dayOfMonth / daysInMonth;
+  const viewMode = window._planView || 'month';
+  window._planView = viewMode;
 
   function isH(sku) { return !!(sku && typeof skuIsHainan !== 'undefined' && skuIsHainan[sku]); }
 
