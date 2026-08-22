@@ -12154,8 +12154,6 @@ function renderPlanMonitor() {
   const _isPromoOrNew = function(cat){ return cat === '促销装' || cat === '新品期'; };
   const _excludedSkuSet = {};
   cov7.forEach(function(d){ if (d && d.sku && _isPromoOrNew(d.coverageLevel)) _excludedSkuSet[d.sku] = true; });
-  const _excludedSkuCount = Object.keys(_excludedSkuSet).length;
-  const _excludedPlanQty = cov7.reduce(function(s,d){ return s + (_isPromoOrNew(d.coverageLevel) ? (d[targetField]||0) : 0); }, 0);
   const cfg = getCovMonthConfig(covSource);
   const targetField = cfg.fields[0];
   const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
