@@ -659,7 +659,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 108; // v108: 新增「分仓计划监控」模块(plan-monitor) + 需求满足分析/业务需求可信度合并为「业务需求可信度」内部TAB；分仓计划(cov08/支) vs 订单出货(firstDayQty/支) 完成率诊断 + 跳转补货建议联动
+const DB_VERSION = 109; // v109: 分仓计划监控升级：①出货口径改 订单口径(orderQty，有订单即计入)；②新增「品牌×RDC 出货进度矩阵」(月/日切换+点击下钻SKU)；③「各RDC完成率」表改 ECharts 折线图(每RDC一条MTD累计完成率曲线)
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -12159,16 +12159,37 @@ function renderPlanMonitor() {
 
   function isH(sku) { return !!(sku && typeof skuIsHainan !== 'undefined' && skuIsHainan[sku]); }
 
-  // 聚合出货（支）：SKU×RDC，当月，跟随海南花露水筛选
-  const shipMap = {};
+  // 出货口径 = 订单口径：orderQty（订单支数），有订单即计入，不等实际出库
+  // 聚合：SKU×RDC（明细用），品牌×RDC（矩阵用），按日×RDC（曲线用）
+  const shipMap = {};       // sku|rdc -> orderQty
+  const skuRdcBrand = {};   // sku|rdc -> brand（兜底来自订单行）
+  const brandRdcOrder = {}; // brand -> rdc -> orderQty
+  const dayOrderByRdc = {}; // rdc -> day -> orderQty 当日
+  const brandRdcPlan = {};  // brand -> rdc -> planQty
+  const skuRdcPlan = {};    // sku|rdc -> planQty（兜底来自 cov）
+  const RDCS = [];
   orders.forEach(function(d) {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
     const rdc = normalizeRdcName(d.warehouse);
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
-    const key = (d.skuCode || '') + '|' + rdc;
-    shipMap[key] = (shipMap[key] || 0) + (d.firstDayQty || 0);
+    const sku = d.skuCode || '';
+    const key = sku + '|' + rdc;
+    const q = d.orderQty || 0;
+    shipMap[key] = (shipMap[key] || 0) + q;
+    const br = d.brand || '';
+    if (br) skuRdcBrand[key] = br;
+    if (br) {
+      if (!brandRdcOrder[br]) brandRdcOrder[br] = {};
+      brandRdcOrder[br][rdc] = (brandRdcOrder[br][rdc] || 0) + q;
+    }
+    const day = Number(d.dateStr.slice(8, 10));
+    if (!isNaN(day) && day >= 1 && day <= daysInMonth) {
+      if (!dayOrderByRdc[rdc]) dayOrderByRdc[rdc] = {};
+      dayOrderByRdc[rdc][day] = (dayOrderByRdc[rdc][day] || 0) + q;
+    }
+    if (RDCS.indexOf(rdc) === -1) RDCS.push(rdc);
   });
 
   // 计算偏差
@@ -12197,6 +12218,31 @@ function renderPlanMonitor() {
     }
     rows.push({ sku:d.sku, skuName:d.skuName, brand:d.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice, avail:d.availQtyPlan||0 });
   });
+  // 兜底品牌（RDC 列、累计按日）
+  cov7.forEach(function(d){
+    if (hainan === 'yes' && !isH(d.sku)) return;
+    if (hainan === 'no' && !isH(d.sku)) return;
+    const plan = d[targetField] || 0;
+    const br = d.brand || '';
+    if (br && plan > 0) {
+      if (!brandRdcPlan[br]) brandRdcPlan[br] = {};
+      brandRdcPlan[br][d.rdc] = (brandRdcPlan[br][d.rdc] || 0) + plan;
+    }
+    const key = (d.sku||'') + '|' + d.rdc;
+    if (!skuRdcBrand[key] && br) skuRdcBrand[key] = br;
+    skuRdcPlan[key] = (skuRdcPlan[key] || 0) + plan;
+    if (RDCS.indexOf(d.rdc) === -1 && (!rdcFilter || rdcFilter === 'all' || rdcFilter === d.rdc)) RDCS.push(d.rdc);
+  });
+  // 累计按日：rdc -> [day1累计, day2累计, ...]
+  const cumByDayByRdc = {};
+  RDCS.forEach(function(rdc){
+    cumByDayByRdc[rdc] = [];
+    let acc = 0;
+    for (let d = 1; d <= dayOfMonth; d++) {
+      acc += (dayOrderByRdc[rdc] && dayOrderByRdc[rdc][d]) || 0;
+      cumByDayByRdc[rdc].push(acc);
+    }
+  });
   rows.sort(function(a, b) { return a.comp - b.comp; });
   window._planMonitorRows = rows;
 
@@ -12222,28 +12268,32 @@ function renderPlanMonitor() {
   html += '<span style="font-size:11px;color:var(--text-secondary)">目标月：'+targetLabel+'（'+targetMonth+'）｜计划口径：'+covSource.toUpperCase()+' 覆盖表首列需求（支）</span>';
   html += '<select onchange="window._planRdc=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
   html += '<select onchange="window._invHainan=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(hainan==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainan==='yes'?' selected':'')+'>仅海南花露水</option><option value="no"'+(hainan==='no'?' selected':'')+'>不含海南花露水</option></select>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月出货(支)/分仓计划(支)；全月预测=完成率÷已过天数占比</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月订单量(支)/分仓计划(支)；全月预测=完成率÷已过天数占比</span>';
   html += '</div>';
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">';
-  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
+  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（订单口径）</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
   html += '<div class="kpi-card green"><div class="kpi-label">超额完成 SKU（&gt;110%）</div><div class="kpi-value">'+overCnt+'</div></div>';
   html += '<div class="kpi-card red"><div class="kpi-label">滞后 SKU（&lt;70%）</div><div class="kpi-value">'+lagCnt+'</div></div>';
   html += '<div class="kpi-card orange"><div class="kpi-label">需追加补货 SKU（滞后+无可用库存）</div><div class="kpi-value">'+addCnt+'</div></div>';
   html += '</div>';
 
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">各 RDC 计划完成率</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th class="num">计划(支)</th><th class="num">出货(支)</th><th class="num">完成率</th></tr></thead><tbody>';
-  if (rdcList.length === 0) html += '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-secondary)">无数据</td></tr>';
-  rdcList.forEach(function(r) {
-    const m = rdcMap[r];
-    const c = m.plan > 0 ? m.shipped / m.plan : 0;
-    html += '<tr><td>'+r+'</td><td class="num">'+formatNum(m.plan)+'</td><td class="num">'+formatNum(m.shipped)+'</td><td class="num" style="color:'+planCompColor(c)+';font-weight:700">'+(c*100).toFixed(1)+'%</td></tr>';
-  });
-  html += '</tbody></table></div></div>';
+  html += '<div class="card" style="margin-bottom:16px" id="pm-brand-rdc-card"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+  html += '<span class="card-title">🌡️ 品牌 × RDC 出货进度矩阵</span>';
+  html += '<div id="pm-mode-toggle" style="display:inline-flex;gap:4px;border:1px solid var(--border-card);border-radius:8px;padding:2px;background:var(--bg-card)">';
+  html += '<button onclick="window._planView=\'month\';renderPlanMonitor()" style="padding:4px 14px;font-size:12px;border:0;border-radius:6px;cursor:pointer;background:'+(viewMode==='month'?'#2563EB;color:#fff':'transparent;color:var(--text-primary)')+'">月度</button>';
+  html += '<button onclick="window._planView=\'day\';renderPlanMonitor()" style="padding:4px 14px;font-size:12px;border:0;border-radius:6px;cursor:pointer;background:'+(viewMode==='day'?'#2563EB;color:#fff':'transparent;color:var(--text-primary)')+'">日度</button>';
+  html += '</div>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击单元格 → 下钻 SKU 明细 ｜ 月度=MTD订单量/分仓计划 ｜ 日度=最近一日订单量/当日应分计划</span>';
+  html += '</div><div id="pm-brand-rdc-matrix"></div><div id="pm-sku-drill"></div></div>';
+
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 各 RDC MTD 累计完成率曲线（订单口径）</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">横轴：'+targetMonth+' 第 1 ~ '+dayOfMonth+' 日 ｜ 每条线 = 一个 RDC 的 MTD 累计完成率%</span>';
+  html += '</div><div id="pm-rdc-trend" style="height:340px"></div></div>';
 
   html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">SKU 分仓计划偏差明细（按计划完成率升序）</span><button class="btn-export" onclick="exportPlanMonitor()">导出CSV</button></div>';
   html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table"><thead><tr>';
-  html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">出货(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
+  html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
   html += '</tr></thead><tbody>';
   if (rows.length === 0) html += '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>';
   rows.forEach(function(r) {
@@ -12267,16 +12317,129 @@ function renderPlanMonitor() {
   html += '</tbody></table></div></div>';
 
   page.innerHTML = html;
+
+  // ===== 填充品牌×RDC 矩阵 =====
+  (function fillBrandRdcMatrix(){
+    const matrixWrap = document.getElementById('pm-brand-rdc-matrix');
+    if (!matrixWrap) return;
+    const isMonth = viewMode === 'month';
+    const brands = [...new Set([...Object.keys(brandRdcOrder), ...Object.keys(brandRdcPlan)])].filter(Boolean).sort();
+    if (brands.length === 0) {
+      matrixWrap.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无品牌×RDC 数据</div>';
+      return;
+    }
+    const escape = function(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+    function bgg(c){ return c < 0.7 ? '#FEE2E2' : c < 1.0 ? '#FEF3C7' : c <= 1.1 ? '#DCFCE7' : '#DBEAFE'; }
+    function fgg(c){ return c < 0.7 ? '#DC2626' : c < 1.0 ? '#D97706' : c <= 1.1 ? '#15803D' : '#2563EB'; }
+    function pct(c){ return (c * 100).toFixed(c >= 1 ? 0 : 1) + '%'; }
+    function esc(s){ return String(s==null?'':s).replace(/'/g, "\\'"); }
+    let m = '<table class="data-table brand-rdc-matrix" style="margin:8px 0;font-size:12px;width:100%;table-layout:fixed">';
+    m += '<thead><tr><th style="text-align:left;width:90px;background:var(--bg-card);position:sticky;left:0;z-index:1">品牌</th>';
+    RDCS.forEach(function(r){ m += '<th style="background:var(--bg-card)">'+escape(r)+'</th>'; });
+    m += '</tr></thead><tbody>';
+    brands.forEach(function(b){
+      m += '<tr><td style="text-align:left;font-weight:600;position:sticky;left:0;background:var(--bg-card)">'+escape(b)+'</td>';
+      RDCS.forEach(function(rdc){
+        let planV=0, orderV=0, rate=0, isEmpty=true, onlyOrder=false;
+        if (isMonth) {
+          planV = (brandRdcPlan[b] && brandRdcPlan[b][rdc]) || 0;
+          orderV = (brandRdcOrder[b] && brandRdcOrder[b][rdc]) || 0;
+          isEmpty = (planV === 0 && orderV === 0);
+          onlyOrder = (planV === 0 && orderV > 0);
+          rate = planV > 0 ? orderV / planV : (orderV > 0 ? 1 : 0);
+        } else {
+          const oneDay = (dayOrderByRdc[rdc] && dayOrderByRdc[rdc][dayOfMonth]) || 0;
+          const planTotal = (brandRdcPlan[b] && brandRdcPlan[b][rdc]) || 0;
+          planV = planTotal > 0 ? planTotal / daysInMonth : 0;
+          orderV = oneDay;
+          isEmpty = (planV === 0 && orderV === 0);
+          onlyOrder = (planV === 0 && orderV > 0);
+          rate = planV > 0 ? orderV / planV : (orderV > 0 ? 1 : 0);
+        }
+        let display, bgC, fgC, title;
+        if (isEmpty) { display = '—'; bgC = '#F1F5F9'; fgC = '#94A3B8'; title = escape(b)+'·'+escape(rdc)+'\n无订单无计划'; }
+        else if (onlyOrder) { display = isMonth ? '100%' : '—'; bgC = '#DCFCE7'; fgC = '#15803D'; title = escape(b)+'·'+escape(rdc)+'\n仅有订单 '+Math.round(orderV)+' 支（无计划数据）'; }
+        else { display = pct(rate); bgC = bgg(rate); fgC = fgg(rate); title = escape(b)+'·'+escape(rdc)+'\n订单量: '+Math.round(orderV)+' 支\n计划量: '+Math.round(planV)+' 支\n完成率: '+(rate*100).toFixed(1)+'%\n点击下钻SKU明细'; }
+        m += '<td style="background:'+bgC+';color:'+fgC+';font-weight:700;cursor:pointer;text-align:center" title="'+title+'" onclick="jumpToPlanMonitorSkuDetail(\''+esc(b)+'\',\''+esc(rdc)+'\')">'+display+'</td>';
+      });
+      m += '</tr>';
+    });
+    m += '</tbody></table>';
+    matrixWrap.innerHTML = m;
+  })();
+
+  // ===== ECharts 折线图：各 RDC MTD 累计完成率 =====
+  const lineChart = echarts.init(document.getElementById('pm-rdc-trend'));
+  const xDays = []; for (let i = 1; i <= dayOfMonth; i++) xDays.push(i + '日');
+  const lineColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6'];
+  const rdcPlanTotals = {};
+  rows.forEach(function(r){ rdcPlanTotals[r.rdc] = (rdcPlanTotals[r.rdc] || 0) + r.plan; });
+  const lineSeries = RDCS.map(function(rdc, idx){
+    const cum = cumByDayByRdc[rdc] || [];
+    const planTotal = rdcPlanTotals[rdc] || 0;
+    return {
+      name: rdc, type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
+      lineStyle: { width: 2.2, color: lineColors[idx % lineColors.length] },
+      itemStyle: { color: lineColors[idx % lineColors.length] },
+      data: cum.map(function(acc){ return planTotal > 0 ? +(acc / planTotal * 100).toFixed(2) : 0; })
+    };
+  });
+  lineChart.setOption({
+    tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, valueFormatter: function(v){ return (v||0).toFixed(1)+'%'; } },
+    legend: { data: RDCS, top: 0, textStyle: { fontSize: 11 } },
+    grid: { left: 50, right: 30, top: 36, bottom: 40 },
+    xAxis: { type: 'category', data: xDays, axisLabel: { fontSize: 11 }, name: targetMonth, nameLocation: 'end', nameGap: 16, nameTextStyle: { fontSize: 11, color: '#64748B' } },
+    yAxis: { type: 'value', axisLabel: { formatter: function(v){ return v.toFixed(0)+'%'; }, fontSize: 11 }, splitLine: { lineStyle: { color: '#94A3B8', type: 'dashed', opacity: 0.3 } } },
+    series: lineSeries
+  });
+  window.addEventListener('resize', function(){ try { lineChart.resize(); } catch(e){} });
 }
 
 function exportPlanMonitor() {
   const rows = window._planMonitorRows || [];
   if (!rows.length) { showToast('无数据', true); return; }
-  let csv = '\uFEFFSKU,名称,品牌,RDC,计划(支),出货(支),完成率(%),全月预测(%),状态,建议\n';
+  let csv = '\uFEFFSKU,名称,品牌,RDC,计划(支),订单量(支),完成率(%),全月预测(%),状态,建议\n';
   rows.forEach(function(r) {
     csv += [r.sku, (r.skuName||'').replace(/,/g,'，'), r.brand||'', r.rdc, r.plan, r.shipped, (r.comp*100).toFixed(1), (r.forecast*100).toFixed(1), r.status, r.advice].join(',') + '\n';
   });
   downloadFile('分仓计划监控_' + (window._planRdc||'全部RDC') + '_' + new Date().toISOString().slice(0,10) + '.csv', csv);
+}
+
+function jumpToPlanMonitorSkuDetail(brand, rdc) {
+  const wrap = document.getElementById('pm-sku-drill');
+  if (!wrap) { if (typeof showToast === 'function') showToast('请先打开分仓计划监控页', true); return; }
+  const rows = (window._planMonitorRows || []).filter(function(r){ return r.brand === brand && r.rdc === rdc; });
+  rows.sort(function(a, b){ return a.comp - b.comp; });
+  const totalPlan = rows.reduce(function(s, r){ return s + r.plan; }, 0);
+  const totalOrder = rows.reduce(function(s, r){ return s + r.shipped; }, 0);
+  const overall = totalPlan > 0 ? totalOrder / totalPlan * 100 : 0;
+  function esc(s){ return String(s==null?'':s).replace(/'/g, "\\'"); }
+  function sB(c){ return c < 0.7 ? '#FEE2E2' : c < 1.0 ? '#FEF3C7' : c <= 1.1 ? '#DCFCE7' : '#DBEAFE'; }
+  function sC(s){ return s==='滞后' ? '#DC2626' : s==='超额' ? '#15803D' : '#D97706'; }
+  let html = '';
+  html += '<div style="margin-top:14px;border-top:1px dashed var(--border-card);padding-top:14px">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">';
+  html += '<div style="font-size:13px;font-weight:600;color:var(--text-primary)">🔍 SKU 维度订单进度明细 · 品牌 <span style="color:#2563EB">'+brand+'</span> × RDC <span style="color:#2563EB">'+rdc+'</span></div>';
+  html += '<div style="font-size:12px;color:var(--text-secondary)">共 <b style="color:var(--text-primary)">'+rows.length+'</b> 个 SKU｜订单量 <b style="color:var(--text-primary)">'+formatNum(totalOrder)+'</b> 支 / 计划 <b style="color:var(--text-primary)">'+formatNum(totalPlan)+'</b> 支 / 完成率 <b style="color:'+planCompColor(overall/100)+'">'+overall.toFixed(1)+'%</b></div>';
+  html += '<button class="btn-export" onclick="document.getElementById(\'pm-sku-drill\').innerHTML=\'\'">收起</button>';
+  html += '</div>';
+  html += '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="data-table"><thead><tr><th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th>状态</th><th>建议</th><th>操作</th></tr></thead><tbody>';
+  if (rows.length === 0) html += '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-secondary)">该 品牌×RDC 无分仓计划 / 订单数据</td></tr>';
+  rows.forEach(function(r){
+    html += '<tr>';
+    html += '<td style="position:sticky;left:0;background:inherit;font-family:monospace">'+r.sku+'</td>';
+    html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td>';
+    html += '<td class="num">'+formatNum(r.plan)+'</td>';
+    html += '<td class="num">'+formatNum(r.shipped)+'</td>';
+    html += '<td class="num" style="color:'+planCompColor(r.comp)+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
+    html += '<td style="background:'+sB(r.comp)+';color:'+sC(r.status)+';font-weight:600">'+r.status+'</td>';
+    html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
+    html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+esc(r.sku)+'\',\''+esc(r.rdc)+'\')">→ 补货建议</button></td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div></div>';
+  wrap.innerHTML = html;
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderBizDemand(targetId) {
