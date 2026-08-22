@@ -115,6 +115,7 @@ a { color: var(--color-blue); text-decoration: none; }
 .kpi-card.orange .kpi-value { color: var(--color-orange); }
 .kpi-card.teal .kpi-value { color: var(--color-teal); }
 .kpi-card.purple .kpi-value { color: var(--color-purple); }
+.kpi-card.gray .kpi-value { color: #475569; } /* v113: 正常 KPI 用中性灰色（之前缺失） */
 
 /* Chart container */
 .chart-container { width: 100%; height: 350px; }
@@ -659,7 +660,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 112; // v112: IDB 缓存版本自愈机制（saveToIDB 写入 DB_VERSION，loadFromIDB 不一致自动 clearIDB 回退 fetch）+ 健康检查（cov7/orderDetail 双字段缺失兜底 clearIDB）。根除"代码升级后 IDB 缓存 schema 漂移 → 页面显示'暂无数据'"
+const DB_VERSION = 113; // v113: 1) window._skuIsHainan 暴露（修 isH() 永远 false → 不含海南花露水失效 + 品牌矩阵全 100%）；2) 顶部 KPI 补"正常"分类；3) .kpi-card.gray 配色
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -3296,6 +3297,7 @@ function renderOrderInsight() {
       }
     }
   }
+  window._skuIsHainan = skuIsHainan; // v113: 暴露到全局，让 renderPlanMonitor 等其他函数能访问
   console.log('[HainanFilter] 海南花露水 SKU 集合大小:', Object.keys(skuIsHainan).length, '当前筛选:', window._oiHainan);
 
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
@@ -12197,7 +12199,7 @@ function renderPlanMonitor() {
   const viewMode = window._planView || 'month';
   window._planView = viewMode;
 
-  function isH(sku) { return !!(sku && typeof skuIsHainan !== 'undefined' && skuIsHainan[sku]); }
+  function isH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); } // v113: 用 window._skuIsHainan 而非局部 const（之前因 TDZ 永远 false，导致"不含海南花露水"开关失效 + 品牌矩阵累计被 return 跳过 → 全部 100%）
 
   // 出货口径 = 订单口径：orderQty（订单支数），有订单即计入，不等实际出库
   // 聚合：SKU×RDC（明细用），品牌×RDC（矩阵用），按日×RDC（曲线用）
@@ -12296,6 +12298,9 @@ function renderPlanMonitor() {
   const overCnt = rows.filter(function(r) { return r.status === '超额'; }).length;
   const lagCnt = rows.filter(function(r) { return r.status === '滞后'; }).length;
   const addCnt = rows.filter(function(r) { return r.status === '滞后' && r.avail <= 0; }).length;
+  // v113: 把 normalCnt 提前到 KPI 渲染之前（顶部 KPI 需用到"正常"分类）
+  const totalSkuPlannedKpi = rows.length;
+  const normalCnt = Math.max(0, totalSkuPlannedKpi - overCnt - lagCnt);
 
   // RDC 汇总
   const rdcMap = {};
@@ -12317,6 +12322,8 @@ function renderPlanMonitor() {
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">';
   html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（订单口径）</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
   html += '<div class="kpi-card green"><div class="kpi-label">跑赢时间线的 SKU（>时间进度）</div><div class="kpi-value" style="color:#15803D">'+overCnt+'</div></div>';
+  // v113: 顶部 KPI 补"正常"分类卡（之前漏掉，漏斗里有，KPI 行没有，对不上账）
+  html += '<div class="kpi-card gray"><div class="kpi-label">正常 SKU（70%~110% 贴近时间线）</div><div class="kpi-value" style="color:#475569">'+normalCnt+'</div></div>';
   html += '<div class="kpi-card red"><div class="kpi-label">落后时间线的 SKU（<70%）</div><div class="kpi-value" style="color:#DC2626">'+lagCnt+'</div></div>';
   // v111: 移除"其中需立即补货（无库存）" KPI卡 — 库存是7月底/8月初的快照，到今天已经不准，没参考意义
   html += '</div>';
@@ -12329,7 +12336,6 @@ function renderPlanMonitor() {
 
   // ===== 嵌套漏斗：1164 → 171 / 150 / 843 → 39 =====
   const totalSkuPlanned = rows.length;
-  const normalCnt = Math.max(0, totalSkuPlanned - overCnt - lagCnt);
   const pctOf = function(n){ return totalSkuPlanned > 0 ? (n / totalSkuPlanned * 100).toFixed(1) + '%' : '0%'; };
   html += '<div class="card" style="margin-bottom:16px">';
   html += '<div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
