@@ -659,7 +659,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 111; // v111: ①剔除促销装/新品期（不是按需求补货）；②移除"其中需补货(无库存)" KPI 和漏斗右卡（库存口径过旧）；③矩阵去掉"日度"切换（保留月度）；④漏斗标题加基数说明（by-RDC 非订单SKU）
+const DB_VERSION = 112; // v112: IDB 缓存版本自愈机制（saveToIDB 写入 DB_VERSION，loadFromIDB 不一致自动 clearIDB 回退 fetch）+ 健康检查（cov7/orderDetail 双字段缺失兜底 clearIDB）。根除"代码升级后 IDB 缓存 schema 漂移 → 页面显示'暂无数据'"
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -724,6 +724,8 @@ async function saveToIDB() {
       shortageReasons: window._shortageReasons || {},
       replStatus: window._replStatus || {},
       boxSpecMap: window._boxSpec || {},
+      // v111.2: 写入 DB_VERSION，让 loadFromIDB 能识别缓存与代码不一致（之前没存导致任何升级都吃 IDB 旧数据 → "暂无数据"）
+      dbVersion: DB_VERSION,
       updatedAt: new Date().toISOString()
     };
     store.put(payload);
@@ -743,7 +745,35 @@ async function loadFromIDB() {
     return new Promise((resolve, reject) => {
       req.onsuccess = function() {
         if (req.result) {
-          dataStore.shortage = req.result.shortage || [];
+          // v111.2: IDB 缓存版本自愈 — DB_VERSION 不一致自动 clearIDB 回退到完整 fetch
+          // 背景：之前 saveToIDB 没存 DB_VERSION，导致 v109 升 v110 时浏览器一直吃 IDB 旧数据，
+          //       表现为「分仓计划监控/转储数据 暂无数据」（库存或订单字段缺失）
+          const cachedVer = req.result.dbVersion;
+          if (cachedVer !== undefined && cachedVer !== DB_VERSION) {
+            console.warn('[loadFromIDB] IDB 缓存版本不一致 (cached=' + cachedVer + ' vs current=' + DB_VERSION + ')，自动清空回退到全量加载');
+            try {
+              const tx2 = db.transaction(STORE_NAME, 'readwrite');
+              tx2.objectStore(STORE_NAME).delete('current_data');
+            } catch(e) {}
+            try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+            resolve(false);
+            return;
+          }
+          // v111.2: IDB 健康检查 — 即便版本号匹配，关键字段缺失也强制清空（兜底 schema 漂移）
+          const inv = req.result.inventory || null;
+          const ord = req.result.orderDetail || [];
+          const invMissing = !inv || !inv.cov7 || (Array.isArray(inv.cov7) && inv.cov7.length < 100);
+          const ordMissing = !Array.isArray(ord) || ord.length < 100;
+          if (invMissing && ordMissing) {
+            console.warn('[loadFromIDB] IDB 缓存关键字段都缺失 (cov7 + orderDetail)，自动清空回退');
+            try {
+              const tx2 = db.transaction(STORE_NAME, 'readwrite');
+              tx2.objectStore(STORE_NAME).delete('current_data');
+            } catch(e) {}
+            try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+            resolve(false);
+            return;
+          }
           dataStore.overall = req.result.overall || { kaDealer: [], dailyFulfill: [], brandFulfill: [] };
           dataStore.dailyDetail = req.result.dailyDetail || [];
           dataStore.bizDemand = req.result.bizDemand || [];
