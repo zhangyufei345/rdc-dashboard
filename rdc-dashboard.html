@@ -659,7 +659,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 110; // v110: 分仓计划监控再升级：①「嵌套漏斗」可视化展示 1164→171/~150/843→39 的层级关系；②KPI 标签语义化(跑赢/落后于时间线 + 其中需立即补货)；③折线图加红色虚线「时间进度基准」(71% line)，线以上=领先,线以下=落后；④顶部新增「时间进度 vs 出货进度」双进度条对比卡
+const DB_VERSION = 111; // v111: ①剔除促销装/新品期（不是按需求补货）；②移除"其中需补货(无库存)" KPI 和漏斗右卡（库存口径过旧）；③矩阵去掉"日度"切换（保留月度）；④漏斗标题加基数说明（by-RDC 非订单SKU）
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -12146,6 +12146,16 @@ function renderPlanMonitor() {
   const rdcFilter = window._planRdc || 'all';
   window._planRdc = rdcFilter;
   const hainan = window._invHainan || 'all';
+  window._invHainan = hainan; // 反写回全局，规避跨页面状态被误初始化
+  // === 覆盖周数分类：剔除促销装/新品期（这两类不是按需求补货的）===
+  // 数据来源：7月库存覆盖数据 col28「覆盖周数分类」(cov7[i].coverageLevel)
+  //  - 促销装：139 行 cov08 都为 0，已被 plan<=0 自动过滤
+  //  - 新品期：20 行 cov08=11100，需主动剔除（否则会拉低完成率）
+  const _isPromoOrNew = function(cat){ return cat === '促销装' || cat === '新品期'; };
+  const _excludedSkuSet = {};
+  cov7.forEach(function(d){ if (d && d.sku && _isPromoOrNew(d.coverageLevel)) _excludedSkuSet[d.sku] = true; });
+  const _excludedSkuCount = Object.keys(_excludedSkuSet).length;
+  const _excludedPlanQty = cov7.reduce(function(s,d){ return s + (_isPromoOrNew(d.coverageLevel) ? (d[targetField]||0) : 0); }, 0);
   const cfg = getCovMonthConfig(covSource);
   const targetField = cfg.fields[0];
   const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
@@ -12174,6 +12184,7 @@ function renderPlanMonitor() {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
+    if (_excludedSkuSet[d.skuCode]) return; // 剔除促销装/新品期 SKU（与分母口径一致）
     const rdc = normalizeRdcName(d.warehouse);
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
     const sku = d.skuCode || '';
@@ -12199,7 +12210,9 @@ function renderPlanMonitor() {
   cov7.forEach(function(d) {
     const plan = d[targetField] || 0;
     if (plan <= 0) return;
+    if (_isPromoOrNew(d.coverageLevel)) return; // 剔除促销装/新品期（不是按需求补货）
     if (hainan === 'yes' && !isH(d.sku)) return;
+    if (_isPromoOrNew(d.coverageLevel)) return; // v111: 剔除促销装/新品期（与第一处口径一致）
     if (hainan === 'no' && isH(d.sku)) return;
     const rdc = d.rdc;
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
@@ -12277,7 +12290,7 @@ function renderPlanMonitor() {
   html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（订单口径）</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
   html += '<div class="kpi-card green"><div class="kpi-label">跑赢时间线的 SKU（>时间进度）</div><div class="kpi-value" style="color:#15803D">'+overCnt+'</div></div>';
   html += '<div class="kpi-card red"><div class="kpi-label">落后时间线的 SKU（<70%）</div><div class="kpi-value" style="color:#DC2626">'+lagCnt+'</div></div>';
-  html += '<div class="kpi-card orange"><div class="kpi-label">其中需立即补货（无库存）</div><div class="kpi-value" style="color:#D97706">'+addCnt+'</div></div>';
+  // v111: 移除"其中需立即补货（无库存）" KPI卡 — 库存是7月底/8月初的快照，到今天已经不准，没参考意义
   html += '</div>';
 
   // ===== 共用：进度差变量（漏斗/对比卡/折线基准线共享）=====
@@ -12292,8 +12305,8 @@ function renderPlanMonitor() {
   const pctOf = function(n){ return totalSkuPlanned > 0 ? (n / totalSkuPlanned * 100).toFixed(1) + '%' : '0%'; };
   html += '<div class="card" style="margin-bottom:16px">';
   html += '<div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
-  html += '<span class="card-title">🔽 计划 SKU 进度漏斗（看清 1164 → 39 的嵌套关系）</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">分母 = 全部有 8 月分仓计划的 SKU（'+totalSkuPlanned+' 个）</span>';
+  html += '<span class="card-title">🔽 计划 SKU 进度漏斗（看清 全部计划 → 跑赢/正常/落后 的分布）</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto" title="基数 = 7月库存覆盖数据中 8月有分仓需求的 SKU×RDC 对（by-RDC 粒度），不是订单SKU。">分母 = 有 8 月分仓计划的 SKU×RDC 对（'+totalSkuPlanned+' 个，by-RDC；非订单SKU基数）</span>';
   html += '</div>';
   html += '<div style="padding:14px 18px">';
   html += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
@@ -12319,14 +12332,10 @@ function renderPlanMonitor() {
   html += '<span style="margin-left:auto;font-size:11px;color:#DC2626;font-weight:700">'+pctOf(lagCnt)+'</span>';
   html += '</div>';
   html += '</div>';
-  html += '<div style="color:#94A3B8;font-size:18px;font-weight:700">→</div>';
-  html += '<div style="background:#FFEDD5;color:#9A3412;padding:14px 16px;border-radius:10px;font-weight:700;font-size:13px;min-width:104px;text-align:center;border:2px solid #FB923C">';
-  html += '其中需补货<br><span style="font-size:22px;display:block;margin-top:4px;color:#9A3412">'+addCnt+'</span>';
-  html += '<span style="font-size:11px;color:#9A3412;font-weight:500">落后 + 无库存<br>= 真正紧急</span>';
   html += '</div>';
   html += '</div>';
   html += '<div style="margin-top:12px;font-size:11.5px;color:var(--text-secondary);border-top:1px dashed var(--border-card);padding-top:10px">';
-  html += '<b style="color:var(--text-primary)">怎么读</b>：从左到右是漏斗的过滤过程 — <b style="color:#15803D">'+overCnt+'</b> 跑赢需求：下月计划可上调 / <b style="color:#475569">'+normalCnt+'</b> 正常：贴近进度 / <b style="color:#DC2626">'+lagCnt+'</b> 落后于时间线：其中 <b style="color:#9A3412">'+addCnt+'</b> 个 SKU 已无库存余量，是 <b>真正需要立即补货</b> 的（对应右侧第二个 KPI 卡）。下方 ⏱️ 卡展示当前时间进度，对比可看出整体跑赢还是落后。';
+  html += '<b style="color:var(--text-primary)">怎么读</b>：从左到右是漏斗的过滤过程 — <b style="color:#15803D">'+overCnt+'</b> 跑赢需求：订单覆盖度 &gt;110%，下月计划可上调 / <b style="color:#475569">'+normalCnt+'</b> 正常：70~110%，贴近时间线 / <b style="color:#DC2626">'+lagCnt+'</b> 落后于时间线：&lt;70%，需要诊断（需求下降/慢动）。下方 ⏱️ 对比卡展示整体跑赢还是落后。';
   html += '</div>';
   html += '</div>';
   html += '</div>';
@@ -12347,11 +12356,8 @@ function renderPlanMonitor() {
 
   html += '<div class="card" style="margin-bottom:16px" id="pm-brand-rdc-card"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
   html += '<span class="card-title">🌡️ 品牌 × RDC 出货进度矩阵</span>';
-  html += '<div id="pm-mode-toggle" style="display:inline-flex;gap:4px;border:1px solid var(--border-card);border-radius:8px;padding:2px;background:var(--bg-card)">';
-  html += '<button onclick="window._planView=\'month\';renderPlanMonitor()" style="padding:4px 14px;font-size:12px;border:0;border-radius:6px;cursor:pointer;background:'+(viewMode==='month'?'#2563EB;color:#fff':'transparent;color:var(--text-primary)')+'">月度</button>';
-  html += '<button onclick="window._planView=\'day\';renderPlanMonitor()" style="padding:4px 14px;font-size:12px;border:0;border-radius:6px;cursor:pointer;background:'+(viewMode==='day'?'#2563EB;color:#fff':'transparent;color:var(--text-primary)')+'">日度</button>';
-  html += '</div>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击单元格 → 下钻 SKU 明细 ｜ 月度=MTD订单量/分仓计划 ｜ 日度=最近一日订单量/当日应分计划</span>';
+  // v111: 矩阵仅保留月度（日度当日波动大无参考价值）
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击单元格 → 下钻 SKU 明细 ｜ 月度=MTD订单量(8月1日至今天)/分仓计划(8月)</span>';
   html += '</div><div id="pm-brand-rdc-matrix"></div><div id="pm-sku-drill"></div></div>';
 
   html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 各 RDC MTD 累计完成率曲线（订单口径）</span>';
@@ -12389,7 +12395,7 @@ function renderPlanMonitor() {
   (function fillBrandRdcMatrix(){
     const matrixWrap = document.getElementById('pm-brand-rdc-matrix');
     if (!matrixWrap) return;
-    const isMonth = viewMode === 'month';
+    // v111: 矩阵固定月度（日度去掉）
     const brands = [...new Set([...Object.keys(brandRdcOrder), ...Object.keys(brandRdcPlan)])].filter(Boolean).sort();
     if (brands.length === 0) {
       matrixWrap.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无品牌×RDC 数据</div>';
@@ -12408,24 +12414,14 @@ function renderPlanMonitor() {
       m += '<tr><td style="text-align:left;font-weight:600;position:sticky;left:0;background:var(--bg-card)">'+escape(b)+'</td>';
       RDCS.forEach(function(rdc){
         let planV=0, orderV=0, rate=0, isEmpty=true, onlyOrder=false;
-        if (isMonth) {
-          planV = (brandRdcPlan[b] && brandRdcPlan[b][rdc]) || 0;
+        planV = (brandRdcPlan[b] && brandRdcPlan[b][rdc]) || 0;
           orderV = (brandRdcOrder[b] && brandRdcOrder[b][rdc]) || 0;
           isEmpty = (planV === 0 && orderV === 0);
           onlyOrder = (planV === 0 && orderV > 0);
           rate = planV > 0 ? orderV / planV : (orderV > 0 ? 1 : 0);
-        } else {
-          const oneDay = (dayOrderByRdc[rdc] && dayOrderByRdc[rdc][dayOfMonth]) || 0;
-          const planTotal = (brandRdcPlan[b] && brandRdcPlan[b][rdc]) || 0;
-          planV = planTotal > 0 ? planTotal / daysInMonth : 0;
-          orderV = oneDay;
-          isEmpty = (planV === 0 && orderV === 0);
-          onlyOrder = (planV === 0 && orderV > 0);
-          rate = planV > 0 ? orderV / planV : (orderV > 0 ? 1 : 0);
-        }
         let display, bgC, fgC, title;
         if (isEmpty) { display = '—'; bgC = '#F1F5F9'; fgC = '#94A3B8'; title = escape(b)+'·'+escape(rdc)+'\n无订单无计划'; }
-        else if (onlyOrder) { display = isMonth ? '100%' : '—'; bgC = '#DCFCE7'; fgC = '#15803D'; title = escape(b)+'·'+escape(rdc)+'\n仅有订单 '+Math.round(orderV)+' 支（无计划数据）'; }
+        else if (onlyOrder) { display = '100%'; bgC = '#DCFCE7'; fgC = '#15803D'; title = escape(b)+'·'+escape(rdc)+'\n仅有订单 '+Math.round(orderV)+' 支（无计划数据）'; }
         else { display = pct(rate); bgC = bgg(rate); fgC = fgg(rate); title = escape(b)+'·'+escape(rdc)+'\n订单量: '+Math.round(orderV)+' 支\n计划量: '+Math.round(planV)+' 支\n完成率: '+(rate*100).toFixed(1)+'%\n点击下钻SKU明细'; }
         m += '<td style="background:'+bgC+';color:'+fgC+';font-weight:700;cursor:pointer;text-align:center" title="'+title+'" onclick="jumpToPlanMonitorSkuDetail(\''+esc(b)+'\',\''+esc(rdc)+'\')">'+display+'</td>';
       });
