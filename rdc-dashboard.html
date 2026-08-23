@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 127; // v127: 加通用表格分页器（每页20条+跳页），转储vs出货SKU差异明细/客户维度明细/分仓计划监控SKU明细+DACR低可信TOP30 等长表接入门户
+const DB_VERSION = 128; // v128: 品牌×RDC 周度 K线图加 hover tooltip 明细——红 K 线展示相比上周上升 TOP5 SKU + 本周/上周量 + Δ；绿 K 线展示下降 TOP5 SKU（首周无可比基期）
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -3715,6 +3715,15 @@ function renderOrderInsight() {
     kCandle.push([open, close, Math.min(open, close), Math.max(open, close)]);
   }
   if (kCandle.length) kCandle[0] = { value: kCandle[0], itemStyle: { color: '#94A3B8', color0: '#94A3B8', borderColor: '#94A3B8', borderColor0: '#94A3B8' } };
+  // v128: 按 SKU × ISO周 聚合订单量，供 K线 tooltip「相比上周升降 TOP5」明细
+  //   与 wkMap 同步按"按箱统计/按支"换算；首周无可比基期，hover 时返回空提示
+  const skuWkMap = {}; // skuWkMap[wk][skuCode] = qty
+  klineRows.forEach(r => {
+    const wk = isoWeekKey(r.dateStr);
+    if (!skuWkMap[wk]) skuWkMap[wk] = {};
+    const s = specOf(r.skuCode);
+    skuWkMap[wk][r.skuCode] = (skuWkMap[wk][r.skuCode] || 0) + (window._oiByBox ? r.orderQty / s : r.orderQty);
+  });
   const kMa5 = smaArr(kCloses, 5), kMa10 = smaArr(kCloses, 10), kMa15 = smaArr(kCloses, 15);
   let kGold = null, kDeath = null;
   for (let i = 1; i < kWeeks.length; i++) {
@@ -3977,17 +3986,59 @@ function renderOrderInsight() {
       tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
         formatter: function(params) {
           let h = '<strong>' + params[0].axisValue + '</strong>';
+          let hoveredIdx = -1, isUp = false;
           params.forEach(p => {
             if (p.seriesName === 'K线') {
+              hoveredIdx = p.dataIndex;
               const v = (p.value && p.value.value) ? p.value.value : p.value;
               if (Array.isArray(v)) {
-                const up = v[1] >= v[0];
-                h += '<br/>' + p.marker + 'K线：开 ' + fmtN(Math.round(v[0])) + ' 收 ' + fmtN(Math.round(v[1])) + ' 低 ' + fmtN(Math.round(v[2])) + ' 高 ' + fmtN(Math.round(v[3])) + '（' + (up ? '阳' : '阴') + '）';
+                isUp = v[1] >= v[0];
+                h += '<br/>' + p.marker + 'K线：开 ' + fmtN(Math.round(v[0])) + ' 收 ' + fmtN(Math.round(v[1])) + ' 低 ' + fmtN(Math.round(v[2])) + ' 高 ' + fmtN(Math.round(v[3])) + '（' + (isUp ? '阳' : '阴') + '）';
               }
             } else if (p.value != null) {
               h += '<br/>' + p.marker + p.seriesName + '：' + fmtN(p.value) + ' ' + u;
             }
           });
+          // v128: 红K线=相比上周上升 TOP5；绿K线=相比上周下降 TOP5
+          // 灰色首周（idx=0）无可比基期，直接跳过；idx<1 时同样跳过
+          const detailTitle = isUp ? '本周相比上周 ↑ 上升最多 TOP5' : '本周相比上周 ↓ 下降最多 TOP5';
+          if (hoveredIdx >= 1 && skuWkMap && skuWkMap[kWeeks[hoveredIdx]]) {
+            const curMap = skuWkMap[kWeeks[hoveredIdx]] || {};
+            const prevMap = skuWkMap[kWeeks[hoveredIdx - 1]] || {};
+            const skuSet = new Set([...Object.keys(curMap), ...Object.keys(prevMap)]);
+            const diffArr = [];
+            skuSet.forEach(sku => {
+              const cur = curMap[sku] || 0;
+              const prev = prevMap[sku] || 0;
+              diffArr.push({ sku: sku, cur: cur, prev: prev, diff: cur - prev });
+            });
+            // 红K线取 diff 最大 top5（升序，按 diff 倒序）；绿K线取 diff 最负 top5
+            diffArr.sort((a, b) => isUp ? (b.diff - a.diff) : (a.diff - b.diff));
+            const top = diffArr.slice(0, 5).filter(r => Math.abs(r.diff) > 0.5);
+            h += '<br/><span style="display:inline-block;margin:6px 0 2px;font-weight:600;color:#475569">📋 ' + detailTitle + '</span>';
+            if (top.length === 0) {
+              h += '<br/><span style="color:#94A3B8;font-size:11px">本周与上周各 SKU 订单量无显著变化（无 Δ≥1）</span>';
+            } else {
+              h += '<table style="border-collapse:collapse;font-size:11px;margin-top:2px"><thead><tr style="text-align:right;color:#64748B">' +
+                '<th style="text-align:left;padding:2px 6px 2px 0">SKU</th>' +
+                '<th style="padding:2px 6px">本周</th>' +
+                '<th style="padding:2px 6px">上周</th>' +
+                '<th style="padding:2px 6px">Δ</th>' +
+                '</tr></thead><tbody>';
+              top.forEach((r, i) => {
+                const name = skuNameMap[r.sku] || '';
+                const arrow = r.diff > 0 ? '▲' : '▼';
+                const color = r.diff > 0 ? '#DC2626' : '#16A34A';
+                h += '<tr style="text-align:right">' +
+                  '<td style="text-align:left;padding:2px 6px 2px 0"><span style="color:#94A3B8;font-size:10px">' + (i + 1) + '.</span> <span style="font-family:monospace">' + r.sku + '</span>' + (name ? '<br/><span style="color:#64748B;font-size:10px" title="' + name.replace(/"/g, '&quot;') + '">' + (name.length > 16 ? name.substring(0, 16) + '…' : name) + '</span>' : '') + '</td>' +
+                  '<td style="padding:2px 6px">' + fmtN(Math.round(r.cur)) + '</td>' +
+                  '<td style="padding:2px 6px;color:#94A3B8">' + fmtN(Math.round(r.prev)) + '</td>' +
+                  '<td style="padding:2px 6px;font-weight:600;color:' + color + '">' + arrow + ' ' + fmtN(Math.round(Math.abs(r.diff))) + '</td>' +
+                  '</tr>';
+              });
+              h += '</tbody></table>';
+            }
+          }
           return h;
         }
       },
