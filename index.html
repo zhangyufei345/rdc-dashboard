@@ -665,7 +665,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 121; // v121: diagnoseSlowItem 提取为全局函数 + parseInventoryExcel 末尾构建 window._slowDiagMap；plan-monitor 操作列升级显示具体根因 + advice 文案拆括号（不命中慢动品时去掉"详见慢动品诊断"）
+const DB_VERSION = 122; // v122: 拉回分析「按收货仓」两级下钻（收货仓→实际收货库位→SKU汇总明细）；parse 补存 recLoc（B列收货库位），故必须 bump 让 IDB 旧缓存自愈
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -6378,6 +6378,25 @@ function setPullViewMode(val) {
   var p = document.getElementById('page-transship');
   if (p) renderPullbackAnalysis(p);
 }
+// v122: 「按收货仓」两级下钻 —— 收货仓 → 实际收货库位 → 该库位 SKU 汇总明细。
+// window._pullRecDrill : 当前展开的收货仓名（'' = 全部收起）
+// window._pullLocDrill : 当前展开的库位号；null/undefined = 尚未设置(渲染时自动展开数量TOP1库位)，'' = 显式全部收起
+function togglePullRecDrill(name) {
+  var cur = String(window._pullRecDrill || '').trim();
+  var nm = String(name || '').trim();
+  window._pullRecDrill = (cur === nm) ? '' : nm;
+  window._pullLocDrill = null; // 切换收货仓时重置为「未设置」，渲染时自动展开该仓数量最大的库位
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
+function togglePullLocDrill(loc) {
+  var raw = window._pullLocDrill;
+  var cur = (raw == null) ? null : String(raw).trim();
+  var lc = String(loc || '').trim();
+  window._pullLocDrill = (cur === lc) ? '' : lc; // 再点一次收起（置 '' 而非 null，避免又被自动展开）
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
 
 function renderPullbackAnalysis(page) {
   // 1. 取结构化拉回数据（v59：不再硬编码列索引，直接用 parse 阶段生成的对象）
@@ -6433,10 +6452,17 @@ function renderPullbackAnalysis(page) {
   var hf = String(window._pullHainan).trim();
   var mf = String(window._pullMar).trim();   // include / exclude
   var vm = String(window._pullView).trim();   // box / amt
+  // v122: 下钻状态（必须在下方聚合循环之前声明，循环内要用 rdOpen 判断是否构建明细）
+  if (typeof window._pullRecDrill === 'undefined') window._pullRecDrill = '';
+  var rdOpen = String(window._pullRecDrill || '').trim();      // 展开的收货仓（'' = 收起）
+  var ldRaw = window._pullLocDrill;                             // null/undefined = 未设置
+  var ldOpen = (ldRaw == null) ? null : String(ldRaw).trim();   // null = 自动展开TOP1库位
 
   // 4. 金额已在 parse 阶段按实际箱规/成本价算好，这里直接用结构化字段
   // 聚合项 key -> {box, amt}
   var agg = { month: {}, monthRdc: {}, monthBrand: {}, monthRdcBrand: {}, monthRdcRec: {}, brand: {}, rdc: {}, rec: {} };
+  // v122: 下钻明细 { 库位号: {box, amt, skus:{sku:{name,box,amt}}} } —— 只为当前展开的收货仓构建
+  var drill = {};
   var filteredSKU = new Set();
   var filteredRows = 0;
   var totalRows = invRaw.length;
@@ -6474,6 +6500,16 @@ function renderPullbackAnalysis(page) {
     add('brand', br, bx, am);
     add('rdc', rd, bx, am);
     add('rec', rw, bx, am);
+    // v122: 仅当该行属于当前展开的收货仓时，才累计到下钻明细（避免为全部收货仓构建大对象）
+    if (rdOpen && rw === rdOpen) {
+      var _loc = String(r.recLoc || '').trim() || '(未知库位)';
+      if (!drill[_loc]) drill[_loc] = { box: 0, amt: 0, skus: {} };
+      drill[_loc].box += bx;
+      drill[_loc].amt += am;
+      if (!drill[_loc].skus[sk]) drill[_loc].skus[sk] = { name: nm, box: 0, amt: 0 };
+      drill[_loc].skus[sk].box += bx;
+      drill[_loc].skus[sk].amt += am;
+    }
   }
 
   // 6. 排序/汇总（按当前 view 取对应维度）
@@ -6545,16 +6581,73 @@ function renderPullbackAnalysis(page) {
       '<div class="card"><div class="card-header"><span class="card-title">🏷️ 品牌TOP10' + suf + '</span></div><div class="chart-container" style="height:320px" id="chart-pull-brand"></div></div>' +
     '</div>' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🏭 按收货仓（大仓收货仓）' + suf + '</span></div>' +
-      '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">收货仓取自拉回数据「大仓收货仓」列（C列）；RDC 维度见上方「各RDC拉回」饼图（取自「发货工厂」列 H列，无需映射）</div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">收货仓取自拉回数据「大仓收货仓」列（C列）；RDC 维度见上方「各RDC拉回」饼图（取自「发货工厂」列 H列，无需映射）。<b>点击下方任意收货仓行</b>可下探到实际收货库位号与各库位 SKU 汇总明细。</div>' +
       '<div class="table-wrap"><table class="data-table"><thead><tr><th>收货仓</th><th style="text-align:right">接收箱数</th><th style="text-align:right">接收金额（元）</th></tr></thead><tbody>' +
       (function() {
         // v68: 收货仓直接取 C列「大仓收货仓」（聚合维度 r.rec），不再用 base data 的 recRdcMap（仅7行，覆盖不全→大量「其他」）
+        // v122: 行改为可点击 → 展开下方「实际收货库位下探」面板
         return Object.entries(agg.rec).map(function(e) { return { name: e[0], box: e[1].box, amt: e[1].amt }; }).sort(function(a, b) { return valOf(b) - valOf(a); }).map(function(r) {
-          return '<tr><td style="text-align:left">' + r.name + '</td><td style="text-align:right">' + r.box.toLocaleString() + '</td><td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
+          var _open = (rdOpen === r.name);
+          var _safe = String(r.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          return '<tr onclick="togglePullRecDrill(\'' + _safe + '\')" style="cursor:pointer' + (_open ? ';background:rgba(47,111,237,0.10);font-weight:600' : '') + '" title="点击展开/收起该收货仓的实际库位与SKU汇总明细">' +
+            '<td style="text-align:left">' + (_open ? '▼ ' : '▶ ') + r.name + '</td>' +
+            '<td style="text-align:right">' + r.box.toLocaleString() + '</td>' +
+            '<td style="text-align:right">' + r.amt.toLocaleString() + '</td></tr>';
         }).join('');
       })() +
       (Object.keys(agg.rec).length === 0 ? '<tr><td colspan="3" style="text-align:center;color:var(--text-secondary)">无匹配数据</td></tr>' : '') +
-      '</tbody></table></div></div>';
+      '</tbody></table></div></div>' +
+      // v122: 下钻面板 —— 收货仓 → 实际收货库位（按当前口径降序）→ 该库位 SKU 汇总明细（按接收箱数降序）
+      (function() {
+        if (!rdOpen) return '';
+        var locList = Object.keys(drill).map(function(k) {
+          var v = drill[k];
+          var skuArr = Object.keys(v.skus).map(function(s) { return { sku: s, name: v.skus[s].name, box: v.skus[s].box, amt: v.skus[s].amt }; });
+          return { loc: k, box: v.box, amt: v.amt, skuCount: skuArr.length, skus: skuArr };
+        }).sort(function(a, b) { return valOf(b) - valOf(a); });
+        if (!locList.length) {
+          return '<div class="card" style="margin-bottom:16px;border-left:3px solid var(--color-blue)">' +
+            '<div class="card-header"><span class="card-title">📍 ' + rdOpen + ' — 实际收货库位下探</span>' +
+            '<button class="btn-export" style="font-size:11px;padding:3px 10px" onclick="togglePullRecDrill(\'\')">✕ 收起</button></div>' +
+            '<div style="text-align:center;padding:20px;color:var(--text-secondary);font-size:12px">当前筛选条件下该收货仓无明细数据</div></div>';
+        }
+        var ldEff = (ldOpen === null) ? locList[0].loc : ldOpen;
+        var totBoxL = 0, totAmtL = 0;
+        locList.forEach(function(l) { totBoxL += l.box; totAmtL += l.amt; });
+        var h = '<div class="card" style="margin-bottom:16px;border-left:3px solid var(--color-blue)">' +
+          '<div class="card-header"><span class="card-title">📍 ' + rdOpen + ' — 实际收货库位下探' + suf + '</span>' +
+          '<button class="btn-export" style="font-size:11px;padding:3px 10px" onclick="togglePullRecDrill(\'\')">✕ 收起</button></div>' +
+          '<div style="font-size:11px;color:var(--text-secondary);padding:0 4px 6px">库位号取自拉回数据「收货库位」列（B列）；共 <b>' + locList.length + '</b> 个库位｜合计 <b>' + Math.round(totBoxL).toLocaleString() + '</b> 箱 / <b>' + Math.round(totAmtL).toLocaleString() + '</b> 元。<b>点击库位行</b>查看该库位 SKU 汇总明细。</div>' +
+          '<div class="table-wrap"><table class="data-table"><thead><tr><th>库位号</th><th>接收箱数</th><th>接收金额（元）</th><th>SKU数</th></tr></thead><tbody>';
+        locList.forEach(function(l) {
+          var _o = (ldEff === l.loc);
+          var _s = String(l.loc).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          h += '<tr onclick="togglePullLocDrill(\'' + _s + '\')" style="cursor:pointer' + (_o ? ';background:rgba(47,111,237,0.10);font-weight:600' : '') + '" title="点击展开/收起该库位的 SKU 汇总明细">' +
+            '<td style="text-align:left">' + (_o ? '▼ ' : '▶ ') + l.loc + '</td>' +
+            '<td style="text-align:left">' + Math.round(l.box).toLocaleString() + '</td>' +
+            '<td style="text-align:left">' + Math.round(l.amt).toLocaleString() + '</td>' +
+            '<td style="text-align:left">' + l.skuCount + '</td></tr>';
+        });
+        h += '</tbody></table></div>';
+        var cur = null;
+        for (var _i = 0; _i < locList.length; _i++) { if (locList[_i].loc === ldEff) { cur = locList[_i]; break; } }
+        if (cur) {
+          // 「按数量从大到小」：数量列即接收箱数，故固定按 box 降序（与展示列一致）
+          var skuSorted = cur.skus.slice().sort(function(a, b) { return b.box - a.box; });
+          h += '<div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border-card)">' +
+            '<div style="font-size:12px;font-weight:600;margin-bottom:2px">📦 库位 ' + cur.loc + ' — SKU 汇总明细（' + skuSorted.length + ' 个 SKU，按接收箱数从大到小）</div>' +
+            '<div style="font-size:11px;color:var(--text-secondary);padding:0 0 6px">数量 = 该库位下该 SKU 的汇总接收箱数（同一 SKU 多次收货已合并）</div>' +
+            '<div class="table-wrap"><table class="data-table"><thead><tr><th>SKU代码</th><th>SKU名称</th><th>接收箱数（汇总）</th></tr></thead><tbody>';
+          skuSorted.forEach(function(s) {
+            h += '<tr><td style="text-align:left;font-family:monospace">' + s.sku + '</td>' +
+              '<td style="text-align:left">' + (s.name || '—') + '</td>' +
+              '<td style="text-align:left">' + Math.round(s.box).toLocaleString() + '</td></tr>';
+          });
+          h += '</tbody></table></div></div>';
+        }
+        h += '</div>';
+        return h;
+      })();
 
   // 9. 绘制图表
   var pc = ['#2f6fed', '#7b4df6', '#06B6D4', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899'];
@@ -9650,7 +9743,9 @@ function parseInventoryExcel(rawData) {
         if (!pullbackByRdcMonth[rdcRaw][ym]) pullbackByRdcMonth[rdcRaw][ym] = { qty: 0, amt: 0 };
         pullbackByRdcMonth[rdcRaw][ym].qty += qtyBox;
         pullbackByRdcMonth[rdcRaw][ym].amt += amt;
-        rows.push({ date: dt, ym: ym, rdc: rdcRaw, sku: sku, name: name, brand: brand, rec: rec, qty: qty, unit: unit, boxQty: qtyBox, amount: amt });
+        // v122: 补存 recLoc（B列「收货库位」实际库位号，如 T8A8/B621），供「按收货仓」下钻使用。
+        // 之前 recLoc 只在 rec/rdc 缺失时用于回退映射，没写进明细行，导致下钻拿不到具体库位号。
+        rows.push({ date: dt, ym: ym, rdc: rdcRaw, sku: sku, name: name, brand: brand, rec: rec, recLoc: recLoc, qty: qty, unit: unit, boxQty: qtyBox, amount: amt });
       }
       if (logDiag) {
         console.log('[拉回分析] 诊断：缺日期=' + failMissingDate + ', 日期无效=' + failDateInvalid + ', RDC为空=' + failRdcEmpty + ', 成功=' + rows.length + ' (起始行=' + startIdx + ')');
