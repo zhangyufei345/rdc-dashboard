@@ -347,7 +347,7 @@ a { color: var(--color-blue); text-decoration: none; }
 
 /* Table */
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.data-table th { background: var(--bg-card); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border-card); color: var(--text-secondary); white-space: nowrap; position: sticky; top: 0; z-index: 2; }
+.data-table th { background: var(--bg-card); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border-card); color: var(--text-secondary); white-space: nowrap; position: sticky; top: var(--topbar-height); z-index: 10; box-shadow: 0 1px 0 var(--border-card); }
 .data-table th:first-child, .data-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg-card); }
 .data-table th:first-child { z-index: 3; }
 .data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-light); }
@@ -357,7 +357,12 @@ a { color: var(--color-blue); text-decoration: none; }
 .data-table .rate-warn { color: var(--color-orange); font-weight: 600; }
 .data-table .rate-bad { color: var(--color-red); font-weight: 600; }
 
-.table-wrap { max-height: 420px; overflow: auto; }
+/* v119: 去掉 max-height + overflow: auto——否则 sticky th 被困在 .table-wrap 内，
+   只对 wrap 自身的滚动生效（用户滚页面时表头跟着滚走）。
+   现在让页面成为 th 的滚动祖先，th 用 top: var(--topbar-height) 粘在 topbar 下方。
+   水平方向仍允许 .table-wrap 自身滚动（宽表不撑爆页面）。*/
+.table-wrap { overflow-x: auto; }
+.table-wrap > .data-table { border-collapse: separate; }
 .table-search { padding: 8px 12px; border: 1px solid var(--border-card); border-radius: 6px; font-size: 12px; width: 200px; outline: none; background: var(--bg-card); color: var(--text-primary); }
 
 /* 品牌×RDC 矩阵：单列屏显示 */
@@ -660,7 +665,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 118; // v118: plan-monitor 行操作列双按钮按根因+匹配可达性——
+const DB_VERSION = 119; // v119: 全局表格表头冻结（sticky 到 topbar 下方）+ 慢动品分析页加持久返回按钮（planBanner 不显示时也能回到 plan-monitor）
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -11240,6 +11245,12 @@ function renderSlowMoving() {
   if (pageData.length === 0) { html += '<tr><td colspan="12" style="text-align:center;padding:30px">无数据</td></tr>'; }
   else { pageData.forEach(function(r) { var key = r.rdc+'|'+r.sku; var tn = transNet[key]||{inn:0,out:0}; var net = tn.inn-tn.out; var ship = shipQty[key]||0; var fut = futureDemand[key]||0; const _isHi = (_diagSku && _diagRdc && r.sku === _diagSku && r.rdc === _diagRdc); html += '<tr' + (_isHi ? ' id="slow-diag-highlight" style="background:#FEF3C7"' : '') + '><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td class="num">'+formatNum(ship)+'</td><td class="num">'+formatNum(net)+'</td><td class="num">'+formatNum(fut)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
   html += '</tbody></table></div><div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center"><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.max(1,window._slowPage-1);renderSlowMoving()" '+(p<=1?'disabled':'')+'>上一页</button><span style="font-size:12px">第'+p+'/'+totalPages+'页（共'+detailRows.length+'条）</span><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.min('+totalPages+',window._slowPage+1);renderSlowMoving()" '+(p>=totalPages?'disabled':'')+'>下一页</button></div></div>';
+
+  // v119: 持久返回按钮——planBanner 不显示时也能回到分仓计划监控
+  // （planBanner 关闭后/直接进入慢动品分析页时仍可返回）
+  if (!_diagSku) {
+    html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:8px 12px;background:var(--bg-card);border:1px solid var(--border-card);border-radius:6px"><button onclick="navigateTo(\'plan-monitor\')" style="padding:5px 12px;border:1px solid var(--color-blue);border-radius:5px;background:var(--color-blue);color:#fff;cursor:pointer;font-size:12px;font-weight:600">← 返回分仓计划监控</button><span style="font-size:11px;color:var(--text-secondary)">从分仓计划监控跳转后可用此按钮快速返回</span></div>' + html;
+  }
 
   // v118: 来自「分仓计划监控」跳转——顶部 planBanner + 渲染后自动滚到该 SKU 高亮行
   if (_diagSku) {
