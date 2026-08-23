@@ -660,7 +660,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 115; // v115: plan-monitor advice 判定只看完成率，移除「有/无库存」第二维度。availQtyPlan 是 cov7（7月底/8月初快照），到今天已过 22 天无参考意义。5 状态简化为 3 状态：滞后→触发补货建议加大；超额→下月计划上调+提前补货；正常→保持。慢动品诊断由独立模块负责
+const DB_VERSION = 116; // v116: plan-monitor「滞后」建议加根因门控——comp<0.7 不再无脑"加大补货"。先查缺货报告该 SKU×RDC 真实缺货箱数(>0)与大仓供应状态：有真实缺货→追计划·加大(合理)；总仓缺货/紧张→协调总仓·紧急调拨；无真实缺货→翻转为"下调计划/暂停加量(防呆滞，详见慢动品诊断)"。仅用 dataStore.shortage 始终可用字段，不依赖 window._shortageReasons(需先开缺货页才会有值)。失败安全：匹配不上保守判为无真实缺货。status 仍按完成率记"滞后"(KPI不变)，仅改 advice 文本。
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -12218,6 +12218,27 @@ function renderPlanMonitor() {
   const _isPromoOrNew = function(cat){ return cat === '促销装' || cat === '新品期'; };
   const _excludedSkuSet = {};
   cov7.forEach(function(d){ if (d && d.sku && _isPromoOrNew(d.coverageLevel)) _excludedSkuSet[d.sku] = true; });
+  // v116: 根因门控所需的「缺货报告真实缺货」查找表（按 SKU×RDC），随数据加载始终可用
+  // 仅用「缺货箱数>0」与「大仓供应状态」两字段，不依赖 window._shortageReasons（后者需先开缺货页才有值，首次进计划监控会空→误判）
+  // 失败安全：cov7.sku 与 shortage.materialCode 若不匹配，查找结果为 undefined → 保守判为"无真实缺货"→下调/暂停，绝不盲加
+  const _rdcKeyMap = { '华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort' };
+  const _rdcKeys = Object.keys(_rdcKeyMap);
+  const _hasShortageData = !!(dataStore.shortage && dataStore.shortage.length);
+  const _shortageMap = {};
+  if (_hasShortageData) {
+    const _sd = dataStore.shortage;
+    const _sdDates = _sd.map(function(x){ return x.dateStr; }).filter(Boolean).sort();
+    const _sdLatest = _sdDates[_sdDates.length - 1];
+    _sd.forEach(function(r){
+      if (r.dateStr !== _sdLatest) return;
+      const _mc = r.materialCode;
+      if (!_mc) return;
+      _rdcKeys.forEach(function(rdcName){
+        const _v = r[_rdcKeyMap[rdcName]] || 0;
+        if (_v > 0) _shortageMap[_mc + '|' + rdcName] = { boxes: _v, dcSupply: r.dcSupply || '' };
+      });
+    });
+  }
   const cfg = getCovMonthConfig(covSource);
   const targetField = cfg.fields[0];
   const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
@@ -12289,7 +12310,22 @@ function renderPlanMonitor() {
     //   慢动品诊断由独立的「慢动品诊断」模块负责（用近 N 个月数据），plan-monitor 不重复。
     if (comp < 0.7) {
       status = '滞后';
-      advice = '触发补货建议加大（出货跟不上计划）';
+      // v116: 根因门控——滞后不再无脑"加大补货"（低销品盲加=呆滞库存）
+      if (_hasShortageData) {
+        const _sh = _shortageMap[d.sku + '|' + rdc];
+        if (_sh && _sh.boxes > 0) {
+          // 有真实未满足需求：区分"需求超(超销)"与"供给受约束(总仓缺货/紧张)"
+          if (_sh.dcSupply && (_sh.dcSupply.indexOf('缺货') >= 0 || _sh.dcSupply.indexOf('紧张') >= 0)) {
+            advice = '协调总仓供给·紧急调拨（非单纯加大RDC）';
+          } else {
+            advice = '追计划·加大补货（真实缺货，合理）';
+          }
+        } else {
+          advice = '无真实缺货·建议下调计划/暂停加量（防呆滞，详见慢动品诊断）';
+        }
+      } else {
+        advice = '触发补货建议加大（出货跟不上计划）'; // 无缺货报告时的保守回退，避免误判
+      }
     } else if (comp > 1.1) {
       status = '超额';
       advice = '下月计划上调 + 提前补货';
