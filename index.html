@@ -3990,10 +3990,14 @@ function renderOrderInsight() {
           params.forEach(p => {
             if (p.seriesName === 'K线') {
               hoveredIdx = p.dataIndex;
-              const v = (p.value && p.value.value) ? p.value.value : p.value;
-              if (Array.isArray(v)) {
-                isUp = v[1] >= v[0];
-                h += '<br/>' + p.marker + 'K线：开 ' + fmtN(Math.round(v[0])) + ' 收 ' + fmtN(Math.round(v[1])) + ' 低 ' + fmtN(Math.round(v[2])) + ' 高 ' + fmtN(Math.round(v[3])) + '（' + (isUp ? '阳' : '阴') + '）';
+              // v128 修复：直接用已构建的 kCandle[hoveredIdx] 取 open/close，
+              // 不再从 params.value 反解（ECharts candlestick 的 params.value 会多一个 dataIndex 前缀位，
+              // 导致 v[1]>=v[0] 误判，阴线被当成阳线 → 绿K线错误显示"上升 TOP5"）
+              const cv = kCandle[hoveredIdx];
+              const arr = (cv && cv.value) ? cv.value : cv;
+              if (Array.isArray(arr) && arr.length >= 4) {
+                isUp = arr[1] >= arr[0];
+                h += '<br/>' + p.marker + 'K线：开 ' + fmtN(Math.round(arr[0])) + ' 收 ' + fmtN(Math.round(arr[1])) + ' 低 ' + fmtN(Math.round(arr[2])) + ' 高 ' + fmtN(Math.round(arr[3])) + '（' + (isUp ? '阳' : '阴') + '）';
               }
             } else if (p.value != null) {
               h += '<br/>' + p.marker + p.seriesName + '：' + fmtN(p.value) + ' ' + u;
