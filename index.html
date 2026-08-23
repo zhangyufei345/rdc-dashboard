@@ -660,7 +660,11 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 117; // v117: 修复 v112 IDB 健康检查过严（`&&` → `||`）：原逻辑只 cov7 AND orderDetail 两边都缺才清缓存，导致「只缺一边」的残缺缓存被信任 + manifest 未变 → background refresh 跳过 → renderPlanMonitor 显示「暂无数据」。v116 升级后部分用户中招。本次 bump 让用户首次强刷自动清旧缓存，后续健康检查兜底任意缺失。
+const DB_VERSION = 118; // v118: plan-monitor 行操作列双按钮按根因+匹配可达性——
+  // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
+  // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
+  // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
+  // jumpToSlowDiagnosis 跳到慢动品分析页：顶部 planBanner + 高亮该行 + 自动滚动。
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -10829,6 +10833,10 @@ function renderSlowMoving() {
   setTitle('慢动品分析');
   const page = document.getElementById('page-slow-moving');
   if (!page) { console.error('slow-moving: page element not found'); return; }
+  // v118: 来自「分仓计划监控」跳转——顶部加 planBanner + 渲染后自动滚到该 SKU 行
+  // 该 SKU 必然是慢动品(行渲染时已用 isSlowMover 守住),所以明细表里一定能找到。
+  const _diagSku = window._slowDiagSku;
+  const _diagRdc = window._slowDiagRdc;
   console.log('slow-moving: rendering', {
     hasInventory: !!dataStore.inventory,
     cov6Len: dataStore.inventory?.cov6?.length,
@@ -11230,10 +11238,34 @@ function renderSlowMoving() {
 
   html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">📊 当前慢动品明细（按金额降序）</span><button class="btn-export" onclick="exportSlowMovingAll()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">计划可用库存量</th><th class="num">计划可用金额</th><th>近2月出货</th><th>近2月补货净流入</th><th>7月分仓需求</th><th>根因</th><th>建议</th></tr></thead><tbody>';
   if (pageData.length === 0) { html += '<tr><td colspan="12" style="text-align:center;padding:30px">无数据</td></tr>'; }
-  else { pageData.forEach(function(r) { var key = r.rdc+'|'+r.sku; var tn = transNet[key]||{inn:0,out:0}; var net = tn.inn-tn.out; var ship = shipQty[key]||0; var fut = futureDemand[key]||0; html += '<tr><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td class="num">'+formatNum(ship)+'</td><td class="num">'+formatNum(net)+'</td><td class="num">'+formatNum(fut)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
+  else { pageData.forEach(function(r) { var key = r.rdc+'|'+r.sku; var tn = transNet[key]||{inn:0,out:0}; var net = tn.inn-tn.out; var ship = shipQty[key]||0; var fut = futureDemand[key]||0; const _isHi = (_diagSku && _diagRdc && r.sku === _diagSku && r.rdc === _diagRdc); html += '<tr' + (_isHi ? ' id="slow-diag-highlight" style="background:#FEF3C7"' : '') + '><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td class="num">'+formatNum(ship)+'</td><td class="num">'+formatNum(net)+'</td><td class="num">'+formatNum(fut)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
   html += '</tbody></table></div><div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center"><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.max(1,window._slowPage-1);renderSlowMoving()" '+(p<=1?'disabled':'')+'>上一页</button><span style="font-size:12px">第'+p+'/'+totalPages+'页（共'+detailRows.length+'条）</span><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.min('+totalPages+',window._slowPage+1);renderSlowMoving()" '+(p>=totalPages?'disabled':'')+'>下一页</button></div></div>';
 
+  // v118: 来自「分仓计划监控」跳转——顶部 planBanner + 渲染后自动滚到该 SKU 高亮行
+  if (_diagSku) {
+    var _diagBanner = '<div id="slow-diag-banner" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;margin-bottom:12px;background:#FAEEDA;border:1px solid #BA7517;border-radius:8px;font-size:12px;color:#854F0B"><span>🔗 来自「分仓计划监控」跳转：SKU <b style="font-family:monospace;margin:0 4px">' + _diagSku + '</b>（RDC：' + (_diagRdc || '全部') + '）</span><span style="color:#92400E">该 SKU 已被判定为慢动品——下方明细表已高亮该行。</span><button onclick="window._slowDiagSku=null;window._slowDiagRdc=null;navigateTo(\'plan-monitor\')" style="margin-left:auto;padding:4px 12px;border:1px solid #BA7517;border-radius:6px;background:#fff;cursor:pointer;font-size:12px">← 返回分仓计划监控</button><button onclick="window._slowDiagSku=null;window._slowDiagRdc=null;renderSlowMoving()" style="padding:4px 12px;border:1px solid #BA7517;border-radius:6px;background:#fff;cursor:pointer;font-size:12px">清除</button></div>';
+    html = _diagBanner + html;
+  }
+
   page.innerHTML = html;
+
+  // v118: 渲染完成后滚到该 SKU 高亮行（如果该 SKU 不在当前页则切到对应页）
+  if (_diagSku && _diagRdc) {
+    const _hit = document.getElementById('slow-diag-highlight');
+    if (_hit) {
+      setTimeout(function() { _hit.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 50);
+    } else {
+      const _idx = detailRows.findIndex(function(d) { return d.sku === _diagSku && d.rdc === _diagRdc; });
+      if (_idx >= 0) {
+        const _targetPage = Math.floor(_idx / 20) + 1;
+        if (_targetPage !== p) {
+          window._slowPage = _targetPage;
+          renderSlowMoving();
+          return;
+        }
+      }
+    }
+  }
 
   setTimeout(function() {
     window._chartInstances = window._chartInstances || [];
@@ -12215,6 +12247,14 @@ function jumpToReplenish(sku, rdc) {
   navigateTo('replenishment');
 }
 
+// v118: 根因门控为「无真实缺货·防呆滞」类的 SKU 跳转入口——指向慢动品分析页
+// （补货建议专页基于缺货箱数>0，无真实缺货的 SKU 不会出现在清单，跳过去是空表；慢动品分析页才是"防呆滞"动作的归宿）
+function jumpToSlowDiagnosis(sku, rdc) {
+  window._slowDiagSku = sku;
+  window._slowDiagRdc = rdc;
+  navigateTo('slow-moving');
+}
+
 function renderPlanMonitor() {
   setTitle('分仓计划监控');
   const page = document.getElementById('page-plan-monitor');
@@ -12352,7 +12392,10 @@ function renderPlanMonitor() {
       status = '正常';
       advice = '保持';
     }
-    rows.push({ sku:d.sku, skuName:d.skuName, brand:d.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice });
+    // v118: 慢动品匹配判定（与「慢动品分析」页共用同一套引擎）。该 SKU×RDC 满足「覆盖≥3月 + 可用库存>0 + 非排除品」则视为慢动品，
+    // 即"无真实缺货·防呆滞"建议的"可跳转目的地"——不满足则不显示慢动诊断按钮（避免点空联动）。
+    const _isSlowMover = isSlowCoverage(d.coverageLevel) && hasAvailableStock(d) && !isExcludedProduct(d);
+    rows.push({ sku:d.sku, skuName:d.skuName, brand:d.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice, isSlowMover:_isSlowMover });
   });
   // 兜底品牌（RDC 列、累计按日）
   cov7.forEach(function(d){
@@ -12509,7 +12552,20 @@ function renderPlanMonitor() {
     html += '<td class="num" style="color:'+compColor+'">'+(r.forecast*100).toFixed(1)+'%</td>';
     html += '<td style="background:'+compBg+';color:'+statusColor+';font-weight:600">'+r.status+'</td>';
     html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
-    html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+r.sku+'\',\''+r.rdc+'\')">→ 补货建议</button></td>';
+    // v118: 双按钮按根因分支+匹配可达性——
+    // 「无真实缺货·防呆滞」类仅在 r.isSlowMover=true（该 SKU×RDC 满足慢动品分析页可达）时显示橙按钮；
+    // 其他（总仓缺货/追计划/超额/正常）默认显示蓝按钮（这些 SKU 必然在补货建议专页有缺货记录可跳）。
+    // 既不满足慢动品也不满足补货清单的滞后品（如覆盖正常且无缺货记录）→ 不显示按钮，避免点空联动。
+    const isSlowMoverBtn = /无真实缺货|防呆滞|慢动/.test(r.advice);
+    if (isSlowMoverBtn) {
+      if (r.isSlowMover) {
+        html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px;background:#FAEEDA;border-color:#BA7517;color:#854F0B" onclick="jumpToSlowDiagnosis(\''+r.sku+'\',\''+r.rdc+'\')">→ 慢动诊断</button></td>';
+      } else {
+        html += '<td style="font-size:11px;color:var(--text-secondary)">—</td>';
+      }
+    } else {
+      html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+r.sku+'\',\''+r.rdc+'\')">→ 补货建议</button></td>';
+    }
     html += '</tr>';
   });
   html += '</tbody></table></div></div>';
