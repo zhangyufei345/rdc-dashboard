@@ -347,7 +347,7 @@ a { color: var(--color-blue); text-decoration: none; }
 
 /* Table */
 .data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.data-table th { background: var(--bg-card); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border-card); color: var(--text-secondary); white-space: nowrap; position: sticky; top: var(--topbar-height); z-index: 10; box-shadow: 0 1px 0 var(--border-card); }
+.data-table th { background: var(--bg-card); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border-card); color: var(--text-secondary); white-space: nowrap; position: sticky; top: 0; z-index: 2; }
 .data-table th:first-child, .data-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg-card); }
 .data-table th:first-child { z-index: 3; }
 .data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-light); }
@@ -357,11 +357,11 @@ a { color: var(--color-blue); text-decoration: none; }
 .data-table .rate-warn { color: var(--color-orange); font-weight: 600; }
 .data-table .rate-bad { color: var(--color-red); font-weight: 600; }
 
-/* v119: 去掉 max-height + overflow: auto——否则 sticky th 被困在 .table-wrap 内，
-   只对 wrap 自身的滚动生效（用户滚页面时表头跟着滚走）。
-   现在让页面成为 th 的滚动祖先，th 用 top: var(--topbar-height) 粘在 topbar 下方。
-   水平方向仍允许 .table-wrap 自身滚动（宽表不撑爆页面）。*/
-.table-wrap { overflow-x: auto; }
+/* v120: 回到"表格内 sticky"模式——th 粘在 .table-wrap 内的最上方（top:0）。
+   页面整体滚动时整张表格跟着滚走，表头不会被"卡"在某个位置盖住行内容；
+   表格内部滚动时表头始终在首行可见。v119 那种"th 用 top: var(--topbar-height) 粘到 topbar 下方"
+   是错的——效果见截图，th 跑到了行中间，盖住了滚过去的行。*/
+.table-wrap { max-height: 420px; overflow: auto; }
 .table-wrap > .data-table { border-collapse: separate; }
 .table-search { padding: 8px 12px; border: 1px solid var(--border-card); border-radius: 6px; font-size: 12px; width: 200px; outline: none; background: var(--bg-card); color: var(--text-primary); }
 
@@ -665,7 +665,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 119; // v119: 全局表格表头冻结（sticky 到 topbar 下方）+ 慢动品分析页加持久返回按钮（planBanner 不显示时也能回到 plan-monitor）
+const DB_VERSION = 120; // v120: plan-monitor 操作列改为匹配状态徽章（不跳转）；表格表头回归表格内 sticky 模式（.table-wrap 自身滚动，th top:0）
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -12563,19 +12563,20 @@ function renderPlanMonitor() {
     html += '<td class="num" style="color:'+compColor+'">'+(r.forecast*100).toFixed(1)+'%</td>';
     html += '<td style="background:'+compBg+';color:'+statusColor+';font-weight:600">'+r.status+'</td>';
     html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
-    // v118: 双按钮按根因分支+匹配可达性——
-    // 「无真实缺货·防呆滞」类仅在 r.isSlowMover=true（该 SKU×RDC 满足慢动品分析页可达）时显示橙按钮；
-    // 其他（总仓缺货/追计划/超额/正常）默认显示蓝按钮（这些 SKU 必然在补货建议专页有缺货记录可跳）。
-    // 既不满足慢动品也不满足补货清单的滞后品（如覆盖正常且无缺货记录）→ 不显示按钮，避免点空联动。
+    // v120: 操作列改为「匹配状态徽章」（纯展示，不跳转）
+    //   - 「无真实缺货·防呆滞」类且该 SKU×RDC 满足慢动品（isSlowMover=true）→ 橙色徽章「📌 命中慢动品分析」
+    //   - 「无真实缺货·防呆滞」类但不满足慢动品（罕见，理论上不该出）→ 不显示
+    //   - 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝色徽章「✓ 在补货建议清单中」（这些 SKU 必然在补货建议专页有缺货记录可查）
+    //   - 既不满足慢动品也不在补货清单（覆盖正常且无缺货记录）→ 不显示
     const isSlowMoverBtn = /无真实缺货|防呆滞|慢动/.test(r.advice);
     if (isSlowMoverBtn) {
       if (r.isSlowMover) {
-        html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px;background:#FAEEDA;border-color:#BA7517;color:#854F0B" onclick="jumpToSlowDiagnosis(\''+r.sku+'\',\''+r.rdc+'\')">→ 慢动诊断</button></td>';
+        html += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#FAEEDA;border:1px solid #BA7517;color:#854F0B;border-radius:4px;white-space:nowrap" title="该 SKU×RDC 在「慢动品分析」页可查。">📌 命中慢动品分析</span></td>';
       } else {
         html += '<td style="font-size:11px;color:var(--text-secondary)">—</td>';
       }
     } else {
-      html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+r.sku+'\',\''+r.rdc+'\')">→ 补货建议</button></td>';
+      html += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#EEF2FF;border:1px solid #818CF8;color:#3730A3;border-radius:4px;white-space:nowrap" title="该 SKU 在「补货建议」清单中。">✓ 在补货建议清单中</span></td>';
     }
     html += '</tr>';
   });
