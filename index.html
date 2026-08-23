@@ -660,7 +660,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 116; // v116: plan-monitor「滞后」建议加根因门控——comp<0.7 不再无脑"加大补货"。先查缺货报告该 SKU×RDC 真实缺货箱数(>0)与大仓供应状态：有真实缺货→追计划·加大(合理)；总仓缺货/紧张→协调总仓·紧急调拨；无真实缺货→翻转为"下调计划/暂停加量(防呆滞，详见慢动品诊断)"。仅用 dataStore.shortage 始终可用字段，不依赖 window._shortageReasons(需先开缺货页才会有值)。失败安全：匹配不上保守判为无真实缺货。status 仍按完成率记"滞后"(KPI不变)，仅改 advice 文本。
+const DB_VERSION = 117; // v117: 修复 v112 IDB 健康检查过严（`&&` → `||`）：原逻辑只 cov7 AND orderDetail 两边都缺才清缓存，导致「只缺一边」的残缺缓存被信任 + manifest 未变 → background refresh 跳过 → renderPlanMonitor 显示「暂无数据」。v116 升级后部分用户中招。本次 bump 让用户首次强刷自动清旧缓存，后续健康检查兜底任意缺失。
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -760,12 +760,15 @@ async function loadFromIDB() {
             resolve(false);
             return;
           }
-          // v111.2: IDB 健康检查 — 即便版本号匹配，关键字段缺失也强制清空（兜底 schema 漂移）
+          // v111.2 IDB 健康检查 — 关键字段缺失强制清空（兜底 schema 漂移）
+          // 原 v112 用 &&（两边都缺才清），导致「只缺一边」如 orderDetail=[] / cov7=[] 残缺缓存被信任，
+          // 再叠加 manifest 未变 → background refresh 跳过 → renderPlanMonitor 命中「暂无数据」。
+          // v117 改用 ||：只要任一边缺失就强制 clearIDB。
           const inv = req.result.inventory || null;
           const ord = req.result.orderDetail || [];
           const invMissing = !inv || !inv.cov7 || (Array.isArray(inv.cov7) && inv.cov7.length < 100);
           const ordMissing = !Array.isArray(ord) || ord.length < 100;
-          if (invMissing && ordMissing) {
+          if (invMissing || ordMissing) {
             console.warn('[loadFromIDB] IDB 缓存关键字段都缺失 (cov7 + orderDetail)，自动清空回退');
             try {
               const tx2 = db.transaction(STORE_NAME, 'readwrite');
@@ -8996,9 +8999,25 @@ function init() {
           // history.json 不走 IDB 缓存：每次重新 fetch，保证 KPI 用最新历史数据（避免 IDB 缓存旧 7/8 月数据）
           if (!changed.includes('history.json')) changed.push('history.json');
           if (restored && changed.length === 0) {
-            if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
-            showToast('已加载本地缓存（数据未更新）');
-            return;
+            // v117: 兜底健康检查 — IDB 健康检查(已用 ||)若漏过（理论上不应发生），这里再校验一次关键字段。
+            // 若 orderDetail 或 cov7 实际为空/缺失，强制走全量重拉而不是直接吞"已加载缓存"。
+            const _invCache = dataStore.inventory;
+            const _cov7Empty = !_invCache || !_invCache.cov7 || _invCache.cov7.length < 100;
+            const _ordEmpty = !(dataStore.orderDetail && dataStore.orderDetail.length >= 100);
+            if (_cov7Empty || _ordEmpty) {
+              console.warn('[refreshFromManifest] 缓存关键字段残缺（cov7=' + (_invCache && _invCache.cov7 ? _invCache.cov7.length : 0) + ', orderDetail=' + (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '），强制全量重拉');
+              // 触发全量重拉：清掉 stored hashes 让 changed.length > 0
+              try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+              try { await clearIDB(); } catch(e) {}
+              // 重新计算 changed（上面 cleared 之后 stored 是空，所有 manifest 文件都算"changed"）
+              const _stored2 = getStoredHashes() || {};
+              changed = Object.keys(manifest.files).filter(f => manifest.files[f] !== _stored2[f]);
+              if (!changed.includes('history.json')) changed.push('history.json');
+            } else {
+              if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
+              showToast('已加载本地缓存（数据未更新）');
+              return;
+            }
           }
           const ordered = changed.slice().sort((a, b) => fileOrderKey(a) - fileOrderKey(b));
           try {
