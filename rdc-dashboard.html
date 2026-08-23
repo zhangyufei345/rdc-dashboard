@@ -665,7 +665,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 122; // v122: 拉回分析「按收货仓」两级下钻（收货仓→实际收货库位→SKU汇总明细）；parse 补存 recLoc（B列收货库位），故必须 bump 让 IDB 旧缓存自愈
+const DB_VERSION = 123; // v123: P0-1 偏差归因(F0预检+L1-L5决策树+归因覆盖率+归因矩阵+偏差结构条+SKU钻取徽章) + P0-4 安全库存天数上限参数化(分层天花板) + parse 补建 window._kaSkuSet(KA库位03结尾,供L3渠道隔离归因); bump确保旧缓存重拉拿到新逻辑 // v122: 拉回分析「按收货仓」两级下钻（收货仓→实际收货库位→SKU汇总明细）；parse 补存 recLoc（B列收货库位），故必须 bump 让 IDB 旧缓存自愈
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -9513,6 +9513,7 @@ function parseInventoryExcel(rawData) {
     const productMaster = {};
     const recRdcMap = {}; // v67: 收货库位 → RDC 映射（从基础数据 col14/col19 构建）；v69 作为 H列缺失时的回退
     const recWhMap = {};  // v69: 收货库位 → 收货仓 映射（从基础数据 col14/col15 构建）；作为 C列缺失时的回退
+    const kaLocBySku = {}; // v123(P0-1/L3): SKU → 收货库位后缀集合，用于判定是否有 KA 专有库位（03 结尾）
     if (baseArr) {
       // 按表头名寻列，兼容新旧模板
       const baseHeader = baseArr[0] || [];
@@ -9543,6 +9544,10 @@ function parseInventoryExcel(rawData) {
         if (C_BASE_REC >= 0) {
           const recKey = String(r[C_BASE_REC] || '').trim();
           if (recKey) {
+            // v123(P0-1/L3): 收集该 SKU 的收货库位后缀（末2位），供渠道隔离归因判定
+            if (!kaLocBySku[sku]) kaLocBySku[sku] = {};
+            const _suf = recKey.length >= 2 ? recKey.slice(-2) : recKey;
+            kaLocBySku[sku][_suf] = true;
             if (C_BASE_RDC >= 0) {
               const rdcVal = String(r[C_BASE_RDC] || '').trim();
               if (rdcVal && !recRdcMap[recKey]) recRdcMap[recKey] = rdcVal;
@@ -9555,7 +9560,11 @@ function parseInventoryExcel(rawData) {
         }
       }
     }
-    console.log('[拉回分析] 基础数据解析：productMaster=' + Object.keys(productMaster).length + ' SKU, recRdcMap=' + Object.keys(recRdcMap).length + ' 库位, recWhMap=' + Object.keys(recWhMap).length + ' 库位');
+    // v123(P0-1/L3): 收货库位 03 结尾 = KA 专有库（KA常规转储），标记有 KA 库位的 SKU 集合
+    const _kaSku = {};
+    Object.keys(kaLocBySku).forEach(function(s){ if (kaLocBySku[s]['03']) _kaSku[s] = true; });
+    window._kaSkuSet = _kaSku;
+    console.log('[拉回分析] 基础数据解析：productMaster=' + Object.keys(productMaster).length + ' SKU, recRdcMap=' + Object.keys(recRdcMap).length + ' 库位, recWhMap=' + Object.keys(recWhMap).length + ' 库位, kaSkuSet=' + Object.keys(_kaSku).length + ' SKU');
 
     // 解析「拉回数据」sheet：按 (发货RDC, 年月) 聚合「箱数 + 拉回金额」
     // 金额 = 发货单数量(基本单位) × 成本价；若单位是'箱'则金额 = 箱数 × 成本价 × 箱规
@@ -12421,6 +12430,120 @@ function jumpToSlowDiagnosis(sku, rdc) {
   navigateTo('slow-moving');
 }
 
+// ===== P0-4: 安全库存天数上限参数化（分层天花板）=====
+// 应设安全库存天数 = RDC基础天数 × SKU供应链属性系数，绝对上限 absCeilDays 天截断
+// 基础天数锚定 RDC 运输周期（东北/华北/西北5天→14，华南/华中4天→12，西南7天→16），落在用户认可的 12-16 档
+const SAFETY_CEIL = {
+  baseDays: { '东北RDC':14, '华北RDC':14, '西北RDC':14, '华南RDC':12, '华中RDC':12, '西南RDC':16 },
+  attrCoef: { '常规':1.0, '季节':1.2, '波动':1.4, '长尾':0.6, '慢动':0.6, '非卖品':0.5 },
+  absCeilDays: 30,
+  fallbackAttrCoef: 1.0
+};
+function getSafetyStockDays(rdc, attr) {
+  const base = SAFETY_CEIL.baseDays[rdc] || 14;
+  const a = String(attr || '').trim();
+  const coef = (SAFETY_CEIL.attrCoef[a] != null) ? SAFETY_CEIL.attrCoef[a] : SAFETY_CEIL.fallbackAttrCoef;
+  let days = base * coef;
+  if (days > SAFETY_CEIL.absCeilDays) days = SAFETY_CEIL.absCeilDays;
+  if (days < 1) days = 1;
+  return Math.round(days * 10) / 10;
+}
+function getSafetyStockQty(rdc, attr, plan, daysInMonth) {
+  const days = getSafetyStockDays(rdc, attr);
+  const dailyDemand = daysInMonth > 0 ? (plan || 0) / daysInMonth : 0;
+  return Math.round(dailyDemand * days);
+}
+
+// ===== P0-1: 偏差归因（F0 预检 + L1-L5 决策树 + 占比分摊 + 归因覆盖率）=====
+// 输入：plan-monitor 已算好的 rows（含 sku/rdc/plan/shipped/comp/status）+ cov7（含 supplyChainAttr/coverageLevel/availableQty）
+// 输出：归因矩阵(RDC×层)、覆盖率、偏差结构、每偏差SKU的归因明细
+// 铁律：完成率口径 = shipped/plan（支）；判定禁用 availQtyPlan（v115），仅用 availableQty（量）
+function computePlanAttribution(rows, cov7, opts) {
+  opts = opts || {};
+  const daysInMonth = opts.daysInMonth || 30;
+  const boxSpecOf = opts.boxSpecOf || function(c){ const m = window._boxSpec; return (m && m[String(c)]) ? m[String(c)] : null; };
+  const expiry7 = (dataStore.inventory && dataStore.inventory.expiry7) || {};
+  const kaSet = window._kaSkuSet || {};
+  const _isSlowLevel = function(cl){ return cl && (cl === '无需求' || cl === '3~4个月' || cl === '4~5个月' || cl === '5~6个月' || cl === '大于6个月'); };
+  const _isSlowAttr = function(a){ const x = String(a || '').trim(); return x === '长尾' || x === '慢动'; };
+  const covMap = {};
+  (cov7 || []).forEach(function(d){ if (d && d.sku && d.rdc) covMap[d.rdc + '|' + d.sku] = d; });
+  const devRows = [];
+  const matrix = {};
+  const layerCnt = { L1:0, L2:0, L3:0, L4:0, L5:0, F0:0 };
+  let devTotal = 0, coverableTotal = 0;
+  rows.forEach(function(r){
+    const key = r.rdc + '|' + r.sku;
+    const cov = covMap[key] || {};
+    const comp = r.comp;
+    const dev = r.plan - r.shipped;       // 滞后为正、超额为负
+    const devAbs = Math.abs(dev);
+    const plan = r.plan;
+    const relDev = Math.abs(comp - 1);
+    const box = boxSpecOf(r.sku);
+    const absThresh = Math.max(plan * 0.01, box ? box : 1);
+    if (relDev < 0.05 || devAbs < absThresh) return;  // 非偏差（与97%服务水平留2%缓冲一致）
+    devTotal++;
+    // === F0 预检：天然波动，计划员不可控 ===
+    const isF0 = _isSlowLevel(cov.coverageLevel) || _isSlowAttr(cov.supplyChainAttr);
+    const hit = { L1:false, L2:false, L3:false, L4:false, L5:false };
+    const w = { L1:0, L2:0, L3:0, L4:0, L5:0 };
+    // L1: 可用库存 availableQty 低于「应设安全库存量 × 0.8」→ 安全垫不足（用 availableQty 量，非 availQtyPlan）
+    const safeQty = getSafetyStockQty(r.rdc, cov.supplyChainAttr, plan, daysInMonth);
+    if ((cov.availableQty || 0) < safeQty * 0.8) { hit.L1 = true; w.L1 = 0.3; }
+    // L4: 计划量对箱规非整数倍（取整误差 > 2%）→ MOQ 约束
+    if (box) {
+      const remainder = Math.abs(plan - Math.round(plan / box) * box);
+      if (plan > 0 && remainder / plan > 0.02) { hit.L4 = true; w.L4 = 0.25; }
+    }
+    // L5: 效期拦截（below23 / sellable > 0.3）
+    const ex = expiry7[key];
+    if (ex && ex.sellable > 0 && (ex.below23 || 0) / ex.sellable > 0.3) { hit.L5 = true; w.L5 = 0.2; }
+    // L2: 慢动品且滞后（计划虚高）
+    if (_isSlowLevel(cov.coverageLevel) && comp < 0.7) { hit.L2 = true; w.L2 = 0.2; }
+    // L3: SKU 有 KA 专有库位（基础数据收货库位 03 结尾）
+    if (kaSet[r.sku]) { hit.L3 = true; w.L3 = 0.15; }
+    const wF0 = isF0 ? 0.4 : 0;
+    const wSum = w.L1 + w.L2 + w.L3 + w.L4 + w.L5 + wF0;
+    const attr = {};
+    const layers = [];
+    if (wSum > 0) {
+      [['L1', w.L1], ['L2', w.L2], ['L3', w.L3], ['L4', w.L4], ['L5', w.L5], ['F0', wF0]].forEach(function(p){
+        if (p[1] > 0) {
+          const share = p[1] / wSum;
+          attr[p[0]] = Math.round(share * 1000) / 10;
+          if (p[0] !== 'F0') layers.push(p[0]);
+        }
+      });
+    }
+    const coverable = layers.length > 0;
+    if (coverable) coverableTotal++;
+    if (!matrix[r.rdc]) matrix[r.rdc] = { L1:0, L2:0, L3:0, L4:0, L5:0, F0:0 };
+    ['L1','L2','L3','L4','L5'].forEach(function(L){ if (hit[L]) matrix[r.rdc][L]++; });
+    if (isF0) matrix[r.rdc].F0++;
+    ['L1','L2','L3','L4','L5'].forEach(function(L){ if (hit[L]) layerCnt[L]++; });
+    if (isF0) layerCnt.F0++;
+    let mainLayer = 'F0', mainShare = 0;
+    Object.keys(attr).forEach(function(k){ if (attr[k] > mainShare) { mainShare = attr[k]; mainLayer = k; } });
+    const action = buildAttrAction(layers, isF0);
+    devRows.push({ sku:r.sku, skuName:r.skuName, rdc:r.rdc, plan:plan, shipped:r.shipped, comp:comp, status:r.status, hit:hit, isF0:isF0, attr:attr, mainLayer:mainLayer, mainShare:mainShare, coverable:coverable, action:action });
+  });
+  const coverRatio = devTotal > 0 ? Math.round(coverableTotal / devTotal * 1000) / 10 : 0;
+  return { devTotal:devTotal, coverableTotal:coverableTotal, coverRatio:coverRatio, devRows:devRows, matrix:matrix, layerCnt:layerCnt, f0OnlyCnt: devTotal - coverableTotal };
+}
+function buildAttrAction(layers, isF0) {
+  const map = {
+    L1: '重标安全库存上限(P0-4)',
+    L4: '标记MOQ约束→切Min-Max(P1-3)',
+    L3: '渠道隔离校验(KA vs 常规)',
+    L5: '联动批次拉回·效期拦截',
+    L2: '慢动品诊断·计划虚高修正'
+  };
+  const acts = layers.map(function(L){ return map[L]; }).filter(Boolean);
+  if (isF0 && acts.length === 0) acts.push('加安全垫·标注波动型·不调计划');
+  return acts.join('；') || '保持观察';
+}
+
 function renderPlanMonitor() {
   setTitle('分仓计划监控');
   const page = document.getElementById('page-plan-monitor');
@@ -12595,6 +12718,14 @@ function renderPlanMonitor() {
   rows.sort(function(a, b) { return a.comp - b.comp; });
   window._planMonitorRows = rows;
 
+  // ===== P0-1 偏差归因 + P0-4 安全库存天数上限：计算并暴露 =====
+  try {
+    const _attrOpts = { daysInMonth: daysInMonth, boxSpecOf: function(c){ const m = window._boxSpec; return (m && m[String(c)]) ? m[String(c)] : null; } };
+    window._planAttr = computePlanAttribution(rows, cov7, _attrOpts);
+    window._planAttrMap = {};
+    (window._planAttr ? window._planAttr.devRows : []).forEach(function(d){ window._planAttrMap[d.rdc + '|' + d.sku] = d; });
+  } catch(e) { console.warn('[PlanAttribution] 计算失败:', e); window._planAttr = null; window._planAttrMap = {}; }
+
   // KPI
   const totalPlan = rows.reduce(function(s, r) { return s + r.plan; }, 0);
   const totalShipped = rows.reduce(function(s, r) { return s + r.shipped; }, 0);
@@ -12678,6 +12809,64 @@ function renderPlanMonitor() {
   html += '</div>';
   html += '</div>';
 
+  // ===== P0-4: 安全库存天数上限参数化（配置卡，只读展示当前分层天花板）=====
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">🛡️ 安全库存天数上限（P0-4 · 参数化）</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">应设天数 = RDC基础天数 × SKU属性系数，绝对上限 ' + SAFETY_CEIL.absCeilDays + ' 天截断</span></div>';
+  html += '<div style="padding:14px 18px">';
+  html += '<table class="data-table" style="font-size:12px;width:100%"><thead><tr><th>RDC</th><th>基础天数</th><th>常规(×1.0)</th><th>季节(×1.2)</th><th>波动(×1.4)</th><th>长尾(×0.6)</th><th>绝对上限</th></tr></thead><tbody>';
+  ['东北RDC','华北RDC','西北RDC','华南RDC','华中RDC','西南RDC'].forEach(function(rdc){
+    const base = SAFETY_CEIL.baseDays[rdc] || 14;
+    html += '<tr><td>' + rdc + '</td><td>' + base + '</td><td>' + getSafetyStockDays(rdc,'常规') + '</td><td>' + getSafetyStockDays(rdc,'季节') + '</td><td>' + getSafetyStockDays(rdc,'波动') + '</td><td>' + getSafetyStockDays(rdc,'长尾') + '</td><td>' + SAFETY_CEIL.absCeilDays + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  html += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">基础天数锚定 RDC 运输周期（东北/华北/西北 5天→14，华南/华中 4天→12，西南 7天→16）；系数按供应链属性缩放，超过绝对上限一律截断。L1 归因以「应设安全库存量 = 日均需求 × 应设天数」对比可用库存判定是否安全垫不足。</div>';
+  html += '</div></div>';
+
+  // ===== P0-1: 偏差归因（防冤案闭环）=====
+  const _pa = window._planAttr;
+  if (_pa) {
+    html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">🔬 偏差归因（P0-1 · 防冤案闭环）</span>';
+    html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">偏差阈值：完成率偏离≥5% 且 绝对偏差&gt;max(计划1%,箱规)｜F0=天然波动不计入可改覆盖率</span></div>';
+    html += '<div style="padding:14px 18px">';
+    const _cr = _pa.coverRatio;
+    const _crColor = _cr >= 80 ? '#15803D' : (_cr >= 50 ? '#D97706' : '#DC2626');
+    const _crBg = _cr >= 80 ? '#DCFCE7' : (_cr >= 50 ? '#FEF3C7' : '#FEE2E2');
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">';
+    html += '<div style="background:' + _crBg + ';border:1px solid ' + _crColor + ';border-radius:10px;padding:10px 16px;flex:1;min-width:210px"><div style="font-size:11px;color:' + _crColor + '">归因覆盖率（可改层 L1–L5）</div><div style="font-size:24px;font-weight:800;color:' + _crColor + '">' + _cr + '%</div><div style="font-size:11px;color:var(--text-secondary)">目标 80%+ ｜ 可改 ' + _pa.coverableTotal + ' / 偏差 ' + _pa.devTotal + '（F0-only ' + _pa.f0OnlyCnt + '）</div></div>';
+    html += '</div>';
+    html += '<div style="font-size:12px;font-weight:600;margin:6px 0 6px">归因矩阵（RDC × 命中层，单元格 = 命中偏差 SKU 数）</div>';
+    html += '<table class="data-table" style="font-size:12px;width:100%"><thead><tr><th>RDC</th><th>L1 安全库存</th><th>L2 周转/慢动</th><th>L3 渠道隔离</th><th>L4 MOQ</th><th>L5 效期</th><th>F0 天然波动</th></tr></thead><tbody>';
+    Object.keys(_pa.matrix).sort().forEach(function(rdc){
+      const m = _pa.matrix[rdc];
+      html += '<tr><td>' + rdc + '</td>' +
+        '<td' + (m.L1 ? ' style="background:#FEE2E2;font-weight:700"' : '') + '>' + m.L1 + '</td>' +
+        '<td' + (m.L2 ? ' style="background:#FEE2E2;font-weight:700"' : '') + '>' + m.L2 + '</td>' +
+        '<td' + (m.L3 ? ' style="background:#FEE2E2;font-weight:700"' : '') + '>' + m.L3 + '</td>' +
+        '<td' + (m.L4 ? ' style="background:#FEE2E2;font-weight:700"' : '') + '>' + m.L4 + '</td>' +
+        '<td' + (m.L5 ? ' style="background:#FEE2E2;font-weight:700"' : '') + '>' + m.L5 + '</td>' +
+        '<td style="color:#94A3B8">' + m.F0 + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    const _lc = _pa.layerCnt;
+    const _lcTotal = _lc.L1 + _lc.L2 + _lc.L3 + _lc.L4 + _lc.L5 + _lc.F0;
+    const _layerColors = { L1:'#EF4444', L2:'#22C55E', L3:'#8B5CF6', L4:'#F97316', L5:'#06B6D4', F0:'#94A3B8' };
+    const _layerNames = { L1:'L1安全库存', L2:'L2周转', L3:'L3渠道', L4:'L4 MOQ', L5:'L5效期', F0:'F0波动' };
+    html += '<div style="font-size:12px;font-weight:600;margin:12px 0 6px">偏差结构（各层命中次数占比，看清偏差主要是哪类问题）</div>';
+    html += '<div style="display:flex;height:26px;border-radius:6px;overflow:hidden;border:1px solid var(--border-card)">';
+    ['L1','L2','L3','L4','L5','F0'].forEach(function(L){
+      const pct = _lcTotal > 0 ? (_lc[L] / _lcTotal * 100) : 0;
+      if (pct > 0) html += '<div style="width:' + pct.toFixed(1) + '%;background:' + _layerColors[L] + ';display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff" title="' + _layerNames[L] + ': ' + _lc[L] + ' (' + pct.toFixed(1) + '%)">' + (pct >= 8 ? _layerNames[L] : '') + '</div>';
+    });
+    html += '</div>';
+    html += '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px">';
+    ['L1','L2','L3','L4','L5','F0'].forEach(function(L){
+      html += '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:' + _layerColors[L] + '"></span>' + _layerNames[L] + ' ' + _lc[L] + '</span>';
+    });
+    html += '</div>';
+    html += '<div style="font-size:11px;color:var(--text-secondary);margin-top:10px;border-top:1px dashed var(--border-card);padding-top:8px">L1 触发重标安全库存上限(P0-4)｜L4 触发切 Min-Max(P1-3)｜L3 渠道隔离校验｜L5 联动批次拉回效期拦截｜L2 慢动品计划虚高修正｜F0 加安全垫不调计划。覆盖率&lt;80% 说明大量偏差说不清（数据/波形标签待完善），决策在盲飞。</div>';
+    html += '</div></div>';
+  }
+
   // ===== 时间进度 vs 出货进度 对比卡 =====
   const cmpBg = isAhead ? '#DCFCE7' : '#FEE2E2';
   const cmpFg = isAhead ? '#15803D' : '#DC2626';
@@ -12704,7 +12893,7 @@ function renderPlanMonitor() {
 
   html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">SKU 分仓计划偏差明细（按计划完成率升序）</span><button class="btn-export" onclick="exportPlanMonitor()">导出CSV</button></div>';
   html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table"><thead><tr>';
-  html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
+  html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>归因</th><th>建议</th><th>操作</th>';
   html += '</tr></thead><tbody>';
   if (rows.length === 0) html += '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>';
   rows.forEach(function(r) {
@@ -12721,6 +12910,15 @@ function renderPlanMonitor() {
     html += '<td class="num" style="color:'+compColor+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
     html += '<td class="num" style="color:'+compColor+'">'+(r.forecast*100).toFixed(1)+'%</td>';
     html += '<td style="background:'+compBg+';color:'+statusColor+';font-weight:600">'+r.status+'</td>';
+    const _a = window._planAttrMap && window._planAttrMap[r.rdc+'|'+r.sku];
+    if (_a) {
+      const _ml = _a.mainLayer;
+      const _mc = _ml === 'F0' ? '#94A3B8' : (_ml === 'L1' ? '#DC2626' : _ml === 'L4' ? '#EA580C' : _ml === 'L3' ? '#7C3AED' : _ml === 'L5' ? '#0891B2' : '#16A34A');
+      const _title = Object.keys(_a.attr).map(function(k){ return k + ':' + _a.attr[k] + '%'; }).join(' / ');
+      html += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#F1F5F9;border:1px solid '+_mc+';color:'+_mc+';border-radius:4px" title="'+_title+'">'+_ml+' '+( _a.mainShare || 0 )+'%</span></td>';
+    } else {
+      html += '<td style="font-size:11px;color:var(--text-secondary)">—</td>';
+    }
     html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
     // v121: 操作列改为「匹配状态 + 具体根因」（纯展示，不跳转）
     //   - 「无真实缺货·防呆滞」类且该 SKU×RDC 满足慢动品（isSlowMover=true）→ 橙色徽章「📌 命中慢动品分析：[rc]」
