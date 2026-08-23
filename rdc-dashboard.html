@@ -3496,10 +3496,14 @@ function renderOrderInsight() {
     }
   }
   // 实际出货与转储均统一使用 T-1 月（compareMonth），与上方筛选的 T 月解耦
-  const compareRows = compareMonth ? rows.filter(r => {
-    if (r.month !== compareMonth) return false;
+  // 修复 v126.1：rows 已被"统计月份"过滤，compareMonth=T-1 不在 rows 里必空。
+  // 直接用全量 dataStore.orderDetail + dataStore.transship 过滤，保持与 T-1 语义一致。
+  const allOrders = dataStore.orderDetail || [];
+  const allOrdersWithMonth = allOrders.map(d => ({ ...d, month: (d.dateStr || '').slice(0, 7) }));
+  const compareRows = compareMonth ? allOrdersWithMonth.filter(d => {
+    if (d.month !== compareMonth) return false;
     if (window._oiHainan === 'all') return true;
-    return window._oiHainan === 'yes' ? r.isHainan : !r.isHainan;
+    return window._oiHainan === 'yes' ? skuIsHainan[d.skuCode] : !skuIsHainan[d.skuCode];
   }) : [];
   const compareRowsNoFree = compareRows.filter(r => r.type !== '免费单'); // 转储vs出货模块排除免费单出货/需求
   const compareTrans = compareMonth ? (dataStore.transship || []).filter(r => r.dateStr && r.dateStr.startsWith(compareMonth) && !skuIsHainan[r.material]) : [];
@@ -3657,23 +3661,26 @@ function renderOrderInsight() {
       '</div>'
     : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; ' + invBaseLabel + '库存」的预警</div>';
 
-  // ====== 品牌×RDC 周度订单量 K线趋势（全月份，从1月起）======
+  // ====== 品牌×RDC 周度订单量 K线趋势（全月份，从1月起；不耦合上方"统计月份"）======
+  // 修复 v126.1：rows 已被"统计月份"过滤（line 3319），导致选 7月时 rows 只剩 7月 → K线变空。
+  // K线语义是"全月份趋势"，必须直接读全量 dataStore.orderDetail，与统计月份完全解耦。
   if (typeof window._oiKlineBrand === 'undefined') window._oiKlineBrand = 'all';
   if (typeof window._oiKlineRdc === 'undefined') window._oiKlineRdc = 'all';
-  const kBrands = [...new Set(rows.map(r => r.brand).filter(Boolean))].sort();
-  const kRdcs = [...new Set(rows.map(r => r.rdc).filter(Boolean))].sort();
-  const klineRows = rows.filter(r => {
+  const kAll = dataStore.orderDetail || [];
+  const kBrands = [...new Set(kAll.map(d => d.brand).filter(Boolean))].sort();
+  const kRdcs = [...new Set(kAll.map(d => d.warehouse).filter(Boolean))].sort();
+  const klineRows = kAll.filter(d => {
+    if (!d.dateStr) return false;
     if (window._oiHainan !== 'all') {
-      const ok = window._oiHainan === 'yes' ? r.isHainan : !r.isHainan;
+      const ok = window._oiHainan === 'yes' ? skuIsHainan[d.skuCode] : !skuIsHainan[d.skuCode];
       if (!ok) return false;
     }
-    if (window._oiKlineBrand !== 'all' && r.brand !== window._oiKlineBrand) return false;
-    if (window._oiKlineRdc !== 'all' && r.rdc !== window._oiKlineRdc) return false;
+    if (window._oiKlineBrand !== 'all' && d.brand !== window._oiKlineBrand) return false;
+    if (window._oiKlineRdc !== 'all' && d.warehouse !== window._oiKlineRdc) return false;
     return true;
   });
   const wkMap = {};
   klineRows.forEach(r => {
-    if (!r.dateStr) return;
     const wk = isoWeekKey(r.dateStr);
     if (!wkMap[wk]) wkMap[wk] = { qty: 0, minDate: r.dateStr };
     else if (r.dateStr < wkMap[wk].minDate) wkMap[wk].minDate = r.dateStr;
