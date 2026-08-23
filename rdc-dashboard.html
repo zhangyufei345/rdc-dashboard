@@ -660,7 +660,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 114; // v114: 修复 v113 修复没生效——window._skuIsHainan 暴露挂错位置（renderOrderInsight 函数体内，用户首次进 plan-monitor 还没跑过 → isH 永远 false）。v114 在 parseInventoryExcel 末尾用 cov5/cov6/cov7.d.isHainan 字段构建+暴露。inventory.json 没有'海南花露水历史数据'sheet，故数据源只能用 cov7（col8='是'）。验证：'不含海南花露水'剔除77行/263.5万计划量/完成率33.8%→41.7%
+const DB_VERSION = 115; // v115: plan-monitor advice 判定只看完成率，移除「有/无库存」第二维度。availQtyPlan 是 cov7（7月底/8月初快照），到今天已过 22 天无参考意义。5 状态简化为 3 状态：滞后→触发补货建议加大；超额→下月计划上调+提前补货；正常→保持。慢动品诊断由独立模块负责
 
 // 全局错误监听：捕获未处理的异常，浮到 UI 避免白屏
 window.addEventListener('error', function(e) {
@@ -12283,17 +12283,21 @@ function renderPlanMonitor() {
     const comp = plan > 0 ? shipped / plan : 0;
     const forecast = monthElapsed > 0 ? Math.min(comp / monthElapsed, 3) : 0;
     let status, advice;
+    // v115: advice 判定只看完成率，不再分「有/无库存」第二维度
+    // 原因：availQtyPlan 是 cov7（7月底/8月初快照），到今天已过 22 天，无参考意义。
+    //   滞后/超额的库存判定口径 v111 已废弃「无库存」KPI 卡，但 advice 判定 v108 没改，今天用户反馈再次踩坑。
+    //   慢动品诊断由独立的「慢动品诊断」模块负责（用近 N 个月数据），plan-monitor 不重复。
     if (comp < 0.7) {
       status = '滞后';
-      advice = (d.availQtyPlan || 0) <= 0 ? '触发补货建议加大（无可用库存）' : '诊断需求下降/慢动（有可用库存）';
+      advice = '触发补货建议加大（出货跟不上计划）';
     } else if (comp > 1.1) {
       status = '超额';
-      advice = (d.availQtyPlan || 0) <= 0 ? '建议下月计划上调 + 提前补货' : '建议下月分仓计划下调';
+      advice = '下月计划上调 + 提前补货';
     } else {
       status = '正常';
       advice = '保持';
     }
-    rows.push({ sku:d.sku, skuName:d.skuName, brand:d.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice, avail:d.availQtyPlan||0 });
+    rows.push({ sku:d.sku, skuName:d.skuName, brand:d.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice });
   });
   // 兜底品牌（RDC 列、累计按日）
   cov7.forEach(function(d){
