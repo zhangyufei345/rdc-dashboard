@@ -439,6 +439,18 @@ body.mode-meeting .kpi-value { font-size: 48px; }
 .pagination button.active { background: var(--color-blue); color: #fff; border-color: var(--color-blue); }
 .pagination button:disabled { opacity: .4; cursor: default; }
 .pagination span { font-size: 12px; color: var(--text-secondary); }
+
+/* 通用表格分页器（每页 20 条 + 跳页）：任意 .table-wrap 内最后追加 */
+.table-pager { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; padding: 10px 6px; font-size: 12px; color: var(--text-secondary); }
+.table-pager .pg-btn { padding: 3px 8px; font-size: 12px; border: 1px solid var(--border-card); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); cursor: pointer; transition: all .12s; }
+.table-pager .pg-btn:hover:not(:disabled):not(.pg-btn-active) { background: var(--color-blue); color: #fff; border-color: var(--color-blue); }
+.table-pager .pg-btn-active { background: var(--color-blue); color: #fff; border-color: var(--color-blue); font-weight: 600; }
+.table-pager .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+.table-pager .pg-jump { width: 54px; padding: 3px 6px; border: 1px solid var(--border-card); border-radius: 4px; font-size: 12px; background: var(--bg-card); color: var(--text-primary); text-align: center; }
+.table-pager .pg-jump::-webkit-outer-spin-button,
+.table-pager .pg-jump::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.table-pager .pg-jump { -moz-appearance: textfield; }
+.table-pager .pg-info { margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -665,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 126; // v126: 订单数据洞察新增「品牌×RDC 周度订单量 K线趋势」（ISO周聚合+红涨绿跌蜡烛图+5/10/15周均线+金叉死叉/连续阴线预警+双下拉筛选品牌/RDC，单位随"按箱统计"切换，全月份从1月起）；bump 确保旧 IDB 缓存重拉 // v125: 拆掉 P0-4 安全库存上限配置卡，用户反馈"用处不大"
+const DB_VERSION = 127; // v127: 加通用表格分页器（每页20条+跳页），转储vs出货SKU差异明细/客户维度明细/分仓计划监控SKU明细+DACR低可信TOP30 等长表接入门户
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4016,23 +4028,26 @@ function renderOiSkuDetailTable() {
   const maxRows = 800;
   const shown = rows.slice(0, maxRows);
   const fmt = n => (n || 0).toLocaleString('zh-CN');
+  // 行html数组（供通用分页器切分）
+  const rowsHtml = shown.map(r => {
+    const diffColor = r.diff < 0 ? 'var(--color-red)' : (r.diff > 0 ? 'var(--color-green)' : '');
+    return '<tr><td style="text-align:left">' + (r.rdc || '') + '</td><td style="text-align:left">' + r.sku + '</td><td style="text-align:left">' + (r.skuName || '') + '</td>' +
+      '<td style="text-align:right">' + fmt(r.trans) + '</td><td style="text-align:right">' + fmt(r.ship) + '</td><td style="text-align:right">' + fmt(r.order) + '</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + diffColor + '">' + fmt(r.diff) + '</td>' +
+      '<td style="text-align:right">' + (r.avail > 0 ? fmt(r.avail) : '—') + '</td>' +
+      '<td style="text-align:right">' + (r.fut > 0 ? fmt(r.fut) : '—') + '</td>' +
+      '<td style="text-align:left">' + r.rootCause + '</td></tr>';
+  });
+  // 容器只放 table 框架（不含 tbody 内容） + 提示行；分页条由 paginateTable 自动接管
   box.innerHTML = '<table class="data-table"><thead><tr>' +
     '<th style="text-align:left">RDC</th><th style="text-align:left">SKU</th><th style="text-align:left">名称</th>' +
     '<th style="text-align:right">转储入库</th><th style="text-align:right">实际出货</th><th style="text-align:right">订单需求</th>' +
     '<th style="text-align:right">差异</th><th style="text-align:right">期初可用库存</th><th style="text-align:right">未来6月需求</th>' +
     '<th style="text-align:left">根因</th>' +
-    '</tr></thead><tbody>' +
-    shown.map(r => {
-      const diffColor = r.diff < 0 ? 'var(--color-red)' : (r.diff > 0 ? 'var(--color-green)' : '');
-      return '<tr><td style="text-align:left">' + r.rdc + '</td><td style="text-align:left">' + r.sku + '</td><td style="text-align:left">' + (r.skuName || '') + '</td>' +
-        '<td style="text-align:right">' + fmt(r.trans) + '</td><td style="text-align:right">' + fmt(r.ship) + '</td><td style="text-align:right">' + fmt(r.order) + '</td>' +
-        '<td style="text-align:right;font-weight:600;color:' + diffColor + '">' + fmt(r.diff) + '</td>' +
-        '<td style="text-align:right">' + (r.avail > 0 ? fmt(r.avail) : '—') + '</td>' +
-        '<td style="text-align:right">' + (r.fut > 0 ? fmt(r.fut) : '—') + '</td>' +
-        '<td style="text-align:left">' + r.rootCause + '</td></tr>';
-    }).join('') +
-    '</tbody></table>' +
+    '</tr></thead><tbody></tbody></table>' +
     '<div style="padding:6px 8px;font-size:11px;color:var(--text-secondary)">默认展示每个 RDC 差异绝对值 Top20；筛选/搜索后显示匹配全部；导出含全部 ' + (window._oiSkuDetail || []).length + ' 条</div>';
+  // 接入分页器（每页20条）
+  paginateTable('oi-sku-detail-table', rowsHtml);
 }
 
 function exportOiSkuDetail() {
@@ -4985,16 +5000,19 @@ function renderCustomerImpl(page) {
     const cgSummary = window._cgSummary;
     // 明细表按日订单满足率从低到高排序
     const tableSorted = [...cgSummary].sort((a, b) => a.dayRate - b.dayRate);
-    const tableHtml = '<table class="data-table"><thead><tr><th>#</th><th>客户组</th><th>订单支数</th><th>首日排单</th><th>总履约</th><th>拒绝量</th><th>日满足率</th><th>月满足率</th><th>操作</th></tr></thead><tbody>' +
-      tableSorted.map((d, i) => `<tr style="cursor:pointer" onclick="drillCustomerByName('${(d.name||'').replace(/'/g,"\\'")}')">
-        <td>${i+1}</td><td title="${d.name}">${d.name.length>12?d.name.substring(0,12)+'...':d.name}</td>
-        <td class="num">${formatNum(d.orderQty)}</td><td class="num">${formatNum(d.firstQty)}</td><td class="num">${formatNum(d.fulfillQty)}</td>
-        <td class="num" style="color:${d.rejectQty>0?'#F59E0B':'var(--text-secondary)'};font-weight:${d.rejectQty>0?600:400}">${d.rejectQty > 0 ? formatNum(d.rejectQty) : '-'}</td>
-        <td class="num"><span class="${d.dayRate>=0.95?'rate-good':d.dayRate>=0.9?'rate-warn':'rate-bad'}">${formatPct(d.dayRate)}</span></td>
-        <td class="num"><span class="${d.monthRate>=0.95?'rate-good':d.monthRate>=0.9?'rate-warn':'rate-bad'}">${formatPct(d.monthRate)}</span></td>
-        <td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();drillCustomerByName('${(d.name||'').replace(/'/g,"\\'")}')">下钻</button></td>
-      </tr>`).join('') + '</tbody></table>';
+    const safeName = n => (n||'').replace(/'/g,"\\'");
+    const nameCell = d => d.name.length>12 ? d.name.substring(0,12)+'...' : d.name;
+    const rowsHtml = tableSorted.map((d, i) => '<tr style="cursor:pointer" onclick="drillCustomerByName(\'' + safeName(d.name) + '\')">' +
+      '<td>' + (i+1) + '</td><td title="' + (d.name||'') + '">' + nameCell(d) + '</td>' +
+      '<td class="num">' + formatNum(d.orderQty) + '</td><td class="num">' + formatNum(d.firstQty) + '</td><td class="num">' + formatNum(d.fulfillQty) + '</td>' +
+      '<td class="num" style="color:' + (d.rejectQty>0?'#F59E0B':'var(--text-secondary)') + ';font-weight:' + (d.rejectQty>0?600:400) + '">' + (d.rejectQty > 0 ? formatNum(d.rejectQty) : '-') + '</td>' +
+      '<td class="num"><span class="' + (d.dayRate>=0.95?'rate-good':d.dayRate>=0.9?'rate-warn':'rate-bad') + '">' + formatPct(d.dayRate) + '</span></td>' +
+      '<td class="num"><span class="' + (d.monthRate>=0.95?'rate-good':d.monthRate>=0.9?'rate-warn':'rate-bad') + '">' + formatPct(d.monthRate) + '</span></td>' +
+      '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();drillCustomerByName(\'' + safeName(d.name) + '\')">下钻</button></td>' +
+      '</tr>');
+    const tableHtml = '<table class="data-table"><thead><tr><th>#</th><th>客户组</th><th>订单支数</th><th>首日排单</th><th>总履约</th><th>拒绝量</th><th>日满足率</th><th>月满足率</th><th>操作</th></tr></thead><tbody></tbody></table>';
     document.getElementById('table-customer-detail').innerHTML = tableHtml;
+    paginateTable('table-customer-detail', rowsHtml);
   } else {
     setTimeout(function() {
       const pieEl = document.getElementById('chart-drill-brand-pie');
@@ -9023,6 +9041,122 @@ const amt25 = months12.map((_, i) => amountAtRdcs('2025', i + 1, selectedRdcs) /
   lineChart('chart-inv-history-ship', '2025' + rdcLabel + '出货成本', '2026' + rdcLabel + '出货成本', ship25, ship26);
 }
 
+// ============ 通用表格分页器（每页20条 + 跳页） ============
+// 用法：const rowsHtml = data.map(r => '<tr>...</tr>');
+//       box.innerHTML = '<table class="data-table"><thead>...</thead><tbody></tbody></table>';
+//       paginateTable('my-table-container', rowsHtml);   // 容器ID：可以是 .table-wrap / .card / <tbody>/<table> 任意ID
+//
+// 设计：容器ID 内部自动查找第一个 <tbody> 填入切片行；分页条放在容器同级最后（class="table-pager-{id}"）。
+//       总行数 <= pageSize 时不显示分页条；筛选/数据更新时再次调用即可重置回第 1 页。
+const _pagerStates = {};
+const PAGER_PAGE_SIZE = 20;
+function paginateTable(targetId, rowsHtmlArray, pageSize) {
+  const rows = (rowsHtmlArray || []).slice();
+  pageSize = pageSize || PAGER_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  _pagerStates[targetId] = { rows: rows, pageSize: pageSize, page: 1, totalPages: totalPages };
+  renderPagerPage(targetId);
+}
+function setPagerPage(targetId, pageNum) {
+  const st = _pagerStates[targetId]; if (!st) return;
+  st.page = Math.max(1, Math.min(st.totalPages, pageNum || 1));
+  renderPagerPage(targetId);
+}
+function getPagerPage(targetId) { const st = _pagerStates[targetId]; return st ? st.page : 1; }
+function resetPager(targetId) { const st = _pagerStates[targetId]; if (st) { st.page = 1; renderPagerPage(targetId); } }
+
+function renderPagerPage(targetId) {
+  const st = _pagerStates[targetId]; if (!st) return;
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  const tbody = target.tagName === 'TBODY' ? target : target.querySelector('tbody');
+  const pageSize = st.pageSize;
+  let p = st.page;
+  if (p < 1) p = 1;
+  if (p > st.totalPages) p = st.totalPages;
+  st.page = p;
+  const start = (p - 1) * pageSize;
+  const slice = st.rows.slice(start, start + pageSize);
+
+  // 1) 填充 tbody
+  if (tbody) {
+    if (st.rows.length === 0) {
+      const cols = tbody.parentElement ? tbody.parentElement.querySelectorAll('thead th').length : 1;
+      tbody.innerHTML = '<tr><td colspan="' + (cols || 1) + '" style="text-align:center;padding:20px;color:var(--text-secondary)">该条件下暂无数据，请调整筛选条件</td></tr>';
+    } else {
+      tbody.innerHTML = slice.join('');
+    }
+  }
+
+  // 2) 重写分页条（先删旧的，再插新的）——只插到容器外层结尾，避免破坏现有 max-height 滚动容器
+  const host = tbody ? tbody.closest('.table-wrap, .card, div[style*="overflow"]') || tbody.parentElement.parentElement : target.parentElement;
+  if (host) {
+    const old = host.querySelector('.table-pager-' + targetId);
+    if (old) old.remove();
+    if (st.rows.length > pageSize) {
+      host.insertAdjacentHTML('beforeend', buildPagerHtml(targetId, p, st.totalPages, st.rows.length, pageSize));
+    }
+  }
+}
+
+function buildPagerHtml(targetId, p, totalPages, total, pageSize) {
+  const startP = Math.max(1, p - 2);
+  const endP = Math.min(totalPages, p + 2);
+  let btns = '';
+  btns += '<button class="pg-btn" data-cid="' + targetId + '" data-action="first"' + (p<=1?' disabled':'') + '>首页</button>';
+  btns += '<button class="pg-btn" data-cid="' + targetId + '" data-action="prev"' + (p<=1?' disabled':'') + '>上一页</button>';
+  if (startP > 1) btns += '<span style="color:var(--text-secondary);font-size:11px">...</span>';
+  for (let i = startP; i <= endP; i++) {
+    btns += '<button class="pg-btn' + (i===p?' pg-btn-active':'') + '" data-cid="' + targetId + '" data-action="num" data-p="' + i + '">' + i + '</button>';
+  }
+  if (endP < totalPages) btns += '<span style="color:var(--text-secondary);font-size:11px">...</span>';
+  btns += '<button class="pg-btn" data-cid="' + targetId + '" data-action="next"' + (p>=totalPages?' disabled':'') + '>下一页</button>';
+  btns += '<button class="pg-btn" data-cid="' + targetId + '" data-action="last"' + (p>=totalPages?' disabled':'') + '>末页</button>';
+  let html = '<div class="table-pager table-pager-' + targetId + '" data-cid="' + targetId + '">';
+  html += '<span class="pg-info">共 <strong style="color:var(--text-primary)">' + total + '</strong> 条 · 每页 ' + pageSize + ' 条 · 第 <strong style="color:var(--color-blue)">' + p + '</strong> / ' + totalPages + ' 页</span>';
+  html += btns;
+  html += '<span class="pg-info" style="margin-left:6px">跳到 <input type="number" class="pg-jump" data-cid="' + targetId + '" min="1" max="' + totalPages + '" value="' + p + '"> 页</span>';
+  html += '</div>';
+  return html;
+}
+
+// 全局点击委托：分页按钮 / GO 跳转
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('.pg-btn');
+  if (!btn) return;
+  if (btn.disabled) return;
+  const cid = btn.dataset.cid; const action = btn.dataset.action;
+  if (!cid || !action) return;
+  const st = _pagerStates[cid]; if (!st) return;
+  let p = st.page;
+  if (action === 'first') p = 1;
+  else if (action === 'prev') p = Math.max(1, p - 1);
+  else if (action === 'next') p = Math.min(st.totalPages, p + 1);
+  else if (action === 'last') p = st.totalPages;
+  else if (action === 'num') p = Math.max(1, Math.min(st.totalPages, parseInt(btn.dataset.p, 10) || 1));
+  else if (action === 'jump') {
+    const wrap = btn.closest('.table-pager');
+    const input = wrap ? wrap.querySelector('.pg-jump') : null;
+    if (input) p = Math.max(1, Math.min(st.totalPages, parseInt(input.value, 10) || 1));
+  }
+  if (p === st.page) return;
+  st.page = p;
+  renderPagerPage(cid);
+});
+
+// 跳页输入框回车支持
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter') return;
+  const input = e.target.closest('.pg-jump');
+  if (!input) return;
+  e.preventDefault();
+  const cid = input.dataset.cid; const st = _pagerStates[cid]; if (!st) return;
+  const p = Math.max(1, Math.min(st.totalPages, parseInt(input.value, 10) || 1));
+  if (p === st.page) return;
+  st.page = p;
+  renderPagerPage(cid);
+});
+
 // ============ INITIALIZATION ============
 function init() {
   document.body.className = 'mode-' + currentMode;
@@ -12367,7 +12501,8 @@ function renderBizDemandDACR(targetId) {
   html += '<div class="chart-container" id="chart-dacr-heat" style="height:'+Math.max(280,Math.min(topN.length*28, 600))+'px"></div></div>';
   // 低可信度高增量 TOP 30 表
   html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">🔴 低可信高增量 TOP 30（DACR由低到高）</span><button class="btn-export" onclick="exportDACR()">导出CSV(带补货建议)</button></div>';
-  html += '<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>SKU代码</th><th>名称</th><th>RDC</th><th>渠道</th><th class="num">业务提报</th><th class="num">实际出货</th><th class="num">DACR</th><th>可信度</th><th class="num">虚高增量</th><th class="num">DACR上限</th><th class="num">推荐采纳上限</th><th class="num">KA安全库存</th><th>补货操作建议</th></tr></thead><tbody>';
+  html += '<div class="table-wrap"><table class="data-table" id="dacr-topn-table"><thead><tr><th>#</th><th>SKU代码</th><th>名称</th><th>RDC</th><th>渠道</th><th class="num">业务提报</th><th class="num">实际出货</th><th class="num">DACR</th><th>可信度</th><th class="num">虚高增量</th><th class="num">DACR上限</th><th class="num">推荐采纳上限</th><th class="num">KA安全库存</th><th>补货操作建议</th></tr></thead><tbody></tbody></table></div></div>';
+  const dacrRowsHtml = [];
   topN.forEach(function(r,i) {
     var lvlColor = r.lvl===4?'#15803D':r.lvl===3?'#D97706':r.lvl===2?'#EA580C':'#DC2626';
     var lvlBg = r.lvl===4?'#DCFCE7':r.lvl===3?'#FFFBEB':r.lvl===2?'#FEF3C7':'#FEE2E2';
@@ -12386,10 +12521,12 @@ function renderBizDemandDACR(targetId) {
     } else {
       advice = 'DACR<30%严重虚高：只按系统需求补，不采纳业务增量' + (r.channel==='KA'?'，KA安全×0.7':'');
     }
-    html += '<tr><td class="c">'+(i+1)+'</td><td style="font-family:monospace">'+r.sku+'</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td><td>'+r.rdc+'</td><td>'+r.channel+'</td><td class="num">'+formatNum(r.bizD)+'</td><td class="num">'+formatNum(r.shipped)+'</td><td class="num" style="color:'+lvlColor+';font-weight:700">'+(r.dacr*100).toFixed(1)+'%</td><td style="background:'+lvlBg+';color:'+lvlColor+';font-weight:700">'+r.level+'</td><td class="num" style="color:#DC2626">'+formatNum(r.gap)+'</td><td class="num">'+dacCoef.toFixed(2)+'</td><td class="num" style="font-weight:700">'+formatNum(recAdopt)+'</td><td class="num" style="color:'+(kaSafety==='×0.7'?'#EA580C':'#15803D')+';font-weight:700">'+kaSafety+'</td><td style="font-size:10px;line-height:1.4;max-width:380px">'+advice+'</td></tr>';
+    dacrRowsHtml.push('<tr><td class="c">'+(i+1)+'</td><td style="font-family:monospace">'+r.sku+'</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td><td>'+r.rdc+'</td><td>'+r.channel+'</td><td class="num">'+formatNum(r.bizD)+'</td><td class="num">'+formatNum(r.shipped)+'</td><td class="num" style="color:'+lvlColor+';font-weight:700">'+(r.dacr*100).toFixed(1)+'%</td><td style="background:'+lvlBg+';color:'+lvlColor+';font-weight:700">'+r.level+'</td><td class="num" style="color:#DC2626">'+formatNum(r.gap)+'</td><td class="num">'+dacCoef.toFixed(2)+'</td><td class="num" style="font-weight:700">'+formatNum(recAdopt)+'</td><td class="num" style="color:'+(kaSafety==='×0.7'?'#EA580C':'#15803D')+';font-weight:700">'+kaSafety+'</td><td style="font-size:10px;line-height:1.4;max-width:380px">'+advice+'</td></tr>');
   });
-  html += '</tbody></table></div></div>';
+  html += '</div>';
   page.innerHTML = html;
+  // 接入分页器（每页20条；Top30 会自动显示2页）
+  paginateTable('dacr-topn-table', dacrRowsHtml);
   window._dacrData = { dacrList: dacrList, topN: topN, chMap: chMap };
   // ===== ECharts 渲染 =====
   setTimeout(function() {
@@ -12842,47 +12979,50 @@ function renderPlanMonitor() {
   html += '</div><div id="pm-rdc-trend" style="height:340px"></div></div>';
 
   html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">SKU 分仓计划偏差明细（按计划完成率升序）</span><button class="btn-export" onclick="exportPlanMonitor()">导出CSV</button></div>';
-  html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table"><thead><tr>';
+  html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table" id="pm-sku-detail-table"><thead><tr>';
   html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
-  html += '</tr></thead><tbody>';
-  if (rows.length === 0) html += '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>';
-  rows.forEach(function(r) {
-    const compColor = planCompColor(r.comp);
-    const compBg = r.comp < 0.7 ? '#FEE2E2' : r.comp < 1.0 ? '#FFFBEB' : r.comp <= 1.1 ? '#DCFCE7' : '#DBEAFE';
-    const statusColor = r.status==='滞后' ? '#DC2626' : r.status==='超额' ? '#15803D' : '#D97706';
-    html += '<tr>';
-    html += '<td style="position:sticky;left:0;background:inherit;font-family:monospace">'+r.sku+'</td>';
-    html += '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td>';
-    html += '<td>'+(r.brand||'—')+'</td>';
-    html += '<td>'+r.rdc+'</td>';
-    html += '<td class="num">'+formatNum(r.plan)+'</td>';
-    html += '<td class="num">'+formatNum(r.shipped)+'</td>';
-    html += '<td class="num" style="color:'+compColor+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
-    html += '<td class="num" style="color:'+compColor+'">'+(r.forecast*100).toFixed(1)+'%</td>';
-    html += '<td style="background:'+compBg+';color:'+statusColor+';font-weight:600">'+r.status+'</td>';
-    html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
-    // v121: 操作列改为「匹配状态 + 具体根因」（纯展示，不跳转）
-    //   - 「无真实缺货·防呆滞」类且该 SKU×RDC 满足慢动品（isSlowMover=true）→ 橙色徽章「📌 命中慢动品分析：[rc]」
-    //     rc 来自 window._slowDiagMap[rdc|sku]（parseInventoryExcel 末尾构建），即与「慢动品分析」页共用同一套 diagnoseSlowItem 引擎
-    //   - 「无真实缺货·防呆滞」类但不满足慢动品 → 不显示（理论上不该出现，但保留兜底）
-    //   - 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝色徽章「✓ 在补货建议清单中」（这些 SKU 必然在补货建议专页有缺货记录可查）
-    //   - 既不满足慢动品也不在补货清单 → 不显示
-    const isSlowMoverBtn = /无真实缺货|防呆滞|慢动/.test(r.advice);
-    if (isSlowMoverBtn) {
-      if (r.isSlowMover) {
-        const _rc = (r.diag && r.diag.rc) ? r.diag.rc : '慢动品（根因数据缺失）';
-        html += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#FAEEDA;border:1px solid #BA7517;color:#854F0B;border-radius:4px;white-space:normal;line-height:1.3;max-width:220px" title="该 SKU×RDC 在「慢动品分析」页可查；根因=' + _rc + '">📌 命中慢动品分析<br><span style="font-size:10px;color:#92400E">'+_rc+'</span></span></td>';
+  html += '</tr></thead><tbody></tbody></table></div></div>';
+
+  // 行html数组（供通用分页器切分）
+  const skuRowsHtml = [];
+  if (rows.length === 0) {
+    skuRowsHtml.push('<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>');
+  } else {
+    rows.forEach(function(r) {
+      const compColor = planCompColor(r.comp);
+      const compBg = r.comp < 0.7 ? '#FEE2E2' : r.comp < 1.0 ? '#FFFBEB' : r.comp <= 1.1 ? '#DCFCE7' : '#DBEAFE';
+      const statusColor = r.status==='滞后' ? '#DC2626' : r.status==='超额' ? '#15803D' : '#D97706';
+      let row = '<tr>';
+      row += '<td style="position:sticky;left:0;background:inherit;font-family:monospace">'+r.sku+'</td>';
+      row += '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td>';
+      row += '<td>'+(r.brand||'—')+'</td>';
+      row += '<td>'+r.rdc+'</td>';
+      row += '<td class="num">'+formatNum(r.plan)+'</td>';
+      row += '<td class="num">'+formatNum(r.shipped)+'</td>';
+      row += '<td class="num" style="color:'+compColor+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
+      row += '<td class="num" style="color:'+compColor+'">'+(r.forecast*100).toFixed(1)+'%</td>';
+      row += '<td style="background:'+compBg+';color:'+statusColor+';font-weight:600">'+r.status+'</td>';
+      row += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
+      const isSlowMoverBtn = /无真实缺货|防呆滞|慢动/.test(r.advice);
+      if (isSlowMoverBtn) {
+        if (r.isSlowMover) {
+          const _rc = (r.diag && r.diag.rc) ? r.diag.rc : '慢动品（根因数据缺失）';
+          row += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#FAEEDA;border:1px solid #BA7517;color:#854F0B;border-radius:4px;white-space:normal;line-height:1.3;max-width:220px" title="该 SKU×RDC 在「慢动品分析」页可查；根因=' + _rc + '">📌 命中慢动品分析<br><span style="font-size:10px;color:#92400E">'+_rc+'</span></span></td>';
+        } else {
+          row += '<td style="font-size:11px;color:var(--text-secondary)">—</td>';
+        }
       } else {
-        html += '<td style="font-size:11px;color:var(--text-secondary)">—</td>';
+        row += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#EEF2FF;border:1px solid #818CF8;color:#3730A3;border-radius:4px;white-space:nowrap" title="该 SKU 在「补货建议」清单中。">✓ 在补货建议清单中</span></td>';
       }
-    } else {
-      html += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#EEF2FF;border:1px solid #818CF8;color:#3730A3;border-radius:4px;white-space:nowrap" title="该 SKU 在「补货建议」清单中。">✓ 在补货建议清单中</span></td>';
-    }
-    html += '</tr>';
-  });
-  html += '</tbody></table></div></div>';
+      row += '</tr>';
+      skuRowsHtml.push(row);
+    });
+  }
 
   page.innerHTML = html;
+
+  // 接入分页器（每页20条）
+  paginateTable('pm-sku-detail-table', skuRowsHtml);
 
   // ===== 填充品牌×RDC 矩阵 =====
   (function fillBrandRdcMatrix(){
@@ -12987,22 +13127,25 @@ function jumpToPlanMonitorSkuDetail(brand, rdc) {
   html += '<div style="font-size:12px;color:var(--text-secondary)">共 <b style="color:var(--text-primary)">'+rows.length+'</b> 个 SKU｜订单量 <b style="color:var(--text-primary)">'+formatNum(totalOrder)+'</b> 支 / 计划 <b style="color:var(--text-primary)">'+formatNum(totalPlan)+'</b> 支 / 完成率 <b style="color:'+planCompColor(overall/100)+'">'+overall.toFixed(1)+'%</b></div>';
   html += '<button class="btn-export" onclick="document.getElementById(\'pm-sku-drill\').innerHTML=\'\'">收起</button>';
   html += '</div>';
-  html += '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="data-table"><thead><tr><th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th>状态</th><th>建议</th><th>操作</th></tr></thead><tbody>';
-  if (rows.length === 0) html += '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-secondary)">该 品牌×RDC 无分仓计划 / 订单数据</td></tr>';
+  html += '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="data-table" id="pm-sku-drill-table"><thead><tr><th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th>状态</th><th>建议</th><th>操作</th></tr></thead><tbody></tbody></table></div></div>';
+  // 行html数组（供通用分页器切分）
+  const drillRowsHtml = [];
+  if (rows.length === 0) drillRowsHtml.push('<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-secondary)">该 品牌×RDC 无分仓计划 / 订单数据</td></tr>');
   rows.forEach(function(r){
-    html += '<tr>';
-    html += '<td style="position:sticky;left:0;background:inherit;font-family:monospace">'+r.sku+'</td>';
-    html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td>';
-    html += '<td class="num">'+formatNum(r.plan)+'</td>';
-    html += '<td class="num">'+formatNum(r.shipped)+'</td>';
-    html += '<td class="num" style="color:'+planCompColor(r.comp)+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
-    html += '<td style="background:'+sB(r.comp)+';color:'+sC(r.status)+';font-weight:600">'+r.status+'</td>';
-    html += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
-    html += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+esc(r.sku)+'\',\''+esc(r.rdc)+'\')">→ 补货建议</button></td>';
-    html += '</tr>';
+    let row = '<tr>';
+    row += '<td style="position:sticky;left:0;background:inherit;font-family:monospace">'+r.sku+'</td>';
+    row += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'—')+'</td>';
+    row += '<td class="num">'+formatNum(r.plan)+'</td>';
+    row += '<td class="num">'+formatNum(r.shipped)+'</td>';
+    row += '<td class="num" style="color:'+planCompColor(r.comp)+';font-weight:700">'+(r.comp*100).toFixed(1)+'%</td>';
+    row += '<td style="background:'+sB(r.comp)+';color:'+sC(r.status)+';font-weight:600">'+r.status+'</td>';
+    row += '<td style="font-size:11px;max-width:240px">'+r.advice+'</td>';
+    row += '<td><button class="btn-export" style="padding:2px 8px;font-size:11px" onclick="jumpToReplenish(\''+esc(r.sku)+'\',\''+esc(r.rdc)+'\')">→ 补货建议</button></td>';
+    row += '</tr>';
+    drillRowsHtml.push(row);
   });
-  html += '</tbody></table></div></div>';
   wrap.innerHTML = html;
+  paginateTable('pm-sku-drill-table', drillRowsHtml);
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
