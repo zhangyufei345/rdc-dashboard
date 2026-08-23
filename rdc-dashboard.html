@@ -665,7 +665,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 124; // v124: 拆掉 P0-1 偏差归因(卡片/矩阵/结构条/明细归因列)，用户反馈"用处不大"；保留 P0-4 安全库存上限配置卡；bump 确保旧缓存重拉 // v123: P0-1 偏差归因(F0预检+L1-L5决策树+归因覆盖率+归因矩阵+偏差结构条+SKU钻取徽章) + P0-4 安全库存天数上限参数化(分层天花板) + parse 补建 window._kaSkuSet(KA库位03结尾,供L3渠道隔离归因); bump确保旧缓存重拉拿到新逻辑 // v122: 拉回分析「按收货仓」两级下钻（收货仓→实际收货库位→SKU汇总明细）；parse 补存 recLoc（B列收货库位），故必须 bump 让 IDB 旧缓存自愈
+const DB_VERSION = 125; // v125: 拆掉 P0-4 安全库存天数上限配置卡（SAFETY_CEIL + getSafetyStockDays/Qty 定义 + 渲染卡片），用户反馈"用处不大"；bump 确保旧 IDB 缓存重拉
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -12430,30 +12430,6 @@ function jumpToSlowDiagnosis(sku, rdc) {
   navigateTo('slow-moving');
 }
 
-// ===== P0-4: 安全库存天数上限参数化（分层天花板）=====
-// 应设安全库存天数 = RDC基础天数 × SKU供应链属性系数，绝对上限 absCeilDays 天截断
-// 基础天数锚定 RDC 运输周期（东北/华北/西北5天→14，华南/华中4天→12，西南7天→16），落在用户认可的 12-16 档
-const SAFETY_CEIL = {
-  baseDays: { '东北RDC':14, '华北RDC':14, '西北RDC':14, '华南RDC':12, '华中RDC':12, '西南RDC':16 },
-  attrCoef: { '常规':1.0, '季节':1.2, '波动':1.4, '长尾':0.6, '慢动':0.6, '非卖品':0.5 },
-  absCeilDays: 30,
-  fallbackAttrCoef: 1.0
-};
-function getSafetyStockDays(rdc, attr) {
-  const base = SAFETY_CEIL.baseDays[rdc] || 14;
-  const a = String(attr || '').trim();
-  const coef = (SAFETY_CEIL.attrCoef[a] != null) ? SAFETY_CEIL.attrCoef[a] : SAFETY_CEIL.fallbackAttrCoef;
-  let days = base * coef;
-  if (days > SAFETY_CEIL.absCeilDays) days = SAFETY_CEIL.absCeilDays;
-  if (days < 1) days = 1;
-  return Math.round(days * 10) / 10;
-}
-function getSafetyStockQty(rdc, attr, plan, daysInMonth) {
-  const days = getSafetyStockDays(rdc, attr);
-  const dailyDemand = daysInMonth > 0 ? (plan || 0) / daysInMonth : 0;
-  return Math.round(dailyDemand * days);
-}
-
 function renderPlanMonitor() {
   setTitle('分仓计划监控');
   const page = document.getElementById('page-plan-monitor');
@@ -12710,19 +12686,6 @@ function renderPlanMonitor() {
   html += '</div>';
   html += '</div>';
   html += '</div>';
-
-  // ===== P0-4: 安全库存天数上限参数化（配置卡，只读展示当前分层天花板）=====
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">🛡️ 安全库存天数上限（P0-4 · 参数化）</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">应设天数 = RDC基础天数 × SKU属性系数，绝对上限 ' + SAFETY_CEIL.absCeilDays + ' 天截断</span></div>';
-  html += '<div style="padding:14px 18px">';
-  html += '<table class="data-table" style="font-size:12px;width:100%"><thead><tr><th>RDC</th><th>基础天数</th><th>常规(×1.0)</th><th>季节(×1.2)</th><th>波动(×1.4)</th><th>长尾(×0.6)</th><th>绝对上限</th></tr></thead><tbody>';
-  ['东北RDC','华北RDC','西北RDC','华南RDC','华中RDC','西南RDC'].forEach(function(rdc){
-    const base = SAFETY_CEIL.baseDays[rdc] || 14;
-    html += '<tr><td>' + rdc + '</td><td>' + base + '</td><td>' + getSafetyStockDays(rdc,'常规') + '</td><td>' + getSafetyStockDays(rdc,'季节') + '</td><td>' + getSafetyStockDays(rdc,'波动') + '</td><td>' + getSafetyStockDays(rdc,'长尾') + '</td><td>' + SAFETY_CEIL.absCeilDays + '</td></tr>';
-  });
-  html += '</tbody></table>';
-  html += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">基础天数锚定 RDC 运输周期（东北/华北/西北 5天→14，华南/华中 4天→12，西南 7天→16）；系数按供应链属性缩放，超过绝对上限一律截断。L1 归因以「应设安全库存量 = 日均需求 × 应设天数」对比可用库存判定是否安全垫不足。</div>';
-  html += '</div></div>';
 
   // ===== 时间进度 vs 出货进度 对比卡 =====
   const cmpBg = isAhead ? '#DCFCE7' : '#FEE2E2';
