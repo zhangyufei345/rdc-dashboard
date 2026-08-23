@@ -665,7 +665,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 125; // v125: 拆掉 P0-4 安全库存天数上限配置卡（SAFETY_CEIL + getSafetyStockDays/Qty 定义 + 渲染卡片），用户反馈"用处不大"；bump 确保旧 IDB 缓存重拉
+const DB_VERSION = 126; // v126: 订单数据洞察新增「品牌×RDC 周度订单量 K线趋势」（ISO周聚合+红涨绿跌蜡烛图+5/10/15周均线+金叉死叉/连续阴线预警+双下拉筛选品牌/RDC，单位随"按箱统计"切换，全月份从1月起）；bump 确保旧 IDB 缓存重拉 // v125: 拆掉 P0-4 安全库存上限配置卡，用户反馈"用处不大"
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -3314,6 +3314,26 @@ function renderOrderInsight() {
 
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
   function specOf(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : 1; }
+  // ISO 周键（周一为一周起点），返回 'YYYY-Www' 可字典序排序
+  function isoWeekKey(dateStr) {
+    const p = String(dateStr).split('-');
+    const d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    const dayNum = (d.getUTCDay() + 6) % 7; // 周一=0
+    d.setUTCDate(d.getUTCDate() - dayNum + 3); // 移到本周四以确定所属 ISO 周
+    const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+    const wk = 1 + Math.round(((d - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+    return d.getUTCFullYear() + '-W' + String(wk).padStart(2, '0');
+  }
+  // 简单移动平均（不足窗口返回 null）
+  function smaArr(arr, n) {
+    const out = [];
+    for (let i = 0; i < arr.length; i++) {
+      if (i < n - 1) { out.push(null); continue; }
+      let s = 0; for (let j = i - n + 1; j <= i; j++) s += arr[j];
+      out.push(Math.round(s / n));
+    }
+    return out;
+  }
 
   // ====== 归一化行 ======
   const rows = [];
@@ -3637,6 +3657,74 @@ function renderOrderInsight() {
       '</div>'
     : '<div style="margin-top:8px;font-size:12px;color:var(--color-green)">✅ 无品牌出现「订单量 &gt; ' + invBaseLabel + '库存」的预警</div>';
 
+  // ====== 品牌×RDC 周度订单量 K线趋势（全月份，从1月起）======
+  if (typeof window._oiKlineBrand === 'undefined') window._oiKlineBrand = 'all';
+  if (typeof window._oiKlineRdc === 'undefined') window._oiKlineRdc = 'all';
+  const kBrands = [...new Set(rows.map(r => r.brand).filter(Boolean))].sort();
+  const kRdcs = [...new Set(rows.map(r => r.rdc).filter(Boolean))].sort();
+  const klineRows = rows.filter(r => {
+    if (window._oiHainan !== 'all') {
+      const ok = window._oiHainan === 'yes' ? r.isHainan : !r.isHainan;
+      if (!ok) return false;
+    }
+    if (window._oiKlineBrand !== 'all' && r.brand !== window._oiKlineBrand) return false;
+    if (window._oiKlineRdc !== 'all' && r.rdc !== window._oiKlineRdc) return false;
+    return true;
+  });
+  const wkMap = {};
+  klineRows.forEach(r => {
+    if (!r.dateStr) return;
+    const wk = isoWeekKey(r.dateStr);
+    if (!wkMap[wk]) wkMap[wk] = { qty: 0, minDate: r.dateStr };
+    else if (r.dateStr < wkMap[wk].minDate) wkMap[wk].minDate = r.dateStr;
+    const s = specOf(r.skuCode);
+    wkMap[wk].qty += window._oiByBox ? r.orderQty / s : r.orderQty;
+  });
+  const kWeeks = Object.keys(wkMap).sort();
+  const kLabels = kWeeks.map(w => {
+    const md = wkMap[w].minDate, p = md.split('-');
+    const d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    const dn = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - dn);
+    const wkNum = parseInt(w.split('-W')[1], 10);
+    return 'W' + wkNum + ' ' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + String(d.getUTCDate()).padStart(2, '0');
+  });
+  const kCloses = kWeeks.map(w => Math.round(wkMap[w].qty));
+  const kCandle = [];
+  for (let i = 0; i < kWeeks.length; i++) {
+    const close = kCloses[i];
+    const open = (i === 0) ? close : kCloses[i - 1];
+    kCandle.push([open, close, Math.min(open, close), Math.max(open, close)]);
+  }
+  if (kCandle.length) kCandle[0] = { value: kCandle[0], itemStyle: { color: '#94A3B8', color0: '#94A3B8', borderColor: '#94A3B8', borderColor0: '#94A3B8' } };
+  const kMa5 = smaArr(kCloses, 5), kMa10 = smaArr(kCloses, 10), kMa15 = smaArr(kCloses, 15);
+  let kGold = null, kDeath = null;
+  for (let i = 1; i < kWeeks.length; i++) {
+    if (kMa5[i] != null && kMa15[i] != null && kMa5[i - 1] != null && kMa15[i - 1] != null) {
+      if (kMa5[i] > kMa15[i] && kMa5[i - 1] <= kMa15[i - 1]) kGold = i;
+      if (kMa5[i] < kMa15[i] && kMa5[i - 1] >= kMa15[i - 1]) kDeath = i;
+    }
+  }
+  let kConsecDown = 0;
+  for (let i = kWeeks.length - 1; i >= 1; i--) { if (kCloses[i] < kCloses[i - 1]) kConsecDown++; else break; }
+  let kSigText, kSigColor;
+  if (kConsecDown >= 3) { kSigText = '⚠️ 连续 ' + kConsecDown + ' 周阴线（周环比下滑），关注补货节奏与需求走弱'; kSigColor = '#D97706'; }
+  else if (kDeath != null && (kGold == null || kDeath > kGold)) { kSigText = '📉 淡季预警：第 ' + kLabels[kDeath] + ' 出现死叉（5周均线下穿15周均线）'; kSigColor = '#DC2626'; }
+  else if (kGold != null) { kSigText = '📈 旺季信号：第 ' + kLabels[kGold] + ' 出现金叉（5周均线上穿15周均线）'; kSigColor = '#16A34A'; }
+  else { kSigText = '➖ 趋势平稳，未出现明显金叉/死叉信号'; kSigColor = '#64748B'; }
+  const kBrandOpts = '<option value="all">全部品牌</option>' + kBrands.map(b => '<option value="' + b + '"' + (window._oiKlineBrand === b ? ' selected' : '') + '>' + b + '</option>').join('');
+  const kRdcOpts = '<option value="all">全部RDC</option>' + kRdcs.map(r => '<option value="' + r + '"' + (window._oiKlineRdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
+  const klineCardHtml = '<div class="card" style="margin-bottom:16px">' +
+    '<div class="card-header"><span class="card-title">📈 品牌×RDC 周度订单量 K线趋势（' + (window._oiByBox ? '箱' : '支') + '）</span>' +
+    '<div style="margin-left:auto;display:flex;gap:8px;align-items:center">' +
+      '<label style="font-size:11px;color:var(--text-secondary)">品牌：</label><select onchange="window._oiKlineBrand=this.value;renderOrderInsight()" style="font-size:11px;padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' + kBrandOpts + '</select>' +
+      '<label style="font-size:11px;color:var(--text-secondary)">RDC：</label><select onchange="window._oiKlineRdc=this.value;renderOrderInsight()" style="font-size:11px;padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF">' + kRdcOpts + '</select>' +
+    '</div></div>' +
+    (kWeeks.length === 0 ? '<div style="padding:24px 8px;font-size:12px;color:var(--text-secondary)">当前筛选条件下无订单数据</div>'
+      : '<div style="font-size:11px;padding:4px 12px;color:' + kSigColor + ';font-weight:600">' + kSigText + '</div>' +
+        '<div class="chart-container" style="height:340px" id="oi-chart-kline"></div>' +
+        '<div style="font-size:11px;color:var(--text-secondary);padding:4px 12px 8px;line-height:1.5">K线：本周开盘=上周收盘（链式）｜红=周环比上升(阳线) 绿=下降(阴线)｜叠加 5/10/15 周均线。首周仅作起点展示。数据源=订单明细全月份（不受上方"统计月份"筛选，从1月起）；单位随上方"按箱统计"切换。</div>') +
+    '</div>';
+
   page.innerHTML = '<div class="filter-bar" style="flex-wrap:wrap;gap:12px">' + monthSelect + hainanSelect + byBoxCheckbox + '</div>' +
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">🔎 订单数据洞察</span></div>' +
@@ -3700,7 +3788,7 @@ function renderOrderInsight() {
         ? '<div class="chart-container" style="height:280px" id="oi-chart-trans-ship"></div>'
         : '<div style="padding:24px 8px;font-size:12px;color:var(--text-secondary)">当前筛选月份暂无转储数据，无法对比。</div>') +
     '</div>' +
-
+    klineCardHtml +
     // ====== SKU 差异明细表（可筛选 / 导出）======
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">📋 转储 vs 出货 SKU 差异明细（' + transShipMonthLabel + '）— 单位：' + u + '</span>' +
@@ -3859,6 +3947,41 @@ function renderOrderInsight() {
         { name: '转储入库', type: 'bar', barWidth: 16, data: transShipRdcs.map(r => transByRdc[r] || 0), color: '#3B82F6' },
         { name: '实际出货', type: 'bar', barWidth: 16, data: transShipRdcs.map(r => shipByRdc[r] || 0), color: '#10B981' },
         { name: '差异（库存增减）', type: 'line', yAxisIndex: 1, symbol: 'circle', symbolSize: 7, lineStyle: { width: 2 }, data: transShipRdcs.map(r => diffByRdc[r] || 0), color: '#F59E0B' }
+      ]
+    });
+  }
+
+  // 品牌×RDC 周度 K线图
+  if (kWeeks.length) {
+    const ck = initChart('oi-chart-kline');
+    ck.setOption({
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
+        formatter: function(params) {
+          let h = '<strong>' + params[0].axisValue + '</strong>';
+          params.forEach(p => {
+            if (p.seriesName === 'K线') {
+              const v = (p.value && p.value.value) ? p.value.value : p.value;
+              if (Array.isArray(v)) {
+                const up = v[1] >= v[0];
+                h += '<br/>' + p.marker + 'K线：开 ' + fmtN(Math.round(v[0])) + ' 收 ' + fmtN(Math.round(v[1])) + ' 低 ' + fmtN(Math.round(v[2])) + ' 高 ' + fmtN(Math.round(v[3])) + '（' + (up ? '阳' : '阴') + '）';
+              }
+            } else if (p.value != null) {
+              h += '<br/>' + p.marker + p.seriesName + '：' + fmtN(p.value) + ' ' + u;
+            }
+          });
+          return h;
+        }
+      },
+      legend: { data: ['K线', 'MA5', 'MA10', 'MA15'], top: 0, left: 'center', textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
+      grid: { left: 65, right: 20, top: 35, bottom: 55 },
+      xAxis: { type: 'category', data: kLabels, axisLabel: { fontSize: 9, rotate: 45, interval: Math.floor(kWeeks.length / 12) } },
+      yAxis: { type: 'value', name: u, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+      dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 20 }],
+      series: [
+        { name: 'K线', type: 'candlestick', data: kCandle, itemStyle: { color: '#ef232a', color0: '#14b143', borderColor: '#ef232a', borderColor0: '#14b143' } },
+        { name: 'MA5', type: 'line', data: kMa5, smooth: false, symbol: 'none', lineStyle: { width: 1.5 }, color: '#F59E0B', connectNulls: false },
+        { name: 'MA10', type: 'line', data: kMa10, smooth: false, symbol: 'none', lineStyle: { width: 1.5 }, color: '#3B82F6', connectNulls: false },
+        { name: 'MA15', type: 'line', data: kMa15, smooth: false, symbol: 'none', lineStyle: { width: 1.5 }, color: '#8B5CF6', connectNulls: false }
       ]
     });
   }
