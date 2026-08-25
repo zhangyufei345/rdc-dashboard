@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 128; // v128: 品牌×RDC 周度 K线图加 hover tooltip 明细——红 K 线展示相比上周上升 TOP5 SKU + 本周/上周量 + Δ；绿 K 线展示下降 TOP5 SKU（首周无可比基期）
+const DB_VERSION = 129; // v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -12901,7 +12901,7 @@ function renderPlanMonitor() {
   // 兜底品牌（RDC 列、累计按日）
   cov7.forEach(function(d){
     if (hainan === 'yes' && !isH(d.sku)) return;
-    if (hainan === 'no' && !isH(d.sku)) return;
+    if (hainan === 'no' && isH(d.sku)) return; // v129: 修复兜底循环条件写反（之前是 !isH，导致「不含花露水」时所有非花露水 SKU 被 return → brandRdcPlan 累加为空 → 品牌×RDC 矩阵所有非花露水品牌全显示 100%）
     const plan = d[targetField] || 0;
     const br = d.brand || '';
     if (br && plan > 0) {
@@ -13109,7 +13109,7 @@ function renderPlanMonitor() {
           rate = planV > 0 ? orderV / planV : (orderV > 0 ? 1 : 0);
         let display, bgC, fgC, title;
         if (isEmpty) { display = '—'; bgC = '#F1F5F9'; fgC = '#94A3B8'; title = escape(b)+'·'+escape(rdc)+'\n无订单无计划'; }
-        else if (onlyOrder) { display = '100%'; bgC = '#DCFCE7'; fgC = '#15803D'; title = escape(b)+'·'+escape(rdc)+'\n仅有订单 '+Math.round(orderV)+' 支（无计划数据）'; }
+        else if (onlyOrder) { display = '无计划'; bgC = '#F1F5F9'; fgC = '#DC2626'; title = escape(b)+'·'+escape(rdc)+'\n该品牌×RDC 有 '+Math.round(orderV)+' 支订单但分仓计划为 0（数据异常：库存覆盖数据缺该品牌×RDC 计划）'; } // v129: 改文案避免「无计划」误显示成 100% 绿色
         else { display = pct(rate); bgC = bgg(rate); fgC = fgg(rate); title = escape(b)+'·'+escape(rdc)+'\n订单量: '+Math.round(orderV)+' 支\n计划量: '+Math.round(planV)+' 支\n完成率: '+(rate*100).toFixed(1)+'%\n点击下钻SKU明细'; }
         m += '<td style="background:'+bgC+';color:'+fgC+';font-weight:700;cursor:pointer;text-align:center" title="'+title+'" onclick="jumpToPlanMonitorSkuDetail(\''+esc(b)+'\',\''+esc(rdc)+'\')">'+display+'</td>';
       });
