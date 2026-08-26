@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 129; // v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 130; // v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -1818,9 +1818,16 @@ function renderOverview() {
     return { rdc: r, rate: (a && a.orderQty > 0) ? a.firstQty / a.orderQty : null };
   });
 
-  // SKU 缺货聚合
+  // Top 20 品牌/RDC 筛选（v130 新增下拉框）
+  const _ovBrand = window._overviewBrand || 'all';
+  const _ovRdc = window._overviewRdc || 'all';
+  const _ovRdcKey = _ovRdc !== 'all' ? getRDCShortageKey(_ovRdc) : null;
+
+  // SKU 缺货聚合（先按品牌/RDC 筛选源数据，再按物料号聚合）
   const _skuAggMap = {};
   sData.forEach(d => {
+    if (_ovBrand !== 'all' && d.brand !== _ovBrand) return;
+    if (_ovRdcKey && !(d[_ovRdcKey] > 0)) return;
     if (!_skuAggMap[d.materialCode]) {
       _skuAggMap[d.materialCode] = { materialCode: d.materialCode, materialName: d.materialName, brand: d.brand, abcClass: d.abcClass, rdcShortBoxes: 0, rdcShortAmount: 0, rdcTransitTotal: 0, rdcCount: 0, dcSupply: d.dcSupply };
     }
@@ -1894,6 +1901,7 @@ function renderOverview() {
       if (!recs.length) return;
       const r = recs[0];
       rdcKeys.forEach(k => {
+        if (_ovRdc !== 'all' && k.rdc !== _ovRdc) return;
         const boxes = r[k.short] || 0;
         const transit = r[k.transit] || 0;
         if (boxes <= 0 && transit <= 0) return; // 只展示有缺货或在途的 RDC
@@ -1921,6 +1929,15 @@ function renderOverview() {
              '<td><span class="pill ' + supplyPillCls + '">' + supplyLabel + '</span></td></tr>';
     }).join('');
   }
+
+  // Top 20 品牌/RDC 下拉筛选框（v130）
+  const _esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const _ovBrandSet = [...new Set(sData.map(d => d.brand).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b),'zh'));
+  const _brandOpts = '<option value="all"' + (_ovBrand==='all'?' selected':'') + '>全部品牌</option>' + _ovBrandSet.map(b => '<option value="' + _esc(b) + '"' + (_ovBrand===b?' selected':'') + '>' + _esc(b) + '</option>').join('');
+  const _rdcOpts = '<option value="all"' + (_ovRdc==='all'?' selected':'') + '>全部RDC</option>' + RDC_LIST.map(r => '<option value="' + r + '"' + (_ovRdc===r?' selected':'') + '>' + r + '</option>').join('');
+  const _filterSelStyle = 'padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px;background:var(--bg-card);color:var(--text-primary)';
+  const _brandSelHtml = '<select onchange="window._overviewBrand=this.value;renderOverview()" style="' + _filterSelStyle + '" title="按品牌筛选">' + _brandOpts + '</select>';
+  const _rdcSelHtml = '<select onchange="window._overviewRdc=this.value;renderOverview()" style="' + _filterSelStyle + '" title="按RDC筛选">' + _rdcOpts + '</select>';
 
   const _sortBtnsHtml = ['boxes','amount','rdcCount','dcSupply'].map(k => '<button class="btn-export" style="font-size:11px;padding:3px 8px;' + (_sortKey===k?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':'background:rgba(99,179,237,0.15);color:#93c5fd;border:1px solid rgba(99,179,237,0.3);') + '" onclick="window._overviewShortSort=\'' + k + '\';renderOverview()">' + _sortLabels[k] + '</button>').join('');
   const _showAllHtml = '<button class="btn-export" style="font-size:11px;padding:3px 10px;margin-left:8px;background:rgba(249,115,22,0.2);color:#fdba74;border:1px solid rgba(249,115,22,0.4)" onclick="window._showRdcShortageDetail=!window._showRdcShortageDetail;renderOverview()">' + (window._showRdcShortageDetail?'返回 Top 20':'显示全部缺货信息（RDC明细）') + '</button>';
@@ -2111,7 +2128,7 @@ function renderOverview() {
       <div class="card-header" style="display:flex;align-items:center;gap:8px">
         <span class="card-title">📋 Top 20 缺货物料（订单核心）</span>
         <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
-          ${_sortBtnsHtml}${_showAllHtml}
+          ${_brandSelHtml}${_rdcSelHtml}${_sortBtnsHtml}${_showAllHtml}
         </div>
       </div>
       <table>
