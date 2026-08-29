@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 132; // v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 133; // v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4485,6 +4485,55 @@ function renderShortageMonthly() {
     .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
     .sort((a, b) => b.hiPct - a.hiPct);
 
+  // 象限分流（v133：四象限下钻所需——把 valid 一次性分流到 4 个数组，散点和象限文字复用同一份数据）
+  const q = { q1: [], q2: [], q3: [], q4: [] };
+  valid.forEach(p => {
+    const hiRate = p.mr >= MS_PROFILE.MR;
+    const hiFreq = p.sf >= MS_PROFILE.SF;
+    if (hiRate && hiFreq) q.q1.push(p);
+    else if (!hiRate && hiFreq) q.q2.push(p);
+    else if (hiRate && !hiFreq) q.q3.push(p);
+    else q.q4.push(p);
+  });
+  Object.values(q).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
+
+  // v133：下钻数据池（按象限 / 按 RDC / 按 SKU 三个维度预聚合，避免 inline JSON 撑大 HTML）
+  window._msDrillData = {
+    q1: q.q1, q2: q.q2, q3: q.q3, q4: q.q4,
+    byRdc: {},
+    sku: {}  // 按 sku 索引，存该 SKU 当月在所有 RDC 的画像
+  };
+  rdcList.forEach(r => { window._msDrillData.byRdc[r.rdc] = []; });
+  valid.forEach(p => { if (window._msDrillData.byRdc[p.rdc]) window._msDrillData.byRdc[p.rdc].push(p); });
+  Object.values(window._msDrillData.byRdc).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
+  valid.forEach(p => {
+    if (!window._msDrillData.sku[p.sku]) window._msDrillData.sku[p.sku] = { name: p.name, brand: p.brand, list: [] };
+    window._msDrillData.sku[p.sku].list.push(p);
+  });
+  Object.values(window._msDrillData.sku).forEach(g => g.list.sort((a, b) => b.shortQty - a.shortQty));
+
+  // 散点数据（双高红 / 非命中灰）
+  const hiPts = q.q1.map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
+    q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
+  const loPts = [...q.q2, ...q.q3, ...q.q4].map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
+    q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
+
+  // 象限文字浮层（点击下钻该象限所有组合）
+  function quadLabel(qid, title, count, color, bg, pos) {
+    return '<div onclick="window._msDrill=\'' + qid + '\';window._msDrillPage=1;renderShortage()" ' +
+      'style="position:absolute;cursor:pointer;z-index:2;user-select:none;padding:4px 10px;border-radius:8px;background:' + bg + ';border:1px solid ' + color + ';' + pos + '" ' +
+      'title="点击查看该象限的 ' + count + ' 个 SKU×RDC 组合明细">' +
+      '<div style="font-size:11px;font-weight:500;color:' + color + '">' + title + '</div>' +
+      '<div style="font-size:22px;font-weight:500;color:' + color + ';line-height:1.2">' + count + '</div>' +
+      '<div style="font-size:10px;color:' + color + ';opacity:0.8">点击下钻</div>' +
+      '</div>';
+  }
+  const quadLabels =
+    quadLabel('q1', '双高 · 重点跟进', q.q1.length, '#A32D2D', 'rgba(252,235,235,0.95)', 'right:6%;top:4%;text-align:right') +
+    quadLabel('q2', '高频低率', q.q2.length, '#854F0B', 'rgba(250,238,218,0.95)', 'left:18%;top:4%;text-align:left') +
+    quadLabel('q3', '低频高率', q.q3.length, '#185FA5', 'rgba(230,241,251,0.95)', 'right:6%;bottom:18%;text-align:right') +
+    quadLabel('q4', '双低 · 偶发', q.q4.length, '#5F5E5A', 'rgba(241,239,232,0.95)', 'left:18%;bottom:18%;text-align:left');
+
   window._msSort = window._msSort || 'qty';
   let sorted = hi.slice();
   if (window._msSort === 'qty') sorted.sort((a, b) => b.shortQty - a.shortQty);
@@ -4503,6 +4552,20 @@ function renderShortageMonthly() {
     (window._msSort === id ? 'background:var(--color-blue);color:#fff;' : '') +
     '" onclick="window._msSort=\'' + id + '\';window._msPage=1;renderShortage()">' + label + '</button>';
 
+  // v133：RDC 对照表行 onclick（带下钻）+ 各列加 hover 高亮
+  const rdcRows = rdcList.map(r => {
+    const rdcEsc = String(r.rdc).replace(/'/g, "\\'");
+    return '<tr onclick="window._msDrill=\'rdc:' + rdcEsc + '\';window._msDrillPage=1;renderShortage()" ' +
+      'style="cursor:pointer" title="点击查看 ' + r.rdc + ' 的全部有效组合明细">' +
+      '<td style="text-align:left;font-weight:500">' + r.rdc + '</td>' +
+      '<td style="text-align:right">' + r.valid + '</td>' +
+      '<td style="text-align:right;color:var(--text-secondary)">' + (r.noise > 0 ? r.noise : '<span style="color:#CBD5E1">—</span>') + '</td>' +
+      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + r.hi + '</td>' +
+      '<td style="text-align:right;font-weight:600">' + (r.hiPct * 100).toFixed(1) + '%</td>' +
+      '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
+      '</tr>';
+  }).join('');
+
   page.innerHTML = `
     <div class="filter-bar" style="flex-wrap:wrap">
       <span style="font-size:12px;color:var(--text-secondary)">${month || '全部月份'} · 已剔除双休日${wd ? '（有效工作日 ' + wd + ' 天）' : ''} · 基于订单明细按 SKU×RDC 聚合</span>
@@ -4519,8 +4582,10 @@ function renderShortageMonthly() {
     <div class="row-2" style="margin-bottom:12px">
       <div class="card">
         <div class="card-header"><span class="card-title">缺货四象限 · 率 × 频次</span>
-          <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">气泡=缺货量 · 仅含有单≥${MS_PROFILE.MIN_DAYS}天的 ${valid.length} 个组合</span></div>
-        <div class="chart-container" id="chart-ms-quadrant"></div>
+          <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">气泡=缺货量 · 仅含有单≥${MS_PROFILE.MIN_DAYS}天的 ${valid.length} 个组合 · 散点/象限文字可点击下钻</span></div>
+        <div class="chart-container" id="chart-ms-quadrant" style="position:relative;height:320px">
+          ${quadLabels}
+        </div>
       </div>
       <div class="card">
         <div class="card-header"><span class="card-title">各 RDC 同口径对照</span></div>
@@ -4533,14 +4598,7 @@ function renderShortageMonthly() {
               <th style="text-align:right">双高占比</th><th style="text-align:right">首日满足率</th>
             </tr></thead>
             <tbody>
-              ${rdcList.length > 0 ? rdcList.map(r => '<tr>' +
-                '<td style="text-align:left">' + r.rdc + '</td>' +
-                '<td style="text-align:right">' + r.valid + '</td>' +
-                '<td style="text-align:right;color:var(--text-secondary)">' + (r.noise > 0 ? r.noise : '<span style="color:#CBD5E1">—</span>') + '</td>' +
-                '<td style="text-align:right;color:var(--color-red);font-weight:600">' + r.hi + '</td>' +
-                '<td style="text-align:right;font-weight:600">' + (r.hiPct * 100).toFixed(1) + '%</td>' +
-                '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
-                '</tr>').join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无数据</td></tr>'}
+              ${rdcList.length > 0 ? rdcRows : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无数据</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -4550,6 +4608,8 @@ function renderShortageMonthly() {
         </div>
       </div>
     </div>
+
+    ${renderDrillPanel()}
 
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -4602,8 +4662,6 @@ function renderShortageMonthly() {
   `;
 
   const chart = initChart('chart-ms-quadrant');
-  const hiPts = valid.filter(p => p.isPersistent).map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc, q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
-  const loPts = valid.filter(p => !p.isPersistent).map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc, q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
   chart.setOption({
     tooltip: {
       trigger: 'item', confine: true, textStyle: { fontSize: 11 },
@@ -4613,7 +4671,8 @@ function renderShortageMonthly() {
           '<hr style="border:none;border-top:1px solid #eee;margin:4px 0">' +
           '首日缺货量：' + o.q.toLocaleString() + ' 支<br>' +
           '首日缺货率：' + (o.mr * 100).toFixed(1) + '%<br>' +
-          '缺货频率：' + (o.sf * 100).toFixed(0) + '%（' + o.sd + '/' + o.od + ' 天）';
+          '缺货频率：' + (o.sf * 100).toFixed(0) + '%（' + o.sd + '/' + o.od + ' 天）<br>' +
+          '<span style="color:#3B82F6">点击散点可下钻该 SKU 跨 RDC 明细</span>';
       }
     },
     grid: { left: 55, right: 25, top: 30, bottom: 45 },
@@ -4646,6 +4705,90 @@ function renderShortageMonthly() {
       }
     ]
   }, true);
+  // v133：散点 click → 下钻该 SKU 跨 RDC 画像（initChart 每次 dispose，所以这里 on() 跟着新实例）
+  chart.on('click', function(params) {
+    if (params.componentType !== 'series' || !params.data || !params.data.sku) return;
+    window._msDrill = 'sku:' + params.data.sku;
+    window._msDrillPage = 1;
+    renderShortage();
+  });
+}
+
+// v133：下钻面板（按象限 / RDC / SKU 三种 drill key 渲染统一表格）
+function renderDrillPanel() {
+  if (!window._msDrill) return '';
+  const data = window._msDrillData || {};
+  let items, title, sub;
+  const dr = window._msDrill;
+  if (dr === 'q1') { items = data.q1; title = 'Q1 · 双高命中 · 重点跟进'; sub = '率与频次双命中 — 重点跟进'; }
+  else if (dr === 'q2') { items = data.q2; title = 'Q2 · 高频低率'; sub = '频次高但单次缺货率低 — 每单都缺一点'; }
+  else if (dr === 'q3') { items = data.q3; title = 'Q3 · 低频高率'; sub = '样本少但单次率高 — 一次性大单嫌疑'; }
+  else if (dr === 'q4') { items = data.q4; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; }
+  else if (typeof dr === 'string' && dr.indexOf('rdc:') === 0) {
+    const rdc = dr.slice(4);
+    items = data.byRdc[rdc] || [];
+    title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合';
+  }
+  else if (typeof dr === 'string' && dr.indexOf('sku:') === 0) {
+    const sku = dr.slice(4);
+    const g = data.sku[sku];
+    if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; }
+    else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前月表现（共 ' + items.length + ' 个 RDC）'; }
+  }
+  else return '';
+  if (!items.length) {
+    return '<div class="card" style="margin-bottom:12px;border:2px solid #3B82F6"><div class="card-header" style="display:flex;align-items:center;gap:8px">' +
+      '<span class="card-title">📍 ' + title + '（0 个）</span>' +
+      '<button class="btn-export" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="window._msDrill=null;window._msDrillPage=1;renderShortage()">关闭下钻</button></div>' +
+      '<div style="padding:24px;text-align:center;color:var(--text-secondary)">当前条件下无数据</div></div>';
+  }
+  const perPage = 30;
+  if (!window._msDrillPage) window._msDrillPage = 1;
+  const tp = Math.ceil(items.length / perPage) || 1;
+  const p = Math.min(Math.max(1, window._msDrillPage), tp);
+  const start = (p - 1) * perPage;
+  const page = items.slice(start, start + perPage);
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const tagHtml = p => {
+    if (p.isPersistent) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap;font-weight:600">持续</span>';
+    if (p.mr >= MS_PROFILE.MR && p.sf >= MS_PROFILE.SF) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#FEF3C7;color:#92400E;white-space:nowrap">高率+高频</span>';
+    if (p.mr >= MS_PROFILE.MR) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#FEF3C7;color:#92400E;white-space:nowrap">高率</span>';
+    if (p.sf >= MS_PROFILE.SF) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#DBEAFE;color:#2563EB;white-space:nowrap">高频</span>';
+    return '<span style="color:#CBD5E1;font-size:10px">—</span>';
+  };
+  return '<div class="card" style="margin-bottom:12px;border:2px solid #3B82F6">' +
+    '<div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    '<span class="card-title">📍 ' + esc(title) + '（' + items.length + ' 个）</span>' +
+    '<span style="font-size:11px;color:var(--text-secondary)">' + esc(sub) + '</span>' +
+    '<button class="btn-export" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="window._msDrill=null;window._msDrillPage=1;renderShortage()">关闭下钻</button>' +
+    '</div>' +
+    '<div class="table-wrap" style="max-height:520px;overflow-y:auto">' +
+    '<table class="data-table" style="font-size:11px">' +
+    '<thead><tr>' +
+    '<th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th>' +
+    '<th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>' +
+    '<th style="text-align:right">首日缺货率</th><th style="text-align:right">缺货天数/有单天数</th><th style="text-align:right">缺货频率</th>' +
+    '<th style="text-align:center">标记</th>' +
+    '</tr></thead><tbody>' +
+    page.map(p => '<tr>' +
+      '<td style="text-align:left">' + esc(p.brand) + '</td>' +
+      '<td style="text-align:left;font-family:monospace">' + esc(p.sku) + '</td>' +
+      '<td style="text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(p.name) + '">' + esc(p.name) + '</td>' +
+      '<td style="text-align:left">' + esc(p.rdc) + '</td>' +
+      '<td style="text-align:right">' + p.orderQty.toLocaleString() + '</td>' +
+      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.shortQty.toLocaleString() + '</td>' +
+      '<td style="text-align:right">' + (p.mr * 100).toFixed(1) + '%</td>' +
+      '<td style="text-align:right">' + p.shortDayCnt + '/' + p.orderDayCnt + '</td>' +
+      '<td style="text-align:right">' + (p.sf * 100).toFixed(0) + '%</td>' +
+      '<td style="text-align:center">' + tagHtml(p) + '</td>' +
+      '</tr>').join('') +
+    '</tbody></table></div>' +
+    '<div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center">' +
+    '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p - 1) + ';renderShortage()" ' + (p <= 1 ? 'disabled' : '') + '>上一页</button>' +
+    '<span style="font-size:12px;color:var(--text-secondary)">第 ' + p + '/' + tp + ' 页</span>' +
+    '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p + 1) + ';renderShortage()" ' + (p >= tp ? 'disabled' : '') + '>下一页</button>' +
+    '<span style="font-size:11px;color:var(--text-secondary)">共 ' + items.length + ' 个</span>' +
+    '</div></div>';
 }
 
 function exportShortageCSV() {
