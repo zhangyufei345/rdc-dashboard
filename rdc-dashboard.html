@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 135; // v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 136; // v136: 双高产品接入补货建议决策——①每日补货建议：双高 SKU 强制升级到「紧急」标签，评分不动（Top20 排序不受影响）；②中期分仓需求调整：双高 SKU 加「★月度持续」标签，置顶排序（persistence desc → monthShort desc），SKU 编码后加红「持续」徽章；③安全库存调整：双高 SKU 理论 SS 系数自动 ×1.3 上调，ssBase 记录原值渲染时显示「(×1.3·原N)」，SKU 编码后加红「持续」徽章 + suggestion 文案追加「· ★月度持续」。三处共用顶部 msProf/msPersistent 辅助函数（v131 的月度画像从 displayList 局部上提为 renderReplenishment 共享）。v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -7716,6 +7716,10 @@ function renderReplenishment() {
   window._replRdc = rdcFilter;
 
   // ==== DAILY SUGGESTIONS ====
+  // v136: 月度缺货画像提到顶部供「每日建议紧急度升级/中期分仓置顶/安全库存SS系数」三处共享
+  var msProf = getMonthlyShortageProfile();
+  var msMonth = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
+  function msPersistent(sku, rdc) { var ms = msProf.byKey[msMonth + '|' + sku + '|' + rdc]; return !!(ms && ms.isPersistent); }
   // Step 1: Candidate SKU x RDC combos from latest shortage
   var rdcKeyMap = { '华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort' };
   var rdcKeys = Object.keys(rdcKeyMap);
@@ -7948,6 +7952,7 @@ function renderReplenishment() {
       return d.materialCode === sku && d[rdcNames[rdcKeys.indexOf(rdc)]] > 0;
     }).reduce(function(s, d) { return s + (d[rdcNames[rdcKeys.indexOf(rdc)]] || 0); }, 0);
 
+    var persistentDA = msPersistent(sku, rdc);
     if (ratio > 0.4 && monthShort > 50) {
       distAdjustments.push({
         skuCode: sku,
@@ -7955,11 +7960,17 @@ function renderReplenishment() {
         rdc: rdc,
         ratio: (ratio * 100).toFixed(0),
         monthShort: Math.round(monthShort),
-        suggestion: '上调分仓分配比例'
+        persistent: persistentDA,
+        suggestion: persistentDA ? '上调分仓分配比例 · ★月度持续' : '上调分仓分配比例'
       });
     }
   });
-  distAdjustments.sort(function(a, b) { return b.monthShort - a.monthShort; });
+  // v136: 双高 SKU 置顶（★月度持续），同优先级内仍按月缺货量 desc
+  distAdjustments.sort(function(a, b) {
+    var aP = a.persistent ? 1 : 0, bP = b.persistent ? 1 : 0;
+    if (aP !== bP) return bP - aP;
+    return b.monthShort - a.monthShort;
+  });
   distAdjustments = distAdjustments.slice(0, 10);
 
   // 3.2 Safety stock analysis
@@ -7980,7 +7991,9 @@ function renderReplenishment() {
     var variance = vals.reduce(function(s, v) { return s + (v - mean) * (v - mean); }, 0) / vals.length;
     var stdDev = Math.sqrt(variance);
     var cv = stdDev / (dailyMean || 1);
-    var ss = Math.round(1.65 * stdDev * 2); // sqrt(4) = 2
+    var persistentSS = msPersistent(sku, rdc);
+    var ssBase = Math.round(1.65 * stdDev * 2); // 原始理论 SS
+    var ss = Math.round(ssBase * (persistentSS ? 1.3 : 1.0)); // v136: 双高 SKU × 1.3
 
     // Find this SKU's current stock from shortage data
     var stockInfo = shortageData.filter(function(d) {
@@ -8002,8 +8015,10 @@ function renderReplenishment() {
           stdDev: Math.round(stdDev),
           cv: cv.toFixed(2),
           ss: ss,
+          ssBase: ssBase,
+          persistent: persistentSS,
           currentStock: currentStock,
-          suggestion: suggest
+          suggestion: suggest + (persistentSS ? ' · ★月度持续' : '')
         });
       }
     }
@@ -8167,11 +8182,16 @@ function renderReplenishment() {
   if (displayList.length === 0) {
     dailyHtml += '<tr><td colspan="16" style="text-align:center;padding:20px;color:var(--text-secondary)">当前RDC无重点关注SKU，或所有SKU补货量已充足</td></tr>';
   } else {
-    // v131: 月度缺货画像（只读参考列，不参与评分计算）
-    var msProf = getMonthlyShortageProfile();
-    var msMonth = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
-    displayList.forEach(function(d) {
-      var ms = msProf.byKey[msMonth + '|' + d.materialCode + '|' + normalizeRdcName(d.rdc)] || null;
+  // v131: 月度缺货画像（v136 已提到函数顶部共享）
+  displayList.forEach(function(d) {
+    var ms = msProf.byKey[msMonth + '|' + d.materialCode + '|' + d.rdc] || null;
+    // v136: 双高 SKU 强制升级到「紧急」（评分不动，仅显示升级）
+    if (ms && ms.isPersistent && d.urgency !== 'emergency') {
+      d.urgency = 'emergency';
+      d.urgencyLabel = '紧急';
+      d.urgencyColor = '#EF4444';
+      d.urgencyBg = '#FEE2E2';
+    }
       var msRateTd = ms
         ? '<td class="num" style="color:' + (ms.mr >= MS_PROFILE.MR ? '#EF4444' : '#64748B') + '">' + (ms.mr * 100).toFixed(1) + '%</td>'
         : '<td class="num" style="color:#CBD5E1">—</td>';
@@ -8216,7 +8236,7 @@ function renderReplenishment() {
   } else {
     midHtml += '<table class="data-table" style="text-align:left"><thead><tr><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th><th style="text-align:left">需求占比</th><th style="text-align:left">月缺货量(箱)</th><th style="text-align:left">建议</th></tr></thead><tbody>';
     distAdjustments.forEach(function(d) {
-      midHtml += '<tr style="text-align:left"><td style="text-align:left">' + d.skuCode + '</td><td style="text-align:left">' + (d.skuName||'-') + '</td><td style="text-align:left">' + d.rdc + '</td><td style="text-align:left">' + d.ratio + '%</td><td style="text-align:left;color:#EF4444">' + d.monthShort + '</td><td style="text-align:left;color:#7C3AED;font-weight:500">' + d.suggestion + '</td></tr>';
+      midHtml += '<tr style="text-align:left"><td style="text-align:left">' + d.skuCode + (d.persistent ? ' <span style="padding:1px 5px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap">持续</span>' : '') + '</td><td style="text-align:left">' + (d.skuName||'-') + '</td><td style="text-align:left">' + d.rdc + '</td><td style="text-align:left">' + d.ratio + '%</td><td style="text-align:left;color:#EF4444">' + d.monthShort + '</td><td style="text-align:left;color:#7C3AED;font-weight:500">' + d.suggestion + '</td></tr>';
     });
     midHtml += '</tbody></table>';
   }
@@ -8232,7 +8252,7 @@ function renderReplenishment() {
     ssAdjustments.forEach(function(d) {
       var sugColor = d.suggestion.indexOf('上调') >= 0 ? '#DC2626' : d.suggestion.indexOf('下调') >= 0 ? '#065F46' : '#2563EB';
       var sugBg = d.suggestion.indexOf('上调') >= 0 ? '#FEE2E2' : d.suggestion.indexOf('下调') >= 0 ? '#D1FAE5' : '#DBEAFE';
-      midHtml += '<tr style="text-align:left"><td style="text-align:left">' + d.skuCode + '</td><td style="text-align:left">' + (d.skuName||'-') + '</td><td style="text-align:left">' + d.rdc + '</td><td style="text-align:left">' + d.dailyMean + '</td><td style="text-align:left">' + d.stdDev + '</td><td style="text-align:left">' + d.cv + '</td><td style="text-align:left;font-weight:500">' + d.ss + '</td><td style="text-align:left">' + d.currentStock + '</td><td style="text-align:left"><span style="padding:2px 6px;border-radius:4px;font-size:10px;color:' + sugColor + ';background:' + sugBg + '">' + d.suggestion + '</span></td></tr>';
+      midHtml += '<tr style="text-align:left"><td style="text-align:left">' + d.skuCode + (d.persistent ? ' <span style="padding:1px 5px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap">持续</span>' : '') + '</td><td style="text-align:left">' + (d.skuName||'-') + '</td><td style="text-align:left">' + d.rdc + '</td><td style="text-align:left">' + d.dailyMean + '</td><td style="text-align:left">' + d.stdDev + '</td><td style="text-align:left">' + d.cv + '</td><td style="text-align:left;font-weight:500">' + d.ss + (d.persistent ? ' <span style="font-size:10px;color:#DC2626">(×1.3·原' + d.ssBase + ')</span>' : '') + '</td><td style="text-align:left">' + d.currentStock + '</td><td style="text-align:left"><span style="padding:2px 6px;border-radius:4px;font-size:10px;color:' + sugColor + ';background:' + sugBg + '">' + d.suggestion + '</span></td></tr>';
     });
     midHtml += '</tbody></table>';
   }
