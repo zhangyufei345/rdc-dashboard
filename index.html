@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 141; // v141: 修复象限浮层仍不显示的真根因——**echarts.init() 会清空容器内容**，page.innerHTML 里渲染的浮层被 init 删除，导致 v140 的 prepend 拿到 0 个元素、循环没执行（v133~v140 一直误判为 z-index 问题）。修复：在 initChart 之后用 quadLabelsHtml 重新创建浮层并 prepend（DOM 顺序在 zrender 容器之前 + z-index:9999）。教训：涉及 ECharts 容器的子元素，必须在 init 之后插入，不能靠 page.innerHTML 预置；mock 测试无真 ECharts，测不出这个行为，必须用 agent-browser 实测。v140: 修复象限浮层在浏览器中不显示——v133 加浮层时只设 z-index:2，但 ECharts zrender 容器 append 到 chart-container 末尾，DOM 顺序靠后 + 可能创建新 stacking context，浮层被遮挡。修复三件套：①z-index 2→9999；②chart-container 加 overflow:visible；③ECharts setOption 后用 JS 强制 prepend .quadLabel 到 chart-container 第一个子位置（DOM 顺序 + z-index 双重保证）。教训：mock 测试只能验证 DOM 内容含不含，不能验证 z-index/CSS 真实显示行为。v139: tab 标题恢复版本号显示（「vXX · 页面名」），便于一眼确认是否命中最新部署，无需开 F12。setTitle 内动态设置 + 首屏 IIFE 兜底。背景：CF Pages 的 Git 部署有 20~60s 延迟，且浏览器可能残留旧版 disk cache，用户习惯靠 tab 标题 vXX 判断版本。v138: 双高清单加「总仓供应 / 异常天数 / 补货瓶颈」3 列——v138 新增 buildMonthlyDCSupplyProfile 按 (月|SKU) 聚合 dcSupply（缺货报告口径）：dcShortDayCnt = 当月 dcSupply 含「整体缺货」或「供应紧张」的 distinct 日期数；dcSupplyLatest = 最新一日的 dcSupply 文本 + dcStockLatest。新增 judgeBottleneck(p, dcs) 判定：总仓异常天数 ≥ SKU×RDC 缺货天数 → 「总仓卡死·需总仓协调」（红）；部分依赖 → 「部分依赖总仓·并行处理」（黄）；总仓正常 → 「总仓正常·问题在 RDC 内部」（绿）。用 sku-level 维度对比 sku×RDC 维度——总仓供应与 RDC 解耦。v137: 修正「月缺货量(箱)」计算——原 v136 用 shortageData 跨日累加日缺货箱数，同一批未满足订单在多日重复显示会严重虚增（同一订单今天缺 100 箱、明天再缺 100 箱，旧算法得 200 箱，实际是同一批 100 箱）。v131 铁律要求「先按 SKU 聚合后除 boxSpec」，buildMonthlyShortageProfile 新增 boxSpec 字段并派生 shortBoxes = firstDayShort 累加 ÷ boxSpec；distAdjustments 改用 ms.shortBoxes。v136: 双高产品接入补货建议决策——①每日补货建议：双高 SKU 强制升级到「紧急」标签，评分不动（Top20 排序不受影响）；②中期分仓需求调整：双高 SKU 加「★月度持续」标签，置顶排序（persistence desc → monthShort desc），SKU 编码后加红「持续」徽章；③安全库存调整：双高 SKU 理论 SS 系数自动 ×1.3 上调，ssBase 记录原值渲染时显示「(×1.3·原N)」，SKU 编码后加红「持续」徽章 + suggestion 文案追加「· ★月度持续」。三处共用顶部 msProf/msPersistent 辅助函数（v131 的月度画像从 displayList 局部上提为 renderReplenishment 共享）。v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 142; // v142: 用户反馈：(1) 4 个象限浮层挡住右上密集红气泡——删除 quadLabel 整套（函数+变量+v141 prepend JS+${quadLabelsHtml}引用），象限数量信息改由 card-header 副标题一行文字"高率+高频 52 · 高频低率 19 · 低频高率 10 · 双低 ·偶发 202 · 双高命中 34 · 点击散点可下钻"承载，散点 click 下钻保留；(2) 四象限图和各 RDC 同口径对照表不要并列展示——`row-2` grid 1fr 1fr 改为 `flex-direction:column`，两个 card 上下堆叠（四象限图在上全宽，对照表在下），chart-container 高度 320→340 配合更宽布局；移除 overflow:visible（不再需要）。v141: 修复象限浮层仍不显示的真根因——**echarts.init() 会清空容器内容**，page.innerHTML 里渲染的浮层被 init 删除，导致 v140 的 prepend 拿到 0 个元素、循环没执行（v133~v140 一直误判为 z-index 问题）。修复：在 initChart 之后用 quadLabelsHtml 重新创建浮层并 prepend（DOM 顺序在 zrender 容器之前 + z-index:9999）。教训：涉及 ECharts 容器的子元素，必须在 init 之后插入，不能靠 page.innerHTML 预置；mock 测试无真 ECharts，测不出这个行为，必须用 agent-browser 实测。v140: 修复象限浮层在浏览器中不显示——v133 加浮层时只设 z-index:2，但 ECharts zrender 容器 append 到 chart-container 末尾，DOM 顺序靠后 + 可能创建新 stacking context，浮层被遮挡。修复三件套：①z-index 2→9999；②chart-container 加 overflow:visible；③ECharts setOption 后用 JS 强制 prepend .quadLabel 到 chart-container 第一个子位置（DOM 顺序 + z-index 双重保证）。教训：mock 测试只能验证 DOM 内容含不含，不能验证 z-index/CSS 真实显示行为。v139: tab 标题恢复版本号显示（「vXX · 页面名」），便于一眼确认是否命中最新部署，无需开 F12。setTitle 内动态设置 + 首屏 IIFE 兜底。背景：CF Pages 的 Git 部署有 20~60s 延迟，且浏览器可能残留旧版 disk cache，用户习惯靠 tab 标题 vXX 判断版本。v138: 双高清单加「总仓供应 / 异常天数 / 补货瓶颈」3 列——v138 新增 buildMonthlyDCSupplyProfile 按 (月|SKU) 聚合 dcSupply（缺货报告口径）：dcShortDayCnt = 当月 dcSupply 含「整体缺货」或「供应紧张」的 distinct 日期数；dcSupplyLatest = 最新一日的 dcSupply 文本 + dcStockLatest。新增 judgeBottleneck(p, dcs) 判定：总仓异常天数 ≥ SKU×RDC 缺货天数 → 「总仓卡死·需总仓协调」（红）；部分依赖 → 「部分依赖总仓·并行处理」（黄）；总仓正常 → 「总仓正常·问题在 RDC 内部」（绿）。用 sku-level 维度对比 sku×RDC 维度——总仓供应与 RDC 解耦。v137: 修正「月缺货量(箱)」计算——原 v136 用 shortageData 跨日累加日缺货箱数，同一批未满足订单在多日重复显示会严重虚增（同一订单今天缺 100 箱、明天再缺 100 箱，旧算法得 200 箱，实际是同一批 100 箱）。v131 铁律要求「先按 SKU 聚合后除 boxSpec」，buildMonthlyShortageProfile 新增 boxSpec 字段并派生 shortBoxes = firstDayShort 累加 ÷ boxSpec；distAdjustments 改用 ms.shortBoxes。v136: 双高产品接入补货建议决策——①每日补货建议：双高 SKU 强制升级到「紧急」标签，评分不动（Top20 排序不受影响）；②中期分仓需求调整：双高 SKU 加「★月度持续」标签，置顶排序（persistence desc → monthShort desc），SKU 编码后加红「持续」徽章；③安全库存调整：双高 SKU 理论 SS 系数自动 ×1.3 上调，ssBase 记录原值渲染时显示「(×1.3·原N)」，SKU 编码后加红「持续」徽章 + suggestion 文案追加「· ★月度持续」。三处共用顶部 msProf/msPersistent 辅助函数（v131 的月度画像从 displayList 局部上提为 renderReplenishment 共享）。v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4605,25 +4605,16 @@ function renderShortageMonthly() {
   const loPts = [...q.q2, ...q.q3, ...q.q4].map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
     q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
 
-  // 象限文字浮层（v140 修复：z-index 9999 + 用 JS 动态 prepend 到 chart-container 内部 DOM 最前，
-  // 避免 ECharts zrender 容器 append 到 chart-container 末尾时覆盖浮层——v133 的 z-index:2 不够被覆盖）
-  // note 可选：象限内子集说明（v134：Q1 象限 52 个 ≠ 双高清单 34 个，差在规模门槛，必须标清楚避免误读）
-  function quadLabel(qid, title, count, color, bg, pos, note) {
-    return '<div class="quadLabel" onclick="window._msDrill=\'' + qid + '\';window._msDrillPage=1;renderShortage()" ' +
-      'style="position:absolute;cursor:pointer;z-index:9999;user-select:none;padding:4px 10px;border-radius:8px;background:' + bg + ';border:1px solid ' + color + ';' + pos + '" ' +
-      'title="点击查看该象限的 ' + count + ' 个 SKU×RDC 组合明细">' +
-      '<div style="font-size:11px;font-weight:500;color:' + color + '">' + title + '</div>' +
-      '<div style="font-size:22px;font-weight:500;color:' + color + ';line-height:1.2">' + count + '</div>' +
-      (note ? '<div style="font-size:10px;color:' + color + ';opacity:0.85;white-space:nowrap">' + note + '</div>' : '') +
-      '<div style="font-size:10px;color:' + color + ';opacity:0.55">点击下钻</div>' +
-      '</div>';
-  }
-  const quadLabelsHtml =
-    quadLabel('q1', '高率+高频', q.q1.length, '#A32D2D', 'rgba(252,235,235,0.95)', 'right:6%;top:4%;text-align:right',
-      '其中双高 ≥' + MS_PROFILE.MIN_QTY + '支：' + hi.length) +
-    quadLabel('q2', '高频低率', q.q2.length, '#854F0B', 'rgba(250,238,218,0.95)', 'left:18%;top:4%;text-align:left') +
-    quadLabel('q3', '低频高率', q.q3.length, '#185FA5', 'rgba(230,241,251,0.95)', 'right:6%;bottom:18%;text-align:right') +
-    quadLabel('q4', '双低 · 偶发', q.q4.length, '#5F5E5A', 'rgba(241,239,232,0.95)', 'left:18%;bottom:18%;text-align:left');
+  // v142: 删掉象限文字浮层（用户反馈：4 个浮层会盖住右上密集的红气泡，看不清散点分布）
+  // 象限数量信息改由 card-header 副标题"高率+高频 52 / 高频低率 19 / 低频高率 10 / 双低 ·偶发 202 · 点击下钻"承担
+  // 散点 click 下钻保留（双高的 34 个 SKU 仍可下钻）
+  const quadSummaryHtml =
+    '<div style="font-size:11px;color:var(--text-secondary)">高率+高频 ' + q.q1.length +
+    '  ·  高频低率 ' + q.q2.length +
+    '  ·  低频高率 ' + q.q3.length +
+    '  ·  双低 ·偶发 ' + q.q4.length +
+    (hi.length ? '  ·  双高命中 ' + hi.length : '') +
+    '  ·  点击散点可下钻</div>';
 
   window._msSort = window._msSort || 'qty';
   let sorted = hi.slice();
@@ -4670,12 +4661,13 @@ function renderShortageMonthly() {
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-blue)">${(monthMr * 100).toFixed(1)}%</div><div style="font-size:11px;color:var(--text-secondary)">月度首日缺货率（整体）</div></div>
     </div>
 
-    <div class="row-2" style="margin-bottom:12px">
+    <!-- v142: 两个图改为上下排列（不再挤在一行），四象限图全宽显示浮层不被截断，RDC 对照表放下面 -->
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:12px">
       <div class="card">
         <div class="card-header"><span class="card-title">缺货四象限 · 率 × 频次</span>
-          <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">气泡=缺货量 · 仅含有单≥${MS_PROFILE.MIN_DAYS}天的 ${valid.length} 个组合 · 散点/象限文字可点击下钻</span></div>
-        <div class="chart-container" id="chart-ms-quadrant" style="position:relative;height:320px;overflow:visible">
-          ${quadLabelsHtml}
+          ${quadSummaryHtml}
+          <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">气泡=缺货量 · 仅含有单≥${MS_PROFILE.MIN_DAYS}天的 ${valid.length} 个组合</span></div>
+        <div class="chart-container" id="chart-ms-quadrant" style="position:relative;height:340px">
         </div>
       </div>
       <div class="card">
@@ -4816,21 +4808,8 @@ function renderShortageMonthly() {
       }
     ]
   }, true);
-  // v141：ECharts init() 会清空容器内容——实测 page.innerHTML 里的浮层被 echarts.init 删除，
-  // v140 的 prepend 因此拿到 0 个元素、循环没执行（根因：不是 z-index，是浮层被 init 删掉了）。
-  // 正确做法：在 initChart 之后用 quadLabelsHtml **重新创建**浮层并 prepend，
-  // DOM 顺序排在 zrender 容器之前 + z-index:9999，双重保证显示在 canvas 之上。
-  try {
-    var qc = document.getElementById('chart-ms-quadrant');
-    if (qc && typeof quadLabelsHtml !== 'undefined' && quadLabelsHtml) {
-      var qtmp = document.createElement('div');
-      qtmp.innerHTML = quadLabelsHtml;
-      while (qtmp.firstChild) {
-        qc.insertBefore(qtmp.firstChild, qc.firstChild);
-      }
-    }
-  } catch (e) { console.warn('[v141] 插入象限浮层失败', e); }
-  // v133：散点 click → 下钻该 SKU 跨 RDC 画像（initChart 每次 dispose，所以这里 on() 跟着新实例）
+  // v142: v141 的 prepend JS 已无用（quadLabel 浮层整体删除，象限信息改到 card-header 副标题）
+  // 散点 click → 下钻该 SKU 跨 RDC 画像（v133 保留）
   chart.on('click', function(params) {
     if (params.componentType !== 'series' || !params.data || !params.data.sku) return;
     window._msDrill = 'sku:' + params.data.sku;
