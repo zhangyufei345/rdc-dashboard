@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 130; // v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 131; // v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -1448,6 +1448,9 @@ function parseExcel(rawData, mode, options) {
     dataStore.loaded = true;
     dataStore.lastUpdated = new Date().toISOString();
     saveToIDB();
+    // v131: 预热月度缺货画像（惰性缓存按 orderDetail 长度自动失效，此处仅为首次渲染提速；
+    // 真正的可用性保障在 getMonthlyShortageProfile 内部，从 IDB 恢复时同样能算出来）
+    try { getMonthlyShortageProfile(); } catch (e) { console.warn('[msProfile] 预热失败', e); }
     // 检测所有数据中的月份
     detectAllMonths();
     // 自动选择最新月份
@@ -4139,6 +4142,98 @@ function exportOiSkuDetail() {
 
 // ============ SHORTAGE PAGE ============
 let shortagePage = 1;
+// ==================== v131 月度缺货画像（SKU×RDC，剔除双休日）====================
+// 口径（2026-08-29 与张宇飞确认）：
+//  1. 剔除双休日：周末 RDC 不排单，首日缺货量≈订单量（8/08、8/22 首日满足率仅 0.3%）。
+//     实测不剔除会虚增 14.4% 首日缺货量，并凭空多出 92 个「缺货组合」（375 vs 283）。
+//  2. MR（月度首日缺货率）= 月累计首日缺货量 ÷ 月累计订单量 —— 衡量缺货强度。
+//  3. SF（缺货频率）= 首日缺货工作日数 ÷ 该 SKU 有单工作日数 —— 衡量持续性。
+//     分母用「有单工作日」而非「当月工作日」：否则低频次下单 SKU 的 SF 上限被压死
+//     （月下单 3 次的 SKU，SF 上限 3/17=17.6%，永远进不了榜），且月中小月数据不全时
+//     写死分母会把所有 SKU 的频率系统性稀释。
+//  4. 双高门槛：MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支
+//     （2026-08 实测命中 34 个，占 365 个缺货组合的 9.3%）
+var MS_PROFILE = { MR: 0.6, SF: 0.6, MIN_DAYS: 3, MIN_QTY: 500 };
+
+function isWeekendDate(ds) {
+  if (!ds || ds.length < 10) return false;
+  var w = new Date(ds + 'T00:00:00').getDay();
+  return w === 0 || w === 6;
+}
+
+function buildMonthlyShortageProfile() {
+  var prof = {}, monthWd = {};
+  var src = dataStore.orderDetail || [];
+  for (var i = 0; i < src.length; i++) {
+    var d = src[i];
+    if (!d || !d.dateStr || !d.skuCode || !d.warehouse) continue;
+    if (isWeekendDate(d.dateStr)) continue;
+    var ym = d.dateStr.slice(0, 7);
+    if (!monthWd[ym]) monthWd[ym] = {};
+    monthWd[ym][d.dateStr] = 1;
+    // rdc 归一化，保证与补货建议页（缺货报告口径）的 RDC 名称能直接关联
+    var rdc = normalizeRdcName(d.warehouse);
+    var k = ym + '|' + d.skuCode + '|' + rdc;
+    if (!prof[k]) {
+      prof[k] = { month: ym, sku: d.skuCode, name: d.skuName || '', brand: d.brand || '',
+                  rdc: rdc, orderQty: 0, shortQty: 0, gapQty: 0,
+                  shortDays: {}, orderDays: {}, kaShort: 0, dealerShort: 0 };
+    }
+    var p = prof[k];
+    var o = d.orderQty || 0, sh = d.firstDayShort || 0;
+    p.orderQty += o; p.shortQty += sh; p.gapQty += (d.totalGap || 0);
+    p.orderDays[d.dateStr] = 1;
+    if (sh > 0) p.shortDays[d.dateStr] = 1;
+    if (d.channel === 'KA') p.kaShort += sh;
+    else if (d.channel === '经销商') p.dealerShort += sh;
+  }
+  var list = [];
+  for (var kk in prof) {
+    if (!Object.prototype.hasOwnProperty.call(prof, kk)) continue;
+    var q = prof[kk];
+    q.shortDayCnt = Object.keys(q.shortDays).length;
+    q.orderDayCnt = Object.keys(q.orderDays).length;
+    q.mr = q.orderQty > 0 ? q.shortQty / q.orderQty : 0;
+    q.sf = q.orderDayCnt > 0 ? q.shortDayCnt / q.orderDayCnt : 0;
+    q.isPersistent = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
+                      q.orderDayCnt >= MS_PROFILE.MIN_DAYS && q.shortQty >= MS_PROFILE.MIN_QTY);
+    list.push(q);
+  }
+  var mwd = {};
+  for (var m in monthWd) {
+    if (!Object.prototype.hasOwnProperty.call(monthWd, m)) continue;
+    mwd[m] = Object.keys(monthWd[m]).length;
+  }
+  return { list: list, byKey: prof, monthWorkdays: mwd };
+}
+
+// 惰性计算 + 按 orderDetail 长度缓存：parseExcel 增量导入与 IndexedDB 恢复两条路径都能拿到最新结果。
+// （不挂在 parseExcel 末尾的原因：从 IDB 恢复数据时 parseExcel 根本不执行，会导致画像为空。）
+var _msProfileCache = { len: -1, data: null };
+function getMonthlyShortageProfile() {
+  var n = (dataStore.orderDetail || []).length;
+  if (_msProfileCache.data && _msProfileCache.len === n) return _msProfileCache.data;
+  _msProfileCache.len = n;
+  _msProfileCache.data = buildMonthlyShortageProfile();
+  return _msProfileCache.data;
+}
+window.getMonthlyShortageProfile = getMonthlyShortageProfile;
+window.MS_PROFILE = MS_PROFILE;
+
+// 缺货分析页三个 Tab 的统一按钮栏（v131 新增 monthly）
+function shortageTabBarHtml(active) {
+  function btn(id, label) {
+    return '<button class="btn-export" style="font-size:12px;padding:5px 16px;' +
+      (active === id ? 'background:var(--color-blue);color:#fff;' : '') +
+      '" onclick="window._shortageTab=\'' + id + '\';renderShortage()">' + label + '</button>';
+  }
+  return '<div style="display:flex;gap:4px;margin-bottom:12px">' +
+    btn('order-detail', '订单缺货明细分析') +
+    btn('customer-dim', '客户维度缺货分析') +
+    btn('monthly', '月度缺货全貌') +
+    '</div>';
+}
+
 function renderShortage() {
   setTitle('缺货分析');
   const page = document.getElementById('page-shortage');
@@ -4150,6 +4245,12 @@ function renderShortage() {
   // Tab切换：客户维度缺货分析（原独立「客户维度」tab，已并入缺货分析）
   if (window._shortageTab === 'customer-dim') {
     renderCustomerToShortage();
+    return;
+  }
+
+  // Tab切换：月度缺货全貌（v131 新增）
+  if (window._shortageTab === 'monthly') {
+    renderShortageMonthly();
     return;
   }
 
@@ -4216,11 +4317,8 @@ function renderShortage() {
       <label>搜索：</label><input type="text" id="filter-shortage-search" placeholder="物料号/名称/品牌" value="${filters.search}" oninput="filters.search=this.value;renderShortage()">
       <button class="btn-export" onclick="exportShortageCSV()">导出CSV</button>
     </div>
-    <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析（缺货汇总已移除；客户维度从侧边栏并入） -->
-    <div style="display:flex;gap:4px;margin-bottom:12px">
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='customer-dim'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='customer-dim';renderShortage()">客户维度缺货分析</button>
-    </div>
+    <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析 / 月度缺货全貌（缺货汇总已移除；客户维度从侧边栏并入） -->
+    ${shortageTabBarHtml('order-detail')}
     <div class="row-3" style="margin-bottom:12px">
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-red)">${formatNum(filteredCount)}</div><div style="font-size:11px;color:var(--text-secondary)">筛选结果 / 共${totalCount}条</div></div>
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-orange)">${formatNum(sData.reduce((s,d)=>s+d.rdcShortBoxes,0))}</div><div style="font-size:11px;color:var(--text-secondary)">缺货总箱数</div></div>
@@ -4339,6 +4437,202 @@ function renderShortage() {
     pagHtml += `<button ${shortagePage>=totalPages?'disabled':''} onclick="shortagePage=${totalPages};renderShortage()">末页</button>`;
   }
   document.getElementById('shortage-pagination').innerHTML = pagHtml;
+}
+
+// ============ v131 月度缺货全貌（SKU×RDC 整月聚合，剔除双休日）============
+function renderShortageMonthly() {
+  setTitle('缺货分析 - 月度全貌');
+  const page = document.getElementById('page-shortage');
+  if (!page || !dataStore.loaded || (dataStore.orderDetail || []).length === 0) {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">请先导入包含订单明细的数据</div>';
+    return;
+  }
+
+  const prof = getMonthlyShortageProfile();
+  const month = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
+  const all = prof.list.filter(p => !month || p.month === month);
+  const wd = prof.monthWorkdays[month] || 0;
+  const withShort = all.filter(p => p.shortQty > 0);
+  const valid = withShort.filter(p => p.orderDayCnt >= MS_PROFILE.MIN_DAYS);
+  const hi = valid.filter(p => p.isPersistent);
+
+  const totOrder = all.reduce((s, p) => s + p.orderQty, 0);
+  const totShort = all.reduce((s, p) => s + p.shortQty, 0);
+  const monthMr = totOrder > 0 ? totShort / totOrder : 0;
+
+  // 各 RDC 同口径对照：绝对数会被大仓（组合基数大）主导，必须同时看占本仓有效组合比
+  const rdcMap = {};
+  all.forEach(p => {
+    if (!rdcMap[p.rdc]) rdcMap[p.rdc] = { rdc: p.rdc, valid: 0, hi: 0, order: 0, short: 0 };
+    rdcMap[p.rdc].order += p.orderQty;
+    rdcMap[p.rdc].short += p.shortQty;
+  });
+  valid.forEach(p => {
+    if (!rdcMap[p.rdc]) rdcMap[p.rdc] = { rdc: p.rdc, valid: 0, hi: 0, order: 0, short: 0 };
+    rdcMap[p.rdc].valid++;
+    if (p.isPersistent) rdcMap[p.rdc].hi++;
+  });
+  const rdcList = Object.values(rdcMap)
+    .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
+    .sort((a, b) => b.hiPct - a.hiPct);
+
+  window._msSort = window._msSort || 'qty';
+  let sorted = hi.slice();
+  if (window._msSort === 'qty') sorted.sort((a, b) => b.shortQty - a.shortQty);
+  else if (window._msSort === 'mr') sorted.sort((a, b) => b.mr - a.mr || b.shortQty - a.shortQty);
+  else if (window._msSort === 'sf') sorted.sort((a, b) => b.sf - a.sf || b.shortDayCnt - a.shortDayCnt);
+
+  const perPage = 20;
+  window._msPage = window._msPage || 1;
+  const totalPages = Math.ceil(sorted.length / perPage) || 1;
+  if (window._msPage > totalPages) window._msPage = totalPages;
+  if (window._msPage < 1) window._msPage = 1;
+  const start = (window._msPage - 1) * perPage;
+  const pageData = sorted.slice(start, start + perPage);
+
+  const sortBtn = (id, label) => '<button class="btn-export" style="font-size:11px;padding:3px 10px;' +
+    (window._msSort === id ? 'background:var(--color-blue);color:#fff;' : '') +
+    '" onclick="window._msSort=\'' + id + '\';window._msPage=1;renderShortage()">' + label + '</button>';
+
+  page.innerHTML = `
+    <div class="filter-bar" style="flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--text-secondary)">${month || '全部月份'} · 已剔除双休日${wd ? '（有效工作日 ' + wd + ' 天）' : ''} · 基于订单明细按 SKU×RDC 聚合</span>
+    </div>
+    ${shortageTabBarHtml('monthly')}
+
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px">
+      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--text-primary)">${wd || '—'}</div><div style="font-size:11px;color:var(--text-secondary)">有效工作日</div></div>
+      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-orange)">${formatNum(withShort.length)}</div><div style="font-size:11px;color:var(--text-secondary)">有首日缺货的 SKU×RDC</div></div>
+      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-red)">${formatNum(hi.length)}</div><div style="font-size:11px;color:var(--text-secondary)">双高重点跟进</div></div>
+      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-blue)">${(monthMr * 100).toFixed(1)}%</div><div style="font-size:11px;color:var(--text-secondary)">月度首日缺货率（整体）</div></div>
+    </div>
+
+    <div class="row-2" style="margin-bottom:12px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">缺货四象限 · 率 × 频次</span>
+          <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">气泡=缺货量 · 仅含有单≥${MS_PROFILE.MIN_DAYS}天的 ${valid.length} 个组合</span></div>
+        <div class="chart-container" id="chart-ms-quadrant"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">各 RDC 同口径对照</span></div>
+        <div class="table-wrap" style="max-height:300px;overflow-y:auto">
+          <table class="data-table" style="font-size:12px">
+            <thead><tr>
+              <th style="text-align:left">RDC</th><th style="text-align:right">有效组合</th><th style="text-align:right;color:var(--color-red)">双高</th>
+              <th style="text-align:right">双高占比</th><th style="text-align:right">首日满足率</th>
+            </tr></thead>
+            <tbody>
+              ${rdcList.length > 0 ? rdcList.map(r => '<tr>' +
+                '<td style="text-align:left">' + r.rdc + '</td>' +
+                '<td style="text-align:right">' + r.valid + '</td>' +
+                '<td style="text-align:right;color:var(--color-red);font-weight:600">' + r.hi + '</td>' +
+                '<td style="text-align:right;font-weight:600">' + (r.hiPct * 100).toFixed(1) + '%</td>' +
+                '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
+                '</tr>').join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无数据</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div style="padding:8px 10px;font-size:11px;color:var(--text-secondary);line-height:1.6">
+          双高占比 = 双高组合数 ÷ 该仓有效组合数。<strong>大仓组合基数大，绝对数天然偏高，请以占比横向比较</strong>。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span class="card-title">双高重点跟进清单（${hi.length} 个 · 率与频次双命中）</span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
+          ${sortBtn('qty', '缺货量')}${sortBtn('mr', '首日缺货率')}${sortBtn('sf', '缺货频率')}
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:500px;overflow-y:auto">
+        <table class="data-table" style="font-size:12px">
+          <thead><tr>
+            <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th>
+            <th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>
+            <th style="text-align:right;color:var(--color-red)">首日缺货率</th>
+            <th style="text-align:right;color:var(--color-purple)">缺货天数</th><th style="text-align:right">有单天数</th>
+            <th style="text-align:right;color:var(--color-purple)">缺货频率</th>
+          </tr></thead>
+          <tbody>
+            ${pageData.length > 0 ? pageData.map(p => '<tr>' +
+              '<td style="text-align:left">' + p.brand + '</td>' +
+              '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
+              '<td style="text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + p.name + '">' + p.name + '</td>' +
+              '<td style="text-align:left">' + p.rdc + '</td>' +
+              '<td style="text-align:right">' + p.orderQty.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.shortQty.toLocaleString() + '</td>' +
+              '<td style="text-align:right;color:var(--color-red)">' + (p.mr * 100).toFixed(1) + '%</td>' +
+              '<td style="text-align:right;color:var(--color-purple);font-weight:600">' + p.shortDayCnt + '</td>' +
+              '<td style="text-align:right">' + p.orderDayCnt + '</td>' +
+              '<td style="text-align:right;color:var(--color-purple)">' + (p.sf * 100).toFixed(0) + '%</td>' +
+              '</tr>').join('') : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「率与频次双命中」的 SKU×RDC 组合</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center">
+        <button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msPage=Math.max(1,${window._msPage - 1});renderShortage()" ${window._msPage <= 1 ? 'disabled' : ''}>上一页</button>
+        <span style="font-size:12px;color:var(--text-secondary)">第 ${window._msPage}/${totalPages} 页</span>
+        <button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msPage=Math.min(${totalPages},${window._msPage + 1});renderShortage()" ${window._msPage >= totalPages ? 'disabled' : ''}>下一页</button>
+        <span style="font-size:11px;color:var(--text-secondary)">共 ${hi.length} 个</span>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;padding:10px 12px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.7">
+      <strong>口径说明：</strong><br>
+      · 已剔除周六周日——周末 RDC 不排单，首日缺货量≈订单量（实测 8/08、8/22 首日满足率仅 0.3%），计入会虚增缺货量并制造虚假缺货组合。<br>
+      · <strong>首日缺货率 MR</strong> = 月累计首日缺货量 ÷ 月累计订单量，衡量缺货强度。<br>
+      · <strong>缺货频率 SF</strong> = 首日缺货工作日数 ÷ <u>该 SKU 有单工作日数</u>（非当月工作日），衡量持续性；用有单天数为分母可避免低频次下单 SKU 的频率上限被压死，且月中小月数据不全时不会被系统性稀释。<br>
+      · 双高门槛：MR ≥ ${(MS_PROFILE.MR * 100).toFixed(0)}% 且 SF ≥ ${(MS_PROFILE.SF * 100).toFixed(0)}% 且有单 ≥ ${MS_PROFILE.MIN_DAYS} 天且缺货量 ≥ ${MS_PROFILE.MIN_QTY} 支。
+    </div>
+  `;
+
+  const chart = initChart('chart-ms-quadrant');
+  const hiPts = valid.filter(p => p.isPersistent).map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc, q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
+  const loPts = valid.filter(p => !p.isPersistent).map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc, q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
+  chart.setOption({
+    tooltip: {
+      trigger: 'item', confine: true, textStyle: { fontSize: 11 },
+      formatter: p => {
+        const o = p.data;
+        return '<strong>' + o.sku + ' ' + o.nm + '</strong><br>' + o.rdc +
+          '<hr style="border:none;border-top:1px solid #eee;margin:4px 0">' +
+          '首日缺货量：' + o.q.toLocaleString() + ' 支<br>' +
+          '首日缺货率：' + (o.mr * 100).toFixed(1) + '%<br>' +
+          '缺货频率：' + (o.sf * 100).toFixed(0) + '%（' + o.sd + '/' + o.od + ' 天）';
+      }
+    },
+    grid: { left: 55, right: 25, top: 30, bottom: 45 },
+    xAxis: {
+      type: 'value', name: '缺货频率 SF', nameLocation: 'middle', nameGap: 28, nameTextStyle: { fontSize: 11 },
+      min: 0, max: 1.05, axisLabel: { formatter: v => (v * 100).toFixed(0) + '%', fontSize: 10 },
+      splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } }
+    },
+    yAxis: {
+      type: 'value', name: '首日缺货率 MR', nameTextStyle: { fontSize: 11 },
+      min: 0, max: 1.05, axisLabel: { formatter: v => (v * 100).toFixed(0) + '%', fontSize: 10 },
+      splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } }
+    },
+    series: [
+      {
+        name: '未命中', type: 'scatter', data: loPts,
+        symbolSize: v => Math.max(5, Math.min(22, Math.sqrt(v[2]) / 6)),
+        itemStyle: { color: '#94A3B8', opacity: 0.55 }
+      },
+      {
+        name: '双高命中', type: 'scatter', data: hiPts,
+        symbolSize: v => Math.max(6, Math.min(26, Math.sqrt(v[2]) / 6)),
+        itemStyle: { color: '#EF4444', opacity: 0.85 },
+        markLine: {
+          silent: true, symbol: 'none',
+          lineStyle: { color: '#DC2626', type: 'dashed', width: 1 },
+          label: { fontSize: 10, formatter: '门槛 ' + (MS_PROFILE.MR * 100).toFixed(0) + '%', position: 'insideEndTop' },
+          data: [{ xAxis: MS_PROFILE.SF }, { yAxis: MS_PROFILE.MR }]
+        }
+      }
+    ]
+  }, true);
 }
 
 function exportShortageCSV() {
@@ -4505,11 +4799,8 @@ function renderShortageOrderDetail() {
       <span style="font-size:12px;color:var(--text-secondary)">基于${monthLabel}订单明细（${filtered.length}条记录）</span>
       <button class="btn-export" onclick="exportShortageOrderDetailCSV()" style="margin-left:auto">导出CSV</button>
     </div>
-    <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析 -->
-    <div style="display:flex;gap:4px;margin-bottom:12px">
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;background:var(--color-blue);color:#fff" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px" onclick="window._shortageTab='customer-dim';renderShortage()">客户维度缺货分析</button>
-    </div>
+    <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析 / 月度缺货全貌 -->
+    ${shortageTabBarHtml('order-detail')}
 
 
     <!-- 表1: 汇总统计 + 图表 -->
@@ -4945,11 +5236,8 @@ function renderCustomerImpl(page) {
   window._cgSummary = cgSorted.slice(0, 50);
 
   page.innerHTML = `
-    <!-- Tab切换：缺货分析下的两个子 tab，方便从客户维度切回订单明细 -->
-    <div style="display:flex;gap:4px;margin-bottom:12px">
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='order-detail'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='order-detail';renderShortage()">订单缺货明细分析</button>
-      <button class="btn-export" style="font-size:12px;padding:5px 16px;${window._shortageTab==='customer-dim'?'background:var(--color-blue);color:#fff;':''}" onclick="window._shortageTab='customer-dim';renderShortage()">客户维度缺货分析</button>
-    </div>
+    <!-- Tab切换：缺货分析下的三个子 tab，方便从客户维度切回订单明细 -->
+    ${shortageTabBarHtml('customer-dim')}
     <div class="filter-bar">
       <label>排序方式：</label>
       <select id="customer-sort-mode" onchange="window.customerSortMode=this.value;renderCustomerToShortage()">
@@ -7711,20 +7999,40 @@ function renderReplenishment() {
     '<thead><tr>' +
     '<th style="width:30px"></th>' +
     '<th>SKU编码</th><th>物料名称</th><th>品牌</th><th>ABC</th><th>RDC</th>' +
+    '<th title="本月累计首日缺货量 ÷ 本月累计订单量（已剔除双休日）">月缺货率</th>' +
+    '<th title="本月首日缺货的工作日天数 ÷ 有订单的工作日天数">缺货天数</th>' +
+    '<th title="缺货频率 = 缺货工作日 ÷ 有单工作日，衡量持续性">缺货频率</th>' +
     '<th>今日缺口(箱)</th><th>近60天日均</th><th>满足率</th><th>建议补货(箱)</th>' +
     '<th>缺货原因</th><th>评分</th><th>紧急度</th></tr></thead><tbody>';
 
   if (displayList.length === 0) {
-    dailyHtml += '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary)">当前RDC无重点关注SKU，或所有SKU补货量已充足</td></tr>';
+    dailyHtml += '<tr><td colspan="16" style="text-align:center;padding:20px;color:var(--text-secondary)">当前RDC无重点关注SKU，或所有SKU补货量已充足</td></tr>';
   } else {
+    // v131: 月度缺货画像（只读参考列，不参与评分计算）
+    var msProf = getMonthlyShortageProfile();
+    var msMonth = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
     displayList.forEach(function(d) {
+      var ms = msProf.byKey[msMonth + '|' + d.materialCode + '|' + normalizeRdcName(d.rdc)] || null;
+      var msRateTd = ms
+        ? '<td class="num" style="color:' + (ms.mr >= MS_PROFILE.MR ? '#EF4444' : '#64748B') + '">' + (ms.mr * 100).toFixed(1) + '%</td>'
+        : '<td class="num" style="color:#CBD5E1">—</td>';
+      var msDaysTd = ms
+        ? '<td class="num">' + ms.shortDayCnt + '/' + ms.orderDayCnt + '</td>'
+        : '<td class="num" style="color:#CBD5E1">—</td>';
+      var msSfTd = ms
+        ? '<td class="num" style="color:' + (ms.sf >= MS_PROFILE.SF ? '#8B5CF6' : '#64748B') + ';font-weight:' + (ms.sf >= MS_PROFILE.SF ? '600' : '400') + '">' + (ms.sf * 100).toFixed(0) + '%</td>'
+        : '<td class="num" style="color:#CBD5E1">—</td>';
+      var msBadge = (ms && ms.isPersistent)
+        ? ' <span style="padding:1px 5px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap" title="月度首日缺货率 ' + (ms.mr * 100).toFixed(0) + '% 且缺货频率 ' + (ms.sf * 100).toFixed(0) + '%（缺货 ' + ms.shortDayCnt + '/' + ms.orderDayCnt + ' 天）— 持续性缺货，重点跟进">持续</span>'
+        : '';
       dailyHtml += '<tr>' +
         '<td onclick="event.stopPropagation();replToggleStatus(\'' + d.key + '\')" style="cursor:pointer;font-size:14px">' + (window._replStatus[d.key] ? '✅' : '⬜') + '</td>' +
-        '<td>' + d.materialCode + '</td>' +
+        '<td>' + d.materialCode + msBadge + '</td>' +
         '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + d.materialName.replace(/'/g, '&#39;').replace(/"/g, '&quot;') + '">' + d.materialName + '</td>' +
         '<td>' + d.brand + '</td>' +
         '<td><span style="padding:1px 6px;border-radius:4px;font-size:10px;' + (d.abcClass==='A'?'background:#FEE2E2;color:#DC2626':d.abcClass==='B'?'background:#FFFBEB;color:#92400E':'background:#F1F5F9;color:#64748B') + '">' + d.abcClass + '</span></td>' +
         '<td>' + d.rdc + '</td>' +
+        msRateTd + msDaysTd + msSfTd +
         '<td class="num" style="color:#EF4444;font-weight:500">' + fmtNum(d.rdcShortBoxes) + '</td>' +
         '<td class="num">' + fmtNum(d.dailyAvg) + '</td>' +
         '<td class="num">' + fmtPct(d.fulfillRate) + '</td>' +
@@ -7794,6 +8102,7 @@ function renderReplenishment() {
     '<div class="card-header"><span class="card-title">💡 使用说明</span></div>' +
     '<div style="font-size:12px;line-height:1.8;color:#92400E">' +
     '<div>• 每日补货建议固定展示最新日期的Top 20重点关注SKU，按综合评分排序</div>' +
+    '<div>• 「月缺货率 / 缺货天数 / 缺货频率」为当月只读参考（已剔除双休日），<b>不参与评分计算</b>；标「持续」= 率与频次双命中，需优先跟进</div>' +
     '<div>• 点击左侧 ⬜ / ✅ 可标记处理状态，状态会自动保存</div>' +
     '<div>• 中期策略基于近60天数据（含上月）滚动计算，每次打开页面自动刷新</div>' +
     '<div>• 可通过顶部月份选择器切换不同月份的分析数据</div>' +
