@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 131; // v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 132; // v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4462,15 +4462,24 @@ function renderShortageMonthly() {
 
   // 各 RDC 同口径对照：绝对数会被大仓（组合基数大）主导，必须同时看占本仓有效组合比
   const rdcMap = {};
+  function rdcSlot(rdc) {
+    if (!rdcMap[rdc]) rdcMap[rdc] = { rdc: rdc, valid: 0, hi: 0, noise: 0, order: 0, short: 0 };
+    return rdcMap[rdc];
+  }
   all.forEach(p => {
-    if (!rdcMap[p.rdc]) rdcMap[p.rdc] = { rdc: p.rdc, valid: 0, hi: 0, order: 0, short: 0 };
-    rdcMap[p.rdc].order += p.orderQty;
-    rdcMap[p.rdc].short += p.shortQty;
+    const r = rdcSlot(p.rdc);
+    r.order += p.orderQty;
+    r.short += p.shortQty;
   });
-  valid.forEach(p => {
-    if (!rdcMap[p.rdc]) rdcMap[p.rdc] = { rdc: p.rdc, valid: 0, hi: 0, order: 0, short: 0 };
-    rdcMap[p.rdc].valid++;
-    if (p.isPersistent) rdcMap[p.rdc].hi++;
+  // 有缺货的组合再按「有单工作日」分流：≥3 天进有效组合（参与双高判定），<3 天计入噪声剔除
+  withShort.forEach(p => {
+    const r = rdcSlot(p.rdc);
+    if (p.orderDayCnt >= MS_PROFILE.MIN_DAYS) {
+      r.valid++;
+      if (p.isPersistent) r.hi++;
+    } else {
+      r.noise++;
+    }
   });
   const rdcList = Object.values(rdcMap)
     .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
@@ -4518,22 +4527,26 @@ function renderShortageMonthly() {
         <div class="table-wrap" style="max-height:300px;overflow-y:auto">
           <table class="data-table" style="font-size:12px">
             <thead><tr>
-              <th style="text-align:left">RDC</th><th style="text-align:right">有效组合</th><th style="text-align:right;color:var(--color-red)">双高</th>
+              <th style="text-align:left">RDC</th><th style="text-align:right">有效组合</th>
+              <th style="text-align:right" title="有首日缺货但当月有单工作日 < 3 天——样本太少，缺货频率无统计意义，不参与双高判定">噪声剔除</th>
+              <th style="text-align:right;color:var(--color-red)">双高</th>
               <th style="text-align:right">双高占比</th><th style="text-align:right">首日满足率</th>
             </tr></thead>
             <tbody>
               ${rdcList.length > 0 ? rdcList.map(r => '<tr>' +
                 '<td style="text-align:left">' + r.rdc + '</td>' +
                 '<td style="text-align:right">' + r.valid + '</td>' +
+                '<td style="text-align:right;color:var(--text-secondary)">' + (r.noise > 0 ? r.noise : '<span style="color:#CBD5E1">—</span>') + '</td>' +
                 '<td style="text-align:right;color:var(--color-red);font-weight:600">' + r.hi + '</td>' +
                 '<td style="text-align:right;font-weight:600">' + (r.hiPct * 100).toFixed(1) + '%</td>' +
                 '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
-                '</tr>').join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无数据</td></tr>'}
+                '</tr>').join('') : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-secondary)">暂无数据</td></tr>'}
             </tbody>
           </table>
         </div>
         <div style="padding:8px 10px;font-size:11px;color:var(--text-secondary);line-height:1.6">
-          双高占比 = 双高组合数 ÷ 该仓有效组合数。<strong>大仓组合基数大，绝对数天然偏高，请以占比横向比较</strong>。
+          有效组合 = 当月有首日缺货且有单工作日 ≥ ${MS_PROFILE.MIN_DAYS} 天的 SKU×RDC 组合；噪声剔除 = 有缺货但有单仅 1~2 天（频率无统计意义）。<br>
+          双高占比 = 双高组合数 ÷ 该仓有效组合数。<strong>大仓组合基数大，绝对数天然偏高，请以占比横向比较</strong>。噪声剔除数多，说明该仓偶发单/新单占比高。
         </div>
       </div>
     </div>
