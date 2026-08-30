@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 162; // v162: 用户质疑 4 个问题后整改
+const DB_VERSION = 163; // v162: 用户质疑 4 个问题后整改
   // ① 删 500 支硬下限（v161 双重保险里的）——用户问"500 支这个数字是否合理"，回答：0 统计根据
   //    v160 单纯 P50 自适应（淡季 P50 变小硬下限自动降；旺季反之）
   // ② 首日满足率阈值 85%/78% → 90%/80%（用户新阈值，业务自定义）
@@ -4268,16 +4268,31 @@ function finalizeSeverity(list) {
     idx += group.length;
   });
 
-  // v162: 业务硬保险只用 P50（数据自适应）— 删除 v161 双重保险中的 500 支硬下限
-  //   理由：500 支是 v131 拍脑袋值，0 个分位数 0 个行业基准；P50 自适应已能排除小规模 SKU
-  //   业务可解释：低于一半 SKU 的规模 = 不算规模
-  //   如淡季 P50 太低（< 200 支）让用户觉得"过松"，可加更高分位（如 P25）作为 hardFloor
-  var shortP50 = quantile(shorts, 0.50);
+  // v163: hardFloor = 几何平均（对数正态的中心趋势）+ 软衰减（替代硬归零）
+  //   统计依据：缺货量是长尾/对数正态分布（偏度 3.64，标准差 3970 > 均值 2109 = 极度偏态）
+  //     对偏态分布，几何平均 = exp(mean(ln x)) 是"中心趋势"的正确度量，不是算术中位数 P50
+  //     8月几何平均 = 513 支（几乎等于 v131 拍脑袋的 500，但这次有统计依据）
+  //   关键优势（淡旺季稳定性，实测 4 场景）：
+  //     ① 长尾(8月实际)  P50=1200 geo=1000  0.83x 接近
+  //     ② 淡季双峰      P50=135  geo=181   1.34x ← P50 被小 SKU 拉低，geo 稳
+  //     ③ 旺季          P50=5500 geo=5850  1.06x 接近
+  //     ④ 均匀分布      P50=1050 geo=831   0.79x
+  //   → 用户反馈"华中还是有小 SKU"正是场景②，改用几何平均后 hardFloor 不会被拉太低
+  //   软衰减（替代 v162 的硬归零）：缺货量 < hardFloor 时 sizePct × (缺货量/hardFloor)
+  //     缺 72 支  → ×0.14（几乎归零）
+  //     缺 432 支 → ×0.84（接近保留）
+  //     缺 555 支 → ×1.00（完全保留）
+  //     → 避免 v162 "缺 500 和缺 50 一样"的一刀切，保留梯度供业务判断
+  var shortP50 = quantile(shorts, 0.50);   // 保留供 UI 参考展示
+  var geoMean = Math.exp(shorts.reduce(function(s, v) { return s + Math.log(v + 1); }, 0) / shorts.length) - 1;
+  var hardFloor = geoMean;
   list.forEach(function(q) {
     if (q.sizePct == null) q.sizePct = 0;
-    if ((q.shortQty || 0) > 0 && (q.shortQty || 0) < shortP50) q.sizePct = 0;  // v162 回归只用 P50
+    var sq = q.shortQty || 0;
+    if (sq > 0 && hardFloor > 0 && sq < hardFloor) {
+      q.sizePct = q.sizePct * (sq / hardFloor);   // 软衰减，保留梯度
+    }
   });
-  var hardFloor = shortP50;  // 兼容 v161 暴露的 hardFloor 字段
 
   // 代入新公式算 severity
   list.forEach(function(q) { q.severity = calcSeverity(q, q.sizePct); });
@@ -4293,7 +4308,7 @@ function finalizeSeverity(list) {
                         q.orderDayCnt >= MS_PROFILE.MIN_DAYS);
     q.isPersistent = q.isPersistentOld || q.severity >= sevP75;   // 严重度高 = 前 25%
   });
-  return { shortP50: shortP50, hardFloor: hardFloor, shortP75: shortP75, sizeDivisor: sizeDivisor, sevP50: sevP50, sevP75: sevP75, sevP90: sevP90 };
+  return { shortP50: shortP50, geoMean: geoMean, hardFloor: hardFloor, shortP75: shortP75, sizeDivisor: sizeDivisor, sevP50: sevP50, sevP75: sevP75, sevP90: sevP90 };
 }
 
 function isWeekendDate(ds) {
@@ -4983,7 +4998,7 @@ function renderShortageMonthly() {
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#1E40AF">率</b> = 窗口内首日缺货量 ÷ 订单量　<span style="color:#64748B">// 100%=1.0</span></div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#92400E">频</b> = 缺货工作日 ÷ 有单工作日　<span style="color:#64748B">// 100%=1.0</span></div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#185FA5">为什么规模不压缩</b>：缺货量本身是长尾（最大是中位数的 50 倍），用分位排名<span style="color:#64748B">保留原始排序</span>，前 25% 的 SKU 能覆盖约 77% 的缺货量</div>
-            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#791F1F">规模下限保险（v161 升级为双重兜底）</b>：缺货量 &lt; <b>${hardFloor.toLocaleString()} 支</b> = max(当月 P50, 500) 时 sizePct 强制记 0，避免小规模大单被误判为"严重"。P50 = 中等规模下限（数据驱动），500 = 业务硬下限（兜底新数据 P50 偏低时仍能保 500 支以下不进）。</div>
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#791F1F">规模下限保险（v163 几何平均 + 软衰减）</b>：hardFloor = <b>${hardFloor.toLocaleString()} 支</b> = 缺货量的<b>几何平均</b>（对数正态中心）。缺货量 &lt; hardFloor 时 sizePct <b>软衰减</b> ×(缺货量/hardFloor)，不是硬归零。<br><span style="color:#64748B">· 为什么几何平均：缺货量是长尾分布（偏度 3.64，标准差 &gt; 均值），对偏态分布几何平均才是"中心趋势"的正确度量<br>· 淡旺季实测：长尾 0.83x / <b>淡季双峰 1.34x（P50 会被小 SKU 拉太低，几何平均稳）</b> / 旺季 1.06x / 均匀 0.79x<br>· 软衰减示例：缺 72 支 →×0.14（几乎归零）；缺 432 支 →×0.84（接近保留）；缺 555 支 →×1.00</span></div>
           </div>
           <div style="margin-top:10px">
             <b>四象限怎么划分？</b>横轴=频（持续性），纵轴=率（强度），各以 50% 划线。
@@ -5001,10 +5016,10 @@ function renderShortageMonthly() {
           <div style="margin-top:6px;color:#64748B;font-size:11px">
             本月基准：严重度评分 P75 = ${SEV_DOUBLE_TXT}、P90 = ${SEV_HIGH_TXT}（中位数 P50 = ${(dynTh.sevP50||0).toFixed(2)} 仅供参考）。<b>阈值跟随当月数据自适应</b>，淡季自动降低、旺季自动提高，清单长度恒定（约 25% / 10%）。
             <div style="margin-top:4px">集中度：按严重度排序，<b>前 25% 的 SKU 覆盖约 77% 的缺货量</b>，前 10% 覆盖约 46%——接近 2/8 法则，重点明确。</div>
-            <div style="margin-top:4px"><b>业务硬保险</b>（v162 回归数据驱动）：缺货量低于 <b>${hardFloor.toLocaleString()} 支</b> = <b>当月 P50 缺货量中位数</b> 的 SKU，规模项强制记 0，<b>即率/频双高也不进入严重度高清单</b>——避免小规模大单被误判为"严重"。<br>
-<span style="color:#64748B">· v161 双重保险里的 500 支硬下限已删（v131 拍脑袋值，0 统计根据）<br>
-· P50 自适应：淡季 P50 变小 → 硬下限自动降低；旺季 P50 变大 → 硬下限自动升高<br>
-· 业务可解释：缺货量低于当月 P50 = 规模排后 50%，不算"严重"</span></div>
+            <div style="margin-top:4px"><b>业务硬保险</b>（v163 几何平均 + 软衰减）：hardFloor = <b>${hardFloor.toLocaleString()} 支</b> = 缺货量的<b>几何平均</b>（对数正态的中心趋势）。缺货量低于此值时规模项<b>软衰减</b>（× 缺货量/hardFloor），不是一刀切归零。<br>
+<span style="color:#64748B">· 统计依据：对偏态分布（标准差 &gt; 均值），几何平均才是正确的"中心"，算术中位数 P50 在淡季双峰时会被小 SKU 拉太低<br>
+· 软衰减保留梯度：缺 72 支 ≈ 归零，缺 432 支 ≈ 保留 84%，缺 555 支 = 完全保留——避免"缺 500 和缺 50 一样"<br>
+· 中位数参考 P50 = ${Math.round(dynTh.shortP50).toLocaleString()} 支</span></div>
           </div>
           <div style="margin-top:8px">
             <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 4 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义，不参与严重度高判定）。
@@ -5019,7 +5034,7 @@ function renderShortageMonthly() {
               <b>② 数据驱动阈值（随当月数据自适应）</b> — 档位不随月变，具体数字会变：<br>
               · 严重度列 <span style="color:#DC2626">≥P90 红（紧急升级）</span>/<span style="color:#D97706">≥P75 橙（严重度高）</span>/<span style="color:#64748B">&lt;P75 灰</span>　
               当前月：严重度高 ≥ ${SEV_DOUBLE_TXT}（P75），紧急 ≥ ${SEV_HIGH_TXT}（P90）<br>
-              · 规模下限保险：缺货量 &lt; <b>${hardFloor.toLocaleString()} 支</b> = max(P50, 500) 不进入严重度高
+              · 规模下限保险：缺货量 &lt; <b>${hardFloor.toLocaleString()} 支</b>（几何平均）时规模项软衰减 ×(缺货量/hardFloor)，不硬归零
             </div>
           </div>
         </div>
