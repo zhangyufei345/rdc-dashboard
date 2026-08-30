@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 150; // v150: 有效组合阈值 MIN_DAYS 3→4（用户要求更严的样本门槛）。影响：① 8月有效组合 283→252（少 31 个 3 天单的 SKU，被归入噪声）；② 噪声剔除 82→113（多 31）；③ build 函数 isPersistent 判定多排一组（原本 3 天单就进双高，现排除）；④ 改 4 处硬编码文案：KPI 解释段「有效组合 = ≥ 3 天」→「≥ 4 天」、详情面板⑤「1~2 天」→「1~3 天」、底部口径说明同步、rdc-noise 下钻 sub「1~2 天」→「1~3 天」；⑤ 用 MS_PROFILE.MIN_DAYS 模板的 4 处自动更新（气泡图副标题/rdc-valid/rdc: 下钻 sub）。v149: 删除 v148 独立判定逻辑 Tab 改 KPI 内可折叠面板——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
+const DB_VERSION = 151; // v151: 双高划分线 60%→50% + 象限图 Q1 改用严重度评分（数字与 KPI 双高卡完全一致）。问题：① 60% 划分线偏严，数据分析更常规的「高/低」分界是 50%；② 象限图 Q1 显示 42（率+频均≥60%），KPI 双高卡显示 98（严重度评分≥0.55），两个不同定义让用户误以为是同一指标。修复：① MS_PROFILE.MR 0.6→0.5 / SF 0.6→0.5（markLine label "业务上经常缺≈ 60%" 自动改 50%）；② 象限图 Q1 重定义为「严重度评分≥0.55 的 SKU×RDC」（= KPI 双高卡数字，完全一致）；③ Q1 标题"双高·重点跟进"→"严重度高 · 重点跟进"，副标题"率+频都≥60%"→"严重度评分 ≥ 0.55"；④ Q2/Q3/Q4 仍按率+频 50% 划分，但**只算严重度低的**（避免和 Q1 重复计数）；⑤ 4 象限副标题全部写明"率≥50%/频≥50%"等业务表达；⑥ 详情面板 "率+频都≥60%"→"率+频都≥50%"。v150: 有效组合阈值 MIN_DAYS 3→4叠面板——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4164,7 +4164,7 @@ let shortagePage = 1;
 //     写死分母会把所有 SKU 的频率系统性稀释。
 //  4. 双高门槛：MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支
 //     （2026-08 实测命中 34 个，占 365 个缺货组合的 9.3%）
-var MS_PROFILE = { MR: 0.6, SF: 0.6, MIN_DAYS: 4, MIN_QTY: 500 };
+var MS_PROFILE = { MR: 0.5, SF: 0.5, MIN_DAYS: 4, MIN_QTY: 500 };
 // v147: 综合严重度评分（4 维度加权和，弥补 60%/60% 单门槛忽略规模的缺陷）
 // sizeTerm = min(1, log10(缺货量+1) / 4.5)  // 3.16 万支 = 1.0
 // mrTerm   = min(1, MR)
@@ -4695,15 +4695,20 @@ function renderShortageMonthly() {
     .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
     .sort((a, b) => b.hiPct - a.hiPct);
 
-  // 象限分流（v133：四象限下钻所需——把 valid 一次性分流到 4 个数组，散点和象限文字复用同一份数据）
+  // v151: 象限分流重定义——Q1 = 「严重度高 · 重点跟进」(=严重度评分≥0.55)，与 KPI 双高卡数字口径完全一致；
+  // Q2/Q3/Q4 保留率×频 50% 划分（仅算严重度低的，避免和 Q1 重复计数）
   const q = { q1: [], q2: [], q3: [], q4: [] };
   valid.forEach(p => {
-    const hiRate = p.mr >= MS_PROFILE.MR;
-    const hiFreq = p.sf >= MS_PROFILE.SF;
-    if (hiRate && hiFreq) q.q1.push(p);
-    else if (!hiRate && hiFreq) q.q2.push(p);
-    else if (hiRate && !hiFreq) q.q3.push(p);
-    else q.q4.push(p);
+    if (p.severity >= MS_SEVERITY.SEV_DOUBLE) {
+      q.q1.push(p);  // 严重度高（直接进 Q1，不再二次分流）
+    } else {
+      const hiRate = p.mr >= MS_PROFILE.MR;
+      const hiFreq = p.sf >= MS_PROFILE.SF;
+      if (hiRate && hiFreq) q.q2.push(p);  // 率+频都高但严重度低（罕见）
+      else if (!hiRate && hiFreq) q.q3.push(p);
+      else if (hiRate && !hiFreq) q.q4.push(p);
+      else q.q4.push(p);  // 双低归入 Q4
+    }
   });
   Object.values(q).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
 
@@ -4861,7 +4866,7 @@ function renderShortageMonthly() {
           </div>
           <div style="margin-top:10px">
             <b>四象限怎么划分？</b>横轴=频（持续性），纵轴=率（强度），各以 60% 划线。
-            <span style="color:#A32D2D">右</span>上（率+频都 ≥ 60%）= <b>双高</b>：缺得多 + 经常缺。
+            <span style="color:#A32D2D">右</span>上（率+频都 ≥ 50%）= <b>严重度高</b>：缺得多 + 经常缺。
             <span style="color:#854F0B">左</span>上（频高率低）= <b>高频低率</b>：每单都缺一点。
             <span style="color:#185FA5">右</span>下（率高频低）= <b>低频高率</b>：偶发大单嫌疑。
             <span style="color:#5F5E5A">左</span>下（率+频都低）= <b>双低·偶发</b>。
@@ -4895,25 +4900,25 @@ function renderShortageMonthly() {
           <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击色块下钻该象限</span></div>
         <div style="padding:12px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;height:316px">
-            <div onclick="openDrillModal('q2')" style="cursor:pointer;border-radius:6px;background:#FEF3C7;border:1px solid #FDE68A;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看高频低率象限的 ${q.q2.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q2')" style="cursor:pointer;border-radius:6px;background:#FEF3C7;border:1px solid #FDE68A;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看频高率低象限的 ${q.q2.length} 个 SKU×RDC 组合明细（仅含严重度低的）">
               <div style="font-size:12px;color:#854F0B;font-weight:500">高频低率</div>
               <div style="font-size:32px;font-weight:500;color:#854F0B;line-height:1.1">${q.q2.length}</div>
-              <div style="font-size:11px;color:#92400E">每单缺一点</div>
+              <div style="font-size:11px;color:#92400E">频 ≥ 50% 且率 &lt; 50%</div>
             </div>
-            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双高象限的 ${q.q1.length} 个 SKU×RDC 组合明细">
-              <div style="font-size:12px;color:#A32D2D;font-weight:500">双高 · 重点跟进</div>
+            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看严重度评分 ≥ 0.55 的 ${q.q1.length} 个 SKU×RDC 组合明细">
+              <div style="font-size:12px;color:#A32D2D;font-weight:500">严重度高 · 重点跟进</div>
               <div style="font-size:32px;font-weight:500;color:#A32D2D;line-height:1.1">${q.q1.length}</div>
-              <div style="font-size:11px;color:#7F1D1D">率+频都 ≥ 60%</div>
+              <div style="font-size:11px;color:#7F1D1D">严重度评分 ≥ 0.55</div>
             </div>
-            <div onclick="openDrillModal('q4')" style="cursor:pointer;border-radius:6px;background:#F1EFE8;border:1px solid #D3D1C7;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双低象限的 ${q.q4.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q4')" style="cursor:pointer;border-radius:6px;background:#F1EFE8;border:1px solid #D3D1C7;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双低象限的 ${q.q4.length} 个 SKU×RDC 组合明细（仅含严重度低的）">
               <div style="font-size:12px;color:#5F5E5A;font-weight:500">双低 · 偶发</div>
               <div style="font-size:32px;font-weight:500;color:#444441;line-height:1.1">${q.q4.length}</div>
-              <div style="font-size:11px;color:#5F5E5A">噪声区</div>
+              <div style="font-size:11px;color:#5F5E5A">率+频均 &lt; 50%</div>
             </div>
-            <div onclick="openDrillModal('q3')" style="cursor:pointer;border-radius:6px;background:#E6F1FB;border:1px solid #85B7EB;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看低频高率象限的 ${q.q3.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q3')" style="cursor:pointer;border-radius:6px;background:#E6F1FB;border:1px solid #85B7EB;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看低频高率象限的 ${q.q3.length} 个 SKU×RDC 组合明细（仅含严重度低的）">
               <div style="font-size:12px;color:#185FA5;font-weight:500">低频高率</div>
               <div style="font-size:32px;font-weight:500;color:#185FA5;line-height:1.1">${q.q3.length}</div>
-              <div style="font-size:11px;color:#0C447C">一次性大单嫌疑</div>
+              <div style="font-size:11px;color:#0C447C">率 ≥ 50% 且频 &lt; 50%</div>
             </div>
           </div>
         </div>
