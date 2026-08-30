@@ -677,7 +677,20 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 163; // v162: 用户质疑 4 个问题后整改
+const DB_VERSION = 164; // v164: P90 紧急升级真正接入补货建议三处联动（用户问"P90 如何让补货建议预警"）
+  // 背景：v136 埋了钩子（每日紧急标签/中期★月度持续/安全库存SS×1.3），但 v147 改 isHighSeverity(P90)
+  // 后每日补货建议那处**没同步**——还用 ms.isPersistent（P75 严重度高，前 25%），与用户要的 P90 不符
+  //
+  // 修复 ①：每日补货建议紧急标签 isPersistent(P75) → isHighSeverity(P90 前10%)
+  //   与中期分仓 persistentDA、安全库存 persistentSS 三处口径统一
+  // 修复 ②：徽章分两级——P90「紧急」（红）/ P75「严重度高」（橙）
+  //   tooltip 说明触发的联动（紧急标签 + ★月度持续 + SS×1.3）
+  // 修复 ③（关键）：补货建议页数据源跟随窗口模式
+  //   之前写死 getMonthlyShortageProfile()（月度），与四象限页默认 rolling30 不同源
+  //   → 两页 P75/P90 阈值不同 → "严重度高/紧急"数字对不上（用户反复困惑的根源）
+  //   现改为 _replMode = window._msWindowMode（默认 rolling30），msMonth → msPeriod
+  //   （rolling30 时 key 前缀是 'rolling30'，月度时是 '2026-08'）
+  // v163: hardFloor 改用几何平均 + 软衰减
   // ① 删 500 支硬下限（v161 双重保险里的）——用户问"500 支这个数字是否合理"，回答：0 统计根据
   //    v160 单纯 P50 自适应（淡季 P50 变小硬下限自动降；旺季反之）
   // ② 首日满足率阈值 85%/78% → 90%/80%（用户新阈值，业务自定义）
@@ -8350,9 +8363,15 @@ function renderReplenishment() {
 
   // ==== DAILY SUGGESTIONS ====
   // v136: 月度缺货画像提到顶部供「每日建议紧急度升级/中期分仓置顶/安全库存SS系数」三处共享
-  var msProf = getMonthlyShortageProfile();
-  var msMonth = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
-  function msPersistent(sku, rdc) { var ms = msProf.byKey[msMonth + '|' + sku + '|' + rdc]; return !!(ms && ms.isHighSeverity); }
+  // v164: 跟随「缺货四象限」页的窗口模式（window._msWindowMode，默认 rolling30）
+  //   之前写死 getMonthlyShortageProfile()（月度），导致补货建议页的 P75/P90 阈值
+  //   与四象限页(rolling30)不同源 → 两页"严重度高/紧急"数字对不上（用户反复困惑的根源）
+  var _replMode = window._msWindowMode || 'rolling30';
+  var msProf = _replMode === 'rolling30' ? getRollingShortageProfile() : getMonthlyShortageProfile();
+  var msPeriod = _replMode === 'rolling30'
+    ? 'rolling30'
+    : ((filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || ''));
+  function msPersistent(sku, rdc) { var ms = msProf.byKey[msPeriod + '|' + sku + '|' + rdc]; return !!(ms && ms.isHighSeverity); }
   // Step 1: Candidate SKU x RDC combos from latest shortage
   var rdcKeyMap = { '华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort' };
   var rdcKeys = Object.keys(rdcKeyMap);
@@ -8583,7 +8602,7 @@ function renderReplenishment() {
     var ratio = totalDemand > 0 ? demand / totalDemand : 0;
     // v137: 月缺货箱数 = 当月 firstDayShort 累加 ÷ boxSpec（v131 铁律，按 SKU 聚合后再除箱规）
     // 不用 shortageData 跨日累加——同一批未满足订单在多日重复显示会导致严重虚增
-    var msP = msProf.byKey[msMonth + '|' + sku + '|' + rdc];
+    var msP = msProf.byKey[msPeriod + '|' + sku + '|' + rdc];
     var monthShort = (msP && msP.shortBoxes != null) ? msP.shortBoxes : 0;
 
     var persistentDA = msPersistent(sku, rdc);
@@ -8818,9 +8837,10 @@ function renderReplenishment() {
   } else {
   // v131: 月度缺货画像（v136 已提到函数顶部共享）
   displayList.forEach(function(d) {
-    var ms = msProf.byKey[msMonth + '|' + d.materialCode + '|' + d.rdc] || null;
-    // v136: 双高 SKU 强制升级到「紧急」（评分不动，仅显示升级）
-    if (ms && ms.isPersistent && d.urgency !== 'emergency') {
+    var ms = msProf.byKey[msPeriod + '|' + d.materialCode + '|' + d.rdc] || null;
+    // v164: P90（紧急升级，前 10%）才强制升级到「紧急」标签——与中期分仓/安全库存三处口径统一
+    //   之前 v136 用的是 ms.isPersistent（P75 严重度高，前 25%）——过宽，与用户要的"P90 预警"不符
+    if (ms && ms.isHighSeverity && d.urgency !== 'emergency') {
       d.urgency = 'emergency';
       d.urgencyLabel = '紧急';
       d.urgencyColor = '#EF4444';
@@ -8835,9 +8855,13 @@ function renderReplenishment() {
       var msSfTd = ms
         ? '<td class="num" style="color:' + (ms.sf >= MS_PROFILE.SF ? '#8B5CF6' : '#64748B') + ';font-weight:' + (ms.sf >= MS_PROFILE.SF ? '600' : '400') + '">' + (ms.sf * 100).toFixed(0) + '%</td>'
         : '<td class="num" style="color:#CBD5E1">—</td>';
-      var msBadge = (ms && ms.isPersistent)
-        ? ' <span style="padding:1px 5px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap" title="月度首日缺货率 ' + (ms.mr * 100).toFixed(0) + '% 且缺货频率 ' + (ms.sf * 100).toFixed(0) + '%（缺货 ' + ms.shortDayCnt + '/' + ms.orderDayCnt + ' 天）— 持续性缺货，重点跟进">持续</span>'
-        : '';
+      // v164: 徽章分两级——P90 紧急（红）/ P75 严重度高（橙），与四象限页口径一致
+      var msBadge = '';
+      if (ms && ms.isHighSeverity) {
+        msBadge = ' <span style="padding:1px 5px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap;font-weight:600" title="紧急升级（严重度评分 ≥ P90，前 10%）— 严重度 ' + (ms.severity != null ? ms.severity.toFixed(2) : '—') + '，已触发每日紧急标签 + 中期★月度持续 + 安全库存 SS×1.3">紧急 P90</span>';
+      } else if (ms && ms.isPersistent) {
+        msBadge = ' <span style="padding:1px 5px;border-radius:4px;font-size:10px;background:#FEF3C7;color:#D97706;white-space:nowrap" title="严重度高（严重度评分 ≥ P75，前 25%）— 严重度 ' + (ms.severity != null ? ms.severity.toFixed(2) : '—') + '，率 ' + (ms.mr * 100).toFixed(0) + '% / 频 ' + (ms.sf * 100).toFixed(0) + '%（缺货 ' + ms.shortDayCnt + '/' + ms.orderDayCnt + ' 天）">严重度高</span>';
+      }
       dailyHtml += '<tr>' +
         '<td onclick="event.stopPropagation();replToggleStatus(\'' + d.key + '\')" style="cursor:pointer;font-size:14px">' + (window._replStatus[d.key] ? '✅' : '⬜') + '</td>' +
         '<td>' + d.materialCode + msBadge + '</td>' +
