@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 148; // v148: 面向新用户重写所有"双高"相关文案 + 加新 Tab「判定逻辑说明」。问题：之前文案用「率+频次双命中」「老门槛」等开发者行话，新用户看不懂。修复：① KPI 解释段「双高」从「MR≥60% 且 SF≥60% 且缺货量≥500」改为业务语言「缺得多 + 经常缺（严重度评分 ≥ 0.55）」+ 跳转 Tab 链接；② Q1 象限方块"缺货量≥500 支→115 个"改为"率+频都 ≥ 60%"；③ 双高清单标题"老门槛(...)或 严重度≥0.55" 改为"严重度评分 ≥ 0.55"；④ 四象限 markLine label "门槛 60%"改为"业务上「经常缺」≈ 60%"；⑤ 底部口径说明 "双高门槛 MR≥60%..." 删除，改为"严重度评分 ≥ 0.55 入选 / ≥ 0.65 紧急升级"；⑥ 下钻 rdc-hi sub "率+频次双命中 且..." 改为"严重度评分 ≥ 0.55 的 SKU（缺得多 + 经常缺）"；⑦ 新增第 4 个 Tab「判定逻辑说明」（renderShortageLogic），用业务语言解释「率/频」「四象限划分」「严重度评分公式」「颜色规则」「有效组合 vs 噪声剔除」5 个概念，让新用户也能看懂。v147: 综合严重度评分替代单一 60% 门槛——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
+const DB_VERSION = 149; // v149: 删除 v148 的「判定逻辑说明」独立 Tab（用户反馈多此一举——跳转不符合他点击的预期）。改为把判定逻辑整合到「缺货四象限」Tab KPI 解释段下方的可折叠 details 面板：默认收起，点「▶ 什么是严重度评分？点击展开完整判定逻辑」展开，包含严重度评分公式/4 个分项含义/四象限划分/阈值含义/有效组合 vs 噪声剔除/色条规则 6 块内容。shortageTabBarHtml 删 logic btn，renderShortage 删 logic 分支，renderShortageLogic 函数整体删除（不被调用即负债）。v148: 面向新用户重写双高文案 + 加独立判定逻辑 Tab——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4415,7 +4415,6 @@ function shortageTabBarHtml(active) {
     btn('order-detail', '订单缺货明细分析') +
     btn('customer-dim', '客户维度缺货分析') +
     btn('monthly', '缺货四象限分析') +
-    btn('logic', '📖 判定逻辑说明') +
     '</div>';
 }
 
@@ -4427,13 +4426,7 @@ function renderShortage() {
   // Tab默认激活订单缺货明细分析
   if (typeof window._shortageTab === 'undefined') window._shortageTab = 'order-detail';
 
-// Tab切换：判定逻辑说明（v148）
-  if (window._shortageTab === 'logic') {
-    renderShortageLogic();
-    return;
-  }
-
-  // Tab切换：客户维度缺货分析（原独立「客户维度」tab，已并入缺货分析）
+// Tab切换：客户维度缺货分析（原独立「客户维度」tab，已并入缺货分析）
   if (window._shortageTab === 'customer-dim') {
     renderCustomerToShortage();
     return;
@@ -4852,10 +4845,40 @@ function renderShortageMonthly() {
           <span style="font-size:11px;color:#94A3B8">例：12 天有单里 8 天缺货 → SF = 8/12 = 67%</span>
         </div>
       </div>
-      <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #E5E7EB;font-size:11px;color:#64748B">
-        <span style="font-weight:600;color:#475569">「双高」</span> = <span style="color:#A32D2D;font-weight:600">缺得多</span> + <span style="color:#A32D2D;font-weight:600">经常缺</span> 的综合判定：严重度评分 <span style="font-weight:600">≥ 0.55</span> 即入选。
-        <a style="color:#3B82F6;cursor:pointer;text-decoration:underline" onclick="window._shortageTab='logic';renderShortage()">查看完整判定逻辑 →</a>
-      </div>
+      <details style="margin-top:8px;padding-top:8px;border-top:1px dashed #E5E7EB;font-size:11px;color:#64748B">
+        <summary style="cursor:pointer;font-weight:500;color:#475569;user-select:none;outline:none;list-style:none">
+          <span style="color:#3B82F6">▶</span> <span style="color:#1F2937;font-weight:600">什么是「严重度评分」？点击展开完整判定逻辑</span>
+        </summary>
+        <div style="margin-top:10px;padding:10px 14px;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:6px;line-height:1.7">
+          <div style="margin-bottom:10px">
+            <b>综合严重度评分 = 0.4 × 规模 + 0.3 × 率 + 0.2 × 频 + 0.1 × 持续天数</b>，范围 0~1，越大越严重。
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#A32D2D">规模</b> = min(1, log10(缺货量+1) / 4.5)　<span style="color:#64748B">// 3.16 万支=1.0</span></div>
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#1E40AF">率</b> = 窗口内首日缺货量 ÷ 订单量　<span style="color:#64748B">// 100%=1.0</span></div>
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#92400E">频</b> = 缺货工作日 ÷ 有单工作日　<span style="color:#64748B">// 100%=1.0</span></div>
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#185FA5">持续天数</b> = min(1, 缺货天数/10)　<span style="color:#64748B">// 10天=1.0</span></div>
+          </div>
+          <div style="margin-top:10px">
+            <b>四象限怎么划分？</b>横轴=频（持续性），纵轴=率（强度），各以 60% 划线。
+            <span style="color:#A32D2D">右</span>上（率+频都 ≥ 60%）= <b>双高</b>：缺得多 + 经常缺。
+            <span style="color:#854F0B">左</span>上（频高率低）= <b>高频低率</b>：每单都缺一点。
+            <span style="color:#185FA5">右</span>下（率高频低）= <b>低频高率</b>：偶发大单嫌疑。
+            <span style="color:#5F5E5A">左</span>下（率+频都低）= <b>双低·偶发</b>。
+          </div>
+          <div style="margin-top:8px">
+            <b>阈值含义：</b>
+            <span style="background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ 0.55</span> 入选「双高重点跟进清单」　
+            <span style="background:#FEE2E2;color:#A32D2D;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ 0.65</span> 触发补货紧急升级（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）
+          </div>
+          <div style="margin-top:8px">
+            <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 3 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~2 天（频率无统计意义，不参与双高判定）。
+          </div>
+          <div style="margin-top:8px">
+            <b>色条规则：</b>双高占比 <span style="color:#EF4444">≥15% 红</span>/<span style="color:#F59E0B">≥10% 黄</span>/<span style="color:#10B981">&lt;10% 绿</span>；首日满足率 <span style="color:#10B981">≥85% 绿</span>/<span style="color:#F59E0B">≥78% 黄</span>/<span style="color:#EF4444">&lt;78% 红</span>；严重度列 <span style="color:#DC2626">≥0.65 红</span>/<span style="color:#D97706">≥0.55 橙</span>/<span style="color:#64748B">&lt;0.55 灰</span>。
+          </div>
+        </div>
+      </details>
     </div>
 
     <!-- v143: 用户需求重读——「散点图(左) + 数字版四象限方块图(右) 同一层面并列」，
@@ -5004,7 +5027,7 @@ function renderShortageMonthly() {
       · 已剔除周六周日——周末 RDC 不排单，首日缺货量≈订单量（实测 8/08、8/22 首日满足率仅 0.3%），计入会虚增缺货量并制造虚假缺货组合。<br>
       · <strong>首日缺货率 MR</strong> = 月累计首日缺货量 ÷ 月累计订单量，衡量缺货强度。<br>
       · <strong>缺货频率 SF</strong> = 首日缺货工作日数 ÷ <u>该 SKU 有单工作日数</u>（非当月工作日），衡量持续性；用有单天数为分母可避免低频次下单 SKU 的频率上限被压死，且月中小月数据不全时不会被系统性稀释。<br>
-      · <strong>「双高」入选</strong> = 严重度评分 ≥ 0.55（综合规模、率、频、持续天数；详见「判定逻辑说明」Tab）。<br>
+      · <strong>「双高」入选</strong> = 严重度评分 ≥ 0.55（综合规模、率、频、持续天数；详见上方可展开面板）。<br>
       · <strong>补货紧急升级</strong> = 严重度评分 ≥ 0.65（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）。<br>
       · <strong>总仓供应 / 异常天数 / 补货瓶颈（v138 新增）</strong>：数据来自缺货报告（shortage）的 dcSupply 字段；<strong>补货瓶颈判定</strong>——<span style="color:var(--color-red);background:#FEE2E2;padding:0 4px">总仓卡死·需总仓协调</span> 表示总仓异常天数 ≥ 该 SKU×RDC 缺货天数（补多少都没用，必须先解决总仓供给）；<span style="color:#92400E;background:#FEF3C7;padding:0 4px">部分依赖总仓</span> 表示总仓部分问题需并行处理；<span style="color:#065F46;background:#D1FAE5;padding:0 4px">总仓正常·问题在 RDC 内部</span> 表示缺货是 RDC 内部问题，调整分仓比例即可。
     </div>
@@ -5229,131 +5252,6 @@ function renderDrillTableBody(items) {
 
 // 兼容老 renderDrillPanel 调用（空函数，已被 modal 取代）
 function renderDrillPanel() { return ''; }
-
-// ============ v148 判定逻辑说明 Tab ============
-// 面向新用户的业务语言解释：所有"双高""严重度""色条"等概念的定义与阈值
-function renderShortageLogic() {
-  setTitle('缺货分析 - 判定逻辑说明');
-  const page = document.getElementById('page-shortage');
-  if (!page) return;
-  page.innerHTML = `
-    <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:8px">
-      <span style="font-size:12px;color:var(--text-secondary)">本 Tab 用业务语言说明四象限、严重度评分、"双高"等概念的判定规则。技术细节可悬停 tooltip 查看。</span>
-    </div>
-    ${shortageTabBarHtml('logic')}
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-      <!-- 1. 缺货强度 = 率 × 频 -->
-      <div class="card">
-        <div class="card-header"><span class="card-title">📊 ① 什么是"率"和"频"</span></div>
-        <div style="padding:14px;font-size:13px;color:#374151;line-height:1.8">
-          <div style="margin-bottom:12px">
-            <span style="display:inline-block;background:#DBEAFE;color:#1E40AF;padding:2px 10px;border-radius:4px;font-weight:600;margin-right:6px">率</span>
-            衡量「<b>缺货强度</b>」：窗口内累计首日缺货量 ÷ 累计订单量。
-            <div style="font-size:11px;color:#64748B;margin-top:4px">例：3000 支订单里 2400 支首日没排上 → 率 = 80%</div>
-          </div>
-          <div>
-            <span style="display:inline-block;background:#FEF3C7;color:#92400E;padding:2px 10px;border-radius:4px;font-weight:600;margin-right:6px">频</span>
-            衡量「<b>缺货持续性</b>」：缺货工作日数 ÷ 该 SKU 在窗口内的有单工作日数。
-            <div style="font-size:11px;color:#64748B;margin-top:4px">例：12 天有单里 8 天缺 → 频 = 67%</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 2. 四象限划分 -->
-      <div class="card">
-        <div class="card-header"><span class="card-title">📐 ② 四象限怎么划分（率×频）</span></div>
-        <div style="padding:14px;font-size:13px;color:#374151;line-height:1.8">
-          <div>横轴 = 频（持续性），纵轴 = 率（强度），各以 60% 划线：</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-            <div style="background:#FCEBEB;padding:8px 10px;border-radius:6px;border:1px solid #FCA5A5">
-              <div style="font-size:12px;font-weight:600;color:#A32D2D">📍 双高 · 重点跟进</div>
-              <div style="font-size:11px;color:#7F1D1D">率 ≥ 60% <b>且</b> 频 ≥ 60%</div>
-              <div style="font-size:11px;color:#7F1D1D;margin-top:2px">缺得多 <b>又</b> 经常缺，最该盯的 SKU</div>
-            </div>
-            <div style="background:#FEF3C7;padding:8px 10px;border-radius:6px;border:1px solid #FDE68A">
-              <div style="font-size:12px;font-weight:600;color:#854F0B">📍 高频低率</div>
-              <div style="font-size:11px;color:#92400E">频 ≥ 60% <b>但</b> 率 &lt; 60%</div>
-              <div style="font-size:11px;color:#92400E;margin-top:2px">经常缺但每次缺不多</div>
-            </div>
-            <div style="background:#E6F1FB;padding:8px 10px;border-radius:6px;border:1px solid #85B7EB">
-              <div style="font-size:12px;font-weight:600;color:#185FA5">📍 低频高率</div>
-              <div style="font-size:11px;color:#0C447C">率 ≥ 60% <b>但</b> 频 &lt; 60%</div>
-              <div style="font-size:11px;color:#0C447C;margin-top:2px">偶发大单嫌疑</div>
-            </div>
-            <div style="background:#F1EFE8;padding:8px 10px;border-radius:6px;border:1px solid #D3D1C7">
-              <div style="font-size:12px;font-weight:600;color:#5F5E5A">📍 双低 · 偶发</div>
-              <div style="font-size:11px;color:#5F5E5A">率 &lt; 60% <b>且</b> 频 &lt; 60%</div>
-              <div style="font-size:11px;color:#5F5E5A;margin-top:2px">偶发小量，噪声区</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3. 严重度评分 -->
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-header"><span class="card-title">🎯 ③ 严重度评分（综合打分）</span></div>
-      <div style="padding:14px;font-size:13px;color:#374151;line-height:1.8">
-        <div>为什么仅看"率 ≥ 60% 且 频 ≥ 60%"不够？<b>容易漏掉"低率但累计缺货量大"的 SKU</b>。例如：某 SKU 月度订单 8 万支、缺货 4 万支、率仅 49%——按 60% 门槛不入选，但累计缺货量是双高 SKU 的 10 倍以上。</div>
-        <div style="background:#FAFBFC;border:1px solid #E5E7EB;border-radius:6px;padding:12px 16px;margin:10px 0">
-          <div style="font-size:12px;font-weight:600;color:#1F2937;margin-bottom:6px">综合严重度评分公式（0 ~ 1，越大越严重）：</div>
-          <div style="font-family:monospace;font-size:13px;color:#1F2937;line-height:1.7">
-            严重度 = <span style="color:#A32D2D">0.4 × 规模</span> + <span style="color:#1E40AF">0.3 × 率</span> + <span style="color:#92400E">0.2 × 频</span> + <span style="color:#185FA5">0.1 × 持续天数</span>
-          </div>
-          <div style="font-size:11px;color:#64748B;margin-top:8px;line-height:1.7">
-            <div><b>规模</b> = min(1, log10(缺货量+1) / 4.5)　<span style="color:#A32D2D">// 3.16 万支 = 满分</span></div>
-            <div><b>率</b> = min(1, 率)　<span style="color:#1E40AF">// 100% = 满分</span></div>
-            <div><b>频</b> = min(1, 频)　<span style="color:#92400E">// 100% = 满分</span></div>
-            <div><b>持续天数</b> = min(1, 缺货天数 / 10)　<span style="color:#185FA5">// 10 天 = 满分</span></div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
-          <div style="background:#DBEAFE;padding:8px 12px;border-radius:6px;border:1px solid #93C5FD">
-            <div style="font-size:12px;font-weight:600;color:#1E40AF">严重度评分 ≥ 0.55</div>
-            <div style="font-size:11px;color:#1E40AF;margin-top:4px">→ 入选「双高重点跟进清单」（橙色及以上）</div>
-          </div>
-          <div style="background:#FEE2E2;padding:8px 12px;border-radius:6px;border:1px solid #FCA5A5">
-            <div style="font-size:12px;font-weight:600;color:#A32D2D">严重度评分 ≥ 0.65</div>
-            <div style="font-size:11px;color:#A32D2D;margin-top:4px">→ 触发补货建议紧急升级（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 4. 颜色规则 -->
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-header"><span class="card-title">🎨 ④ 各处色条规则</span></div>
-      <div style="padding:14px;font-size:13px;color:#374151;line-height:1.9">
-        <div><b>各 RDC 卡片「双高占比」徽章：</b>
-          <span style="display:inline-block;background:#EF4444;color:#FFFFFF;padding:2px 8px;border-radius:4px;margin:0 4px">≥ 15% 红</span>
-          <span style="display:inline-block;background:#F59E0B;color:#FFFFFF;padding:2px 8px;border-radius:4px;margin:0 4px">≥ 10% 黄</span>
-          <span style="display:inline-block;background:#10B981;color:#FFFFFF;padding:2px 8px;border-radius:4px;margin:0 4px">&lt; 10% 绿</span>
-        </div>
-        <div style="margin-top:6px"><b>各 RDC 卡片「首日满足率」色条：</b>
-          <span style="display:inline-block;background:#10B981;color:#FFFFFF;padding:2px 8px;border-radius:4px;margin:0 4px">≥ 85% 绿</span>
-          <span style="display:inline-block;background:#F59E0B;color:#FFFFFF;padding:2px 8px;border-radius:4px;margin:0 4px">≥ 78% 黄</span>
-          <span style="display:inline-block;background:#EF4444;color:#FFFFFF;padding:2px 8px;border-radius:4px;margin:0 4px">&lt; 78% 红</span>
-        </div>
-        <div style="margin-top:6px"><b>双高清单「严重度」列颜色：</b>
-          <span style="display:inline-block;color:#DC2626;padding:2px 8px;border-radius:4px;margin:0 4px;font-weight:600">≥ 0.65 红</span>
-          <span style="display:inline-block;color:#D97706;padding:2px 8px;border-radius:4px;margin:0 4px;font-weight:600">≥ 0.55 橙</span>
-          <span style="display:inline-block;color:#64748B;padding:2px 8px;border-radius:4px;margin:0 4px">&lt; 0.55 灰</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- 5. 噪声剔除 -->
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-header"><span class="card-title">🔇 ⑤ 「有效组合」vs「噪声剔除」</span></div>
-      <div style="padding:14px;font-size:13px;color:#374151;line-height:1.8">
-        <div><b>有效组合</b> = 当窗口内有首日缺货 + 有单工作日 ≥ 3 天的 SKU×RDC 组合。样本够大，频次有统计意义。</div>
-        <div style="margin-top:6px"><b>噪声剔除</b> = 有缺货但有单工作日仅 1~2 天（一次新单/偶发单，频率无统计意义），不参与严重度评分。</div>
-        <div style="margin-top:6px;color:#64748B;font-size:11px">→ 一个 RDC 噪声剔除多，说明该仓偶发单/新单占比高（可作为运营质量参考）。</div>
-      </div>
-    </div>
-  `;
-}
 
 function exportShortageCSV() {
   const data = getFilteredShortage();
