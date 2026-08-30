@@ -677,7 +677,18 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 157; // v157: 修复 RDC 下钻 key 解析 bug——v145 用 dr.slice(8) 切 rdc 名称, 但 'rdc-hi:华中RDC' slice(8) = '中RDC' (少了"华"), data.byRdc['中RDC'] 是 undefined → items=[] → modal 显示 0 个。根因: slice(N) 在中文 key 上算错(没考虑 UTF-8 字节数 vs char 数, 这里 char 数正确但 slice 位置算错)。修复: 所有 drill 解析用 dr.substring(dr.indexOf(':') + 1) 替代 dr.slice(N), 通过冒号定位避免长度算错。涉及 5 个分支: rdc-valid: rdc-hi: rdc-noise: rdc-all: rdc:。v156: 修复 openDrillModal sub 文字硬编码 0.55
+const DB_VERSION = 158; // v158: 修复 4 象限与严重度高 KPI 概念脱钩（v151~v157 累计问题）。
+  // v151 把 Q1 改成「严重度高」填充, 但严重度评分含规模维度, 严重度高的 SKU 按 MR×SF 散点位置不一定落在 Q1——
+  // 导致 Q2/Q3 几乎为零、Q4 沦为噪声区（用户截图：严重度高 175 / 高频低率 0 / 低频高率 4 / 双低 171）,
+  // 4 象限图失真, 与散点图分布完全脱钩。
+  // v158 修复: 4 象限图统一改回率×频 50%经典坐标(Q1率频双中 / Q2高频低率 / Q3低频高率 / Q4双低),
+  // 与散点图同一套坐标系, 业务视图保持一致; 象限方块图标题改为「象限 SKU 数量分布（率×频，50% 划线）」。
+  // 「严重度高重点跟进」N 个 作为 KPI 卡独立显示（仍由 P50 自动算）, 与 4 象限图职责分离:
+  //   KPI 卡 = 决策口径（含规模）= 175 左右
+  //   4 象限图 = 分布可视化（率×频）= Q1率频双中 22 个 + Q2 + Q3 + Q4
+  // 两个数字差异源于规模维度, 这是 v147 评级本身设计的捕获目标（低率但大规模的双高型）, 不应再被混淆。
+  // Q1 modal title 改回「Q1 · 率频双中 · 双高」, sub 文案明确「率≥50% 且 频≥50%」。
+  // v157: 修复 RDC 下钻 key 解析 bug——v145 用 dr.slice(8) 切 rdc 名称, 但 'rdc-hi:华中RDC' slice(8) = '中RDC' (少了"华"), data.byRdc['中RDC'] 是 undefined → items=[] → modal 显示 0 个。根因: slice(N) 在中文 key 上算错(没考虑 UTF-8 字节数 vs char 数, 这里 char 数正确但 slice 位置算错)。修复: 所有 drill 解析用 dr.substring(dr.indexOf(':') + 1) 替代 dr.slice(N), 通过冒号定位避免长度算错。涉及 5 个分支: rdc-valid: rdc-hi: rdc-noise: rdc-all: rdc:。v156: 修复 openDrillModal sub 文字硬编码 0.55
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4732,20 +4743,19 @@ function renderShortageMonthly() {
   window._msSevDouble = SEV_DOUBLE;
   window._msSevHigh = SEV_HIGH;
 
-  // v151: 象限分流重定义——Q1 = 「严重度高 · 重点跟进」(=严重度评分≥P50)，与 KPI 双高卡数字口径完全一致；
-  // Q2/Q3/Q4 保留率×频 50% 划分（仅算严重度低的，避免和 Q1 重复计数）
+  // v158: 4 象限统一改回率×频 50%（经典坐标）。
+  // 早先 v151 用「严重度高」填充 Q1 导致 Q2/Q3/Q4 严重失真——严重度评分含规模维度,
+  // 严重度高的 SKU 按 MR×SF 散点位置不一定落在 Q1.
+  // 改回后: Q1=率频双中 / Q2=高频低率 / Q3=低频高率 / Q4=双低. 「严重度高重点跟进」
+  // (175 左右) 作为 KPI 卡独立显示,与象限图职责分离。
   const q = { q1: [], q2: [], q3: [], q4: [] };
   valid.forEach(p => {
-    if (p.severity >= SEV_DOUBLE) {
-      q.q1.push(p);  // 严重度高（直接进 Q1，不再二次分流）
-    } else {
-      const hiRate = p.mr >= MS_PROFILE.MR;
-      const hiFreq = p.sf >= MS_PROFILE.SF;
-      if (hiRate && hiFreq) q.q2.push(p);  // 率+频都高但严重度低（罕见）
-      else if (!hiRate && hiFreq) q.q3.push(p);
-      else if (hiRate && !hiFreq) q.q4.push(p);
-      else q.q4.push(p);  // 双低归入 Q4
-    }
+    const hiRate = p.mr >= MS_PROFILE.MR;
+    const hiFreq = p.sf >= MS_PROFILE.SF;
+    if (hiRate && hiFreq) q.q1.push(p);
+    else if (hiFreq && !hiRate) q.q2.push(p);
+    else if (hiRate && !hiFreq) q.q3.push(p);
+    else q.q4.push(p);
   });
   Object.values(q).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
 
@@ -4939,7 +4949,7 @@ function renderShortageMonthly() {
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><span class="card-title">象限 SKU 数量分布</span>
+        <div class="card-header"><span class="card-title">象限 SKU 数量分布（率 × 频，50% 划线）</span>
           <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击色块下钻该象限</span></div>
         <div style="padding:12px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;height:316px">
@@ -5174,7 +5184,7 @@ function openDrillModal(key, resetPage) {
   const data = window._msDrillData || {};
   let items, title, sub, drillType;
   const dr = key;
-  if (dr === 'q1') { items = data.q1 || []; title = 'Q1 · 严重度高 · 重点跟进'; sub = '严重度评分 ≥ ' + (window._msSevDouble||0.55).toFixed(2) + '（综合规模/率/频/持续天数）'; drillType = 'quadrant'; }
+  if (dr === 'q1') { items = data.q1 || []; title = 'Q1 · 率频双中 · 双高'; sub = '率 ≥ 50% <b>且</b> 频 ≥ 50% 的 SKU×RDC 组合（按率×频 50% 划线）'; drillType = 'quadrant'; }
   else if (dr === 'q2') { items = data.q2 || []; title = 'Q2 · 高频低率'; sub = '频次高但单次缺货率低 — 每单都缺一点'; drillType = 'quadrant'; }
   else if (dr === 'q3') { items = data.q3 || []; title = 'Q3 · 低频高率'; sub = '样本少但单次率高 — 一次性大单嫌疑'; drillType = 'quadrant'; }
   else if (dr === 'q4') { items = data.q4 || []; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; drillType = 'quadrant'; }
