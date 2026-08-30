@@ -5001,7 +5001,10 @@ function renderShortageMonthly() {
           <div style="margin-top:6px;color:#64748B;font-size:11px">
             本月基准：严重度评分 P75 = ${SEV_DOUBLE_TXT}、P90 = ${SEV_HIGH_TXT}（中位数 P50 = ${(dynTh.sevP50||0).toFixed(2)} 仅供参考）。<b>阈值跟随当月数据自适应</b>，淡季自动降低、旺季自动提高，清单长度恒定（约 25% / 10%）。
             <div style="margin-top:4px">集中度：按严重度排序，<b>前 25% 的 SKU 覆盖约 77% 的缺货量</b>，前 10% 覆盖约 46%——接近 2/8 法则，重点明确。</div>
-            <div style="margin-top:4px"><b>业务硬保险</b>：缺货量低于 <b>${hardFloor.toLocaleString()} 支</b> = max(当月 P50, 500 支业务硬下限) 的 SKU，规模项强制记 0，<b>即率/频双高也不进入严重度高清单</b>——避免小规模大单被误判为"严重"。替代 v161 的 500 支硬下限（无统计根据，已删）。<br><span style="color:#64748B">· P50 自适应：淡季 P50 变小 → 硬下限自动降低；旺季 P50 变大 → 硬下限自动升高<br>· 业务可解释：缺货量低于当月 P50 = 规模排后 50%，不算"严重"</span></div>
+            <div style="margin-top:4px"><b>业务硬保险</b>（v162 回归数据驱动）：缺货量低于 <b>${hardFloor.toLocaleString()} 支</b> = <b>当月 P50 缺货量中位数</b> 的 SKU，规模项强制记 0，<b>即率/频双高也不进入严重度高清单</b>——避免小规模大单被误判为"严重"。<br>
+<span style="color:#64748B">· v161 双重保险里的 500 支硬下限已删（v131 拍脑袋值，0 统计根据）<br>
+· P50 自适应：淡季 P50 变小 → 硬下限自动降低；旺季 P50 变大 → 硬下限自动升高<br>
+· 业务可解释：缺货量低于当月 P50 = 规模排后 50%，不算"严重"</span></div>
           </div>
           <div style="margin-top:8px">
             <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 4 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义，不参与严重度高判定）。
