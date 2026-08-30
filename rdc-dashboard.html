@@ -5183,7 +5183,7 @@ function openDrillModal(key, resetPage) {
   else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~3 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc-all:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdcAll ? (data.byRdcAll[rdc] || []) : []; title = rdc + ' · 该仓全部缺货'; sub = '当窗口内所有有首日缺货的组合（含有效+噪声），按缺货量降序'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
-  else if (dr.indexOf('sku:') === 0) { const sku = dr.slice(4); const g = data.sku[sku]; if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; } else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前窗口表现（共 ' + items.length + ' 个 RDC）'; } drillType = 'sku'; }
+  else if (dr.indexOf('sku:') === 0) { const sku = dr.substring(dr.indexOf(':') + 1); const g = data.sku[sku]; if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; } else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前窗口表现（共 ' + items.length + ' 个 RDC）'; } drillType = 'sku'; }
   else return;
 
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
