@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 154; // v154: ① 修复 v153 引入的下钻报错——SEV_HIGH/SEV_DOUBLE 是 renderShortageMonthly 函数内 const, renderDrillTableBody 顶层函数看不见, Q1/Q2/Q3/Q4 数字块点击报 ReferenceError: SEV_HIGH is not defined。修复：动态阈值同步到 window._msSevDouble/_msSevHigh 全局, renderDrillTableBody 读 window.* 兜底用 MS_SEVERITY。② 散点按严重度档分 3 色：红=sev≥P75（紧急升级）、黄=sev≥P50（严重度高）、灰=sev<P50（不急），位置仍按 MR×SF 画——「红色=严重」在任何象限都醒目, 纠正 v151 之前「红色只聚集 Q1」的视觉误导（用户截图反馈 Q4 区也有红气泡）。markLine 移到黄 series 上, 避开红 series 干扰。v153: 严重度评分参数全面数据驱动（用户选混合方案：动态分位数 + 显示当月基准）。问题：① sizeTerm 除数 4.5（=log10(31623)，"3.16万支=满分"）是 v147 拍脑袋定；② 阈值 0.55/0.65 也是 v147 拍脑袋定，且 v150(MIN_DAYS 3→4)+v151(划分线 60%→50%) 后严重度分布右移（中位数 0.714），0.55 已失效——8月入选 239/252=95%，"重点跟进"清单变成全量列表失去筛选意义。修复：① 新增 quantile() 分位数函数（线性插值）；② 新增 finalizeSeverity(list) 两阶段计算——阶段1 用「有效组合缺货量 P75 的 log10」作 sizeTerm 除数（8月 P75=2168支 → 除数 3.34，自适应业务量级），阶段2 求 severity 分布的 P50/P75 作阈值（8月 P50=0.714 入选 126 个=50%、P75=0.801 入选 63 个=25%）；③ build 函数返回 dynamicThresholds 供 UI 显示；④ renderShortageMonthly 读 dynTh 动态阈值（SEV_DOUBLE/SEV_HIGH）替代 MS_SEVERITY 固定值；⑤ UI 全部显示当月基准：清单标题「严重度 ≥ 0.71（本月 P50 中位数）」、详情面板「两个阈值每月自动算」+「本月基准 P75=2168 支 / P50=0.71 / P75=0.80」、底部口径说明同步。MS_SEVERITY 降为兜底默认值。v152: 删「双高」两字 + 删 500 支硬门槛
+const DB_VERSION = 155; // v155: 修复 v145 引入的下钻翻页 bug——openDrillModal 内部调 closeDrillModal(), 后者会重置 _msDrillPage=1, 导致用户点「下一页」时弹框被关闭后重建,且永远显示第1页(用户报告「点击下一页弹框就消失了」)。修复: 拆分 closeDrillModalDOM (仅清 DOM) 和 closeDrillModal (清 DOM + 重置状态) 两函数; openDrillModal 改调 closeDrillModalDOM 保留页码; 加 resetPage 第二参数(默认 true, 数字块点击重置第1页; 翻页按钮传 false 保留页码)。v154: ① 修复 v153 引入的下钻报错 (ReferenceError: SEV_HIGH is not defined) ② 散点按严重度档分 3 色
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -5163,11 +5163,14 @@ function renderShortageMonthly() {
 
 // v145: 下钻面板改为 modal 弹框（fixed 居中遮罩），不再在页面下方展开
 // 同时加「按品牌总览」——每个 SKU×RDC 组合先按品牌聚合，再列明细
-function openDrillModal(key) {
+function openDrillModal(key, resetPage) {
   if (!key) { closeDrillModal(); return; }
   window._msDrill = key;
-  window._msDrillPage = 1;
-  closeDrillModal(); // 先清旧 modal
+  // v155: resetPage=true（默认）重置第1页——数字块点击时希望从第1页开始
+  // 翻页按钮 onclick 传 resetPage=false 保留页码
+  if (resetPage !== false) window._msDrillPage = 1;
+  // _msDrillPage 只在用户首次打开模态(从数字块点击)时重置——而那时 onclick 已经先设了 page
+  closeDrillModalDOM(); // 仅清 DOM，保留 _msDrill/_msDrillPage 状态
   const data = window._msDrillData || {};
   let items, title, sub, drillType;
   const dr = key;
@@ -5231,17 +5234,23 @@ function openDrillModal(key) {
   // ESC 关闭
   document.addEventListener('keydown', modal._escHandler = function(ev) { if (ev.key === 'Escape') closeDrillModal(); });
 }
-function closeDrillModal() {
+// v155: 拆分为「仅清 DOM」和「重置状态」两个函数 —— openDrillModal 翻页/重开时
+// 不能再调 closeDrillModal(那会重置 _msDrillPage=1 让用户翻页后跳回第1页)
+function closeDrillModalDOM() {
   const old = document.getElementById('drill-modal-root');
   if (old) {
     if (old._escHandler) document.removeEventListener('keydown', old._escHandler);
     old.remove();
   }
+}
+function closeDrillModal() {
+  closeDrillModalDOM();
   window._msDrill = null;
   window._msDrillPage = 1;
 }
 window.openDrillModal = openDrillModal;
 window.closeDrillModal = closeDrillModal;
+window.closeDrillModalDOM = closeDrillModalDOM;
 
 function buildBrandSummary(items) {
   const byBrand = {};
@@ -5274,9 +5283,9 @@ function renderDrillTableBody(items) {
   const page = items.slice(start, start + perPage);
   const navHtml = tp > 1 ?
     '<div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center;border-top:1px solid #E5E7EB">' +
-      '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p - 1) + ';openDrillModal(window._msDrill)" ' + (p <= 1 ? 'disabled' : '') + '>上一页</button>' +
+      '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p - 1) + ';openDrillModal(window._msDrill,false)" ' + (p <= 1 ? 'disabled' : '') + '>上一页</button>' +
       '<span style="font-size:12px;color:var(--text-secondary)">第 ' + p + '/' + tp + ' 页</span>' +
-      '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p + 1) + ';openDrillModal(window._msDrill)" ' + (p >= tp ? 'disabled' : '') + '>下一页</button>' +
+      '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p + 1) + ';openDrillModal(window._msDrill,false)" ' + (p >= tp ? 'disabled' : '') + '>下一页</button>' +
       '<span style="font-size:11px;color:var(--text-secondary)">共 ' + items.length + ' 个</span>' +
     '</div>' : '';
   return '<div class="table-wrap"><table class="data-table" style="font-size:11px">' +
