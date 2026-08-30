@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 152; // v152: ① 删除「双高」两字（v151 已将 Q1 改用严重度评分，KPI 第三卡/双高清单/RDC 徽章/数字格/底部说明/详情面板 全改名「严重度高」）；② 删除 MS_PROFILE.MIN_QTY=500（v131 拍脑袋定的硬门槛，现已被严重度评分 sizeTerm 自动覆盖——500 支在 sizeTerm 中 = 0.24，加成后 0.4×0.24+... 几乎不触发双高）。数据驱动说明：500 是 4 个月前拍脑袋定的；sizeTerm 缩放基数 4.5（3.16万支=1.0）也是拍脑袋，未来若需"自动"基准可用有效组合缺货量 P25 动态确定（已在长文说明里 TODO 标注）。v151: 划分线 60%→50% + 象限 Q1 改用严重度评分叠面板——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
+const DB_VERSION = 153; // v153: 严重度评分参数全面数据驱动（用户选混合方案：动态分位数 + 显示当月基准）。问题：① sizeTerm 除数 4.5（=log10(31623)，"3.16万支=满分"）是 v147 拍脑袋定；② 阈值 0.55/0.65 也是 v147 拍脑袋定，且 v150(MIN_DAYS 3→4)+v151(划分线 60%→50%) 后严重度分布右移（中位数 0.714），0.55 已失效——8月入选 239/252=95%，"重点跟进"清单变成全量列表失去筛选意义。修复：① 新增 quantile() 分位数函数（线性插值）；② 新增 finalizeSeverity(list) 两阶段计算——阶段1 用「有效组合缺货量 P75 的 log10」作 sizeTerm 除数（8月 P75=2168支 → 除数 3.34，自适应业务量级），阶段2 求 severity 分布的 P50/P75 作阈值（8月 P50=0.714 入选 126 个=50%、P75=0.801 入选 63 个=25%）；③ build 函数返回 dynamicThresholds 供 UI 显示；④ renderShortageMonthly 读 dynTh 动态阈值（SEV_DOUBLE/SEV_HIGH）替代 MS_SEVERITY 固定值；⑤ UI 全部显示当月基准：清单标题「严重度 ≥ 0.71（本月 P50 中位数）」、详情面板「两个阈值每月自动算」+「本月基准 P75=2168 支 / P50=0.71 / P75=0.80」、底部口径说明同步。MS_SEVERITY 降为兜底默认值。v152: 删「双高」两字 + 删 500 支硬门槛叠面板——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4165,20 +4165,55 @@ let shortagePage = 1;
 //  4. 双高门槛：MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支
 //     （2026-08 实测命中 34 个，占 365 个缺货组合的 9.3%）
 var MS_PROFILE = { MR: 0.5, SF: 0.5, MIN_DAYS: 4 }; // v152: 删除 MIN_QTY=500（v131 拍脑袋定的硬门槛）—— 严重度评分的 sizeTerm 已含 log10(缺货量+1)/4.5 自动捕获规模，500 支门槛冗余
-// v147: 综合严重度评分（4 维度加权和，弥补 60%/60% 单门槛忽略规模的缺陷）
-// sizeTerm = min(1, log10(缺货量+1) / 4.5)  // 3.16 万支 = 1.0
-// mrTerm   = min(1, MR)
-// sfTerm   = min(1, SF)
-// dayTerm  = min(1, 缺货天数 / 10)            // 10 天 = 1.0
-// severity = 0.4*size + 0.3*mr + 0.2*sf + 0.1*day
-var MS_SEVERITY = { SEV_DOUBLE: 0.55, SEV_HIGH: 0.65 };
+// v147: 综合严重度评分（4 维度加权和，弥补单一率/频门槛忽略规模的缺陷）
+//   severity = 0.4×sizeTerm + 0.3×mrTerm + 0.2×sfTerm + 0.1×dayTerm，范围 0~1
+// v153: sizeTerm 除数改为「有效组合缺货量 P75 的 log10 值」（数据驱动，跟随业务量级自适应），
+//       不再用 v147 拍脑袋的 4.5（log10(31623)，即"3.16 万支=满分"）
+var MS_SEVERITY = { SEV_DOUBLE: 0.55, SEV_HIGH: 0.65 }; // v153: 仅作兜底默认值，实际用 prof.dynamicThresholds
 
-function calcSeverity(p) {
-  var sizeTerm = Math.min(1, Math.log10((p.shortQty || 0) + 1) / 4.5);
+// 分位数（线性插值法）：sortedArr 必须已升序
+function quantile(sortedArr, p) {
+  if (!sortedArr || sortedArr.length === 0) return 0;
+  if (sortedArr.length === 1) return sortedArr[0];
+  var i = (sortedArr.length - 1) * p;
+  var lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? sortedArr[lo] : sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (i - lo);
+}
+
+function calcSeverity(p, sizeDivisor) {
+  var sizeTerm = Math.min(1, Math.log10((p.shortQty || 0) + 1) / (sizeDivisor || 4.5));
   var mrTerm   = Math.min(1, p.mr || 0);
   var sfTerm   = Math.min(1, p.sf || 0);
   var dayTerm  = Math.min(1, (p.shortDayCnt || 0) / 10);
   return 0.4 * sizeTerm + 0.3 * mrTerm + 0.2 * sfTerm + 0.1 * dayTerm;
+}
+
+// v153: 两阶段计算严重度 + 动态分位数阈值
+//  阶段1：用「缺货量 P75 的 log10」作 sizeTerm 除数算 severity（除数不依赖 severity，无循环）
+//  阶段2：求 severity 分布的 P50/P75 作为「严重度高」「紧急升级」阈值
+// 返回动态阈值供 UI 显示（用户能看到当月基准）
+function finalizeSeverity(list) {
+  if (!list.length) return { shortP75: 0, sizeDivisor: 4.5, sevP50: 0.55, sevP75: 0.65 };
+  // 分位数基准只用「有效组合」（有缺货 + 有单≥MIN_DAYS）——不含无缺货/噪声组合，
+  // 否则大量不缺货的 SKU 会把 P50/P75 拉低，阈值失去区分度
+  var base = list.filter(function(q) {
+    return (q.shortQty || 0) > 0 && (q.orderDayCnt || 0) >= MS_PROFILE.MIN_DAYS;
+  });
+  if (!base.length) base = list;
+  var shorts = base.map(function(q) { return q.shortQty || 0; }).filter(function(v) { return v > 0; }).sort(function(a, b) { return a - b; });
+  var shortP75 = quantile(shorts, 0.75);
+  var sizeDivisor = Math.log10(shortP75 + 1) || 4.5;
+  list.forEach(function(q) { q.severity = calcSeverity(q, sizeDivisor); });
+  var sevs = base.map(function(q) { return q.severity; }).sort(function(a, b) { return a - b; });
+  var sevP50 = quantile(sevs, 0.50);
+  var sevP75 = quantile(sevs, 0.75);
+  list.forEach(function(q) {
+    q.isHighSeverity = q.severity >= sevP75;
+    q.isPersistentOld = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
+                        q.orderDayCnt >= MS_PROFILE.MIN_DAYS);
+    q.isPersistent = q.isPersistentOld || q.severity >= sevP50;
+  });
+  return { shortP75: shortP75, sizeDivisor: sizeDivisor, sevP50: sevP50, sevP75: sevP75 };
 }
 
 function isWeekendDate(ds) {
@@ -4228,14 +4263,7 @@ function buildMonthlyShortageProfile() {
     // v137: 派生月缺货箱数 = 整月 firstDayShort 累加 ÷ boxSpec
     // 用「按 SKU 聚合后的支数 ÷ 箱规」公式（v131 铁律），避免跨日累加导致的「同一批未满足订单在多日重复计入」虚增
     q.shortBoxes = (q.boxSpec && q.boxSpec > 0) ? Math.round(q.shortQty / q.boxSpec) : null;
-    // v147: 综合严重度评分（4 维度加权和）
-    q.severity = calcSeverity(q);
-    // v152: 严重度高 = 严重度评分 ≥ 0.55（综合规模/率/频/持续天数，规模已含在 sizeTerm 中）
-    q.isHighSeverity = q.severity >= MS_SEVERITY.SEV_HIGH;
-    // 兼容字段：保留率+频+样本天数三要素作为传统双高口径（v131 老定义，去掉 v131 拍脑袋的 500 支硬门槛）
-    q.isPersistentOld = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
-                      q.orderDayCnt >= MS_PROFILE.MIN_DAYS);
-    q.isPersistent = q.isPersistentOld || q.severity >= MS_SEVERITY.SEV_DOUBLE;
+    // v153: severity / isPersistent / isHighSeverity 改由 finalizeSeverity 用动态分位数统一计算
     list.push(q);
   }
   var mwd = {};
@@ -4243,7 +4271,8 @@ function buildMonthlyShortageProfile() {
     if (!Object.prototype.hasOwnProperty.call(monthWd, m)) continue;
     mwd[m] = Object.keys(monthWd[m]).length;
   }
-  return { list: list, byKey: prof, monthWorkdays: mwd };
+  var dynTh = finalizeSeverity(list);
+  return { list: list, byKey: prof, monthWorkdays: mwd, dynamicThresholds: dynTh };
 }
 
 // 惰性计算 + 按 orderDetail 长度缓存：parseExcel 增量导入与 IndexedDB 恢复两条路径都能拿到最新结果。
@@ -4316,15 +4345,11 @@ function buildRollingShortageProfile() {
     q.mr = q.orderQty > 0 ? q.shortQty / q.orderQty : 0;
     q.sf = q.orderDayCnt > 0 ? q.shortDayCnt / q.orderDayCnt : 0;
     q.shortBoxes = (q.boxSpec && q.boxSpec > 0) ? Math.round(q.shortQty / q.boxSpec) : null;
-    q.severity = calcSeverity(q);
-    q.isHighSeverity = q.severity >= MS_SEVERITY.SEV_HIGH;
-    q.isPersistentOld = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
-                      q.orderDayCnt >= MS_PROFILE.MIN_DAYS);
-    q.isPersistent = q.isPersistentOld || q.severity >= MS_SEVERITY.SEV_DOUBLE;
-    q.isHighSeverity = q.severity >= MS_SEVERITY.SEV_HIGH;
+    // v153: severity / isPersistent / isHighSeverity 改由 finalizeSeverity 用动态分位数统一计算
     list.push(q);
   }
-  return { list: list, byKey: byKey, periodWorkdays: { rolling30: Object.keys(wdSet).length }, maxDs: maxDs, cutoffDs: cutoffDs };
+  var dynTh = finalizeSeverity(list);
+  return { list: list, byKey: byKey, periodWorkdays: { rolling30: Object.keys(wdSet).length }, maxDs: maxDs, cutoffDs: cutoffDs, dynamicThresholds: dynTh };
 }
 
 var _msRollCache = { len: -1, data: null };
@@ -4697,11 +4722,18 @@ function renderShortageMonthly() {
     .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
     .sort((a, b) => b.hiPct - a.hiPct);
 
-  // v151: 象限分流重定义——Q1 = 「严重度高 · 重点跟进」(=严重度评分≥0.55)，与 KPI 双高卡数字口径完全一致；
+  // v153: 动态分位数阈值（sizeTerm 除数用缺货量 P75；严重度高=P50、紧急升级=P75）
+  const dynTh = prof.dynamicThresholds || { shortP75: 0, sizeDivisor: 4.5, sevP50: MS_SEVERITY.SEV_DOUBLE, sevP75: MS_SEVERITY.SEV_HIGH };
+  const SEV_DOUBLE = dynTh.sevP50;
+  const SEV_HIGH = dynTh.sevP75;
+  const SEV_DOUBLE_TXT = SEV_DOUBLE.toFixed(2);
+  const SEV_HIGH_TXT = SEV_HIGH.toFixed(2);
+
+  // v151: 象限分流重定义——Q1 = 「严重度高 · 重点跟进」(=严重度评分≥P50)，与 KPI 双高卡数字口径完全一致；
   // Q2/Q3/Q4 保留率×频 50% 划分（仅算严重度低的，避免和 Q1 重复计数）
   const q = { q1: [], q2: [], q3: [], q4: [] };
   valid.forEach(p => {
-    if (p.severity >= MS_SEVERITY.SEV_DOUBLE) {
+    if (p.severity >= SEV_DOUBLE) {
       q.q1.push(p);  // 严重度高（直接进 Q1，不再二次分流）
     } else {
       const hiRate = p.mr >= MS_PROFILE.MR;
@@ -4874,9 +4906,12 @@ function renderShortageMonthly() {
             <span style="color:#5F5E5A">左</span>下（率+频都低）= <b>双低·偶发</b>。
           </div>
           <div style="margin-top:8px">
-            <b>阈值含义：</b>
-            <span style="background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ 0.55</span> 入选「严重度高重点跟进清单」　
-            <span style="background:#FEE2E2;color:#A32D2D;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ 0.65</span> 触发补货紧急升级（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）
+            <b>两个阈值（每月按实际数据自动算，不是固定值）：</b>
+            <span style="background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ ${SEV_DOUBLE_TXT}</span> 入选「严重度高重点跟进清单」　
+            <span style="background:#FEE2E2;color:#A32D2D;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ ${SEV_HIGH_TXT}</span> 触发补货紧急升级（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）
+          </div>
+          <div style="margin-top:6px;color:#64748B;font-size:11px">
+            本月基准：窗口内有效组合缺货量的 P75 = ${Math.round(dynTh.shortP75).toLocaleString()} 支（作为「规模满分」基准，即超过这个数 = 规模满分）；严重度评分的中位数 P50 = ${SEV_DOUBLE_TXT}、P75 = ${SEV_HIGH_TXT}。<b>阈值跟随当月数据自适应</b>，淡季自动降低、旺季自动提高，清单长度恒定（约 50% / 25%）。
           </div>
           <div style="margin-top:8px">
             <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 4 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义，不参与严重度高判定）。
@@ -4907,10 +4942,10 @@ function renderShortageMonthly() {
               <div style="font-size:32px;font-weight:500;color:#854F0B;line-height:1.1">${q.q2.length}</div>
               <div style="font-size:11px;color:#92400E">频 ≥ 50% 且率 &lt; 50%</div>
             </div>
-            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看严重度评分 ≥ 0.55 的 ${q.q1.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看严重度评分 ≥ ${SEV_DOUBLE_TXT} 的 ${q.q1.length} 个 SKU×RDC 组合明细">
               <div style="font-size:12px;color:#A32D2D;font-weight:500">严重度高 · 重点跟进</div>
               <div style="font-size:32px;font-weight:500;color:#A32D2D;line-height:1.1">${q.q1.length}</div>
-              <div style="font-size:11px;color:#7F1D1D">严重度评分 ≥ 0.55</div>
+              <div style="font-size:11px;color:#7F1D1D">严重度 ≥ ${SEV_DOUBLE_TXT}（本月 P50）</div>
             </div>
             <div onclick="openDrillModal('q4')" style="cursor:pointer;border-radius:6px;background:#F1EFE8;border:1px solid #D3D1C7;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双低象限的 ${q.q4.length} 个 SKU×RDC 组合明细（仅含严重度低的）">
               <div style="font-size:12px;color:#5F5E5A;font-weight:500">双低 · 偶发</div>
@@ -4971,7 +5006,7 @@ function renderShortageMonthly() {
     
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <span class="card-title">严重度高重点跟进清单（${hi.length} 个 · 严重度评分 ≥ 0.55）</span>
+        <span class="card-title">严重度高重点跟进清单（${hi.length} 个 · 严重度评分 ≥ ${SEV_DOUBLE_TXT}（本月 P50 中位数））</span>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
           ${sortBtn('sev', '严重度')}${sortBtn('qty', '缺货量')}${sortBtn('mr', '首日缺货率')}${sortBtn('sf', '缺货频率')}
@@ -5034,8 +5069,8 @@ function renderShortageMonthly() {
       · 已剔除周六周日——周末 RDC 不排单，首日缺货量≈订单量（实测 8/08、8/22 首日满足率仅 0.3%），计入会虚增缺货量并制造虚假缺货组合。<br>
       · <strong>首日缺货率 MR</strong> = 月累计首日缺货量 ÷ 月累计订单量，衡量缺货强度。<br>
       · <strong>缺货频率 SF</strong> = 首日缺货工作日数 ÷ <u>该 SKU 有单工作日数</u>（非当月工作日），衡量持续性；用有单天数为分母可避免低频次下单 SKU 的频率上限被压死，且月中小月数据不全时不会被系统性稀释。<br>
-      · <strong>「严重度高」入选</strong> = 严重度评分 ≥ 0.55（综合规模、率、频、持续天数；详见上方可展开面板）。<br>
-      · <strong>补货紧急升级</strong> = 严重度评分 ≥ 0.65（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）。<br>
+      · <strong>「严重度高」入选</strong> = 严重度评分 ≥ ${SEV_DOUBLE_TXT}（本月 P50 中位数，按当月数据自适应）。<br>
+      · <strong>补货紧急升级</strong> = 严重度评分 ≥ ${SEV_HIGH_TXT}（本月 P75，按当月数据自适应）。<br>
       · <strong>总仓供应 / 异常天数 / 补货瓶颈（v138 新增）</strong>：数据来自缺货报告（shortage）的 dcSupply 字段；<strong>补货瓶颈判定</strong>——<span style="color:var(--color-red);background:#FEE2E2;padding:0 4px">总仓卡死·需总仓协调</span> 表示总仓异常天数 ≥ 该 SKU×RDC 缺货天数（补多少都没用，必须先解决总仓供给）；<span style="color:#92400E;background:#FEF3C7;padding:0 4px">部分依赖总仓</span> 表示总仓部分问题需并行处理；<span style="color:#065F46;background:#D1FAE5;padding:0 4px">总仓正常·问题在 RDC 内部</span> 表示缺货是 RDC 内部问题，调整分仓比例即可。
     </div>
   `;
@@ -5251,7 +5286,7 @@ function renderDrillTableBody(items) {
       '<td style="text-align:right">' + (p.mr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right">' + p.shortDayCnt + '/' + p.orderDayCnt + '</td>' +
       '<td style="text-align:right">' + (p.sf * 100).toFixed(0) + '%</td>' +
-      '<td style="text-align:right;font-weight:600;color:' + ((p.severity||0) >= MS_SEVERITY.SEV_HIGH ? '#DC2626' : (p.severity||0) >= MS_SEVERITY.SEV_DOUBLE ? '#D97706' : '#64748B') + '">' + (p.severity != null ? p.severity.toFixed(2) : '—') + '</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + ((p.severity||0) >= SEV_HIGH ? '#DC2626' : (p.severity||0) >= SEV_DOUBLE ? '#D97706' : '#64748B') + '">' + (p.severity != null ? p.severity.toFixed(2) : '—') + '</td>' +
       '<td style="text-align:center">' + tagHtml(p) + '</td>' +
       '</tr>').join('') +
     '</tbody></table></div>' + navHtml;
