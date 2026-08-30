@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 149; // v149: 删除 v148 的「判定逻辑说明」独立 Tab（用户反馈多此一举——跳转不符合他点击的预期）。改为把判定逻辑整合到「缺货四象限」Tab KPI 解释段下方的可折叠 details 面板：默认收起，点「▶ 什么是严重度评分？点击展开完整判定逻辑」展开，包含严重度评分公式/4 个分项含义/四象限划分/阈值含义/有效组合 vs 噪声剔除/色条规则 6 块内容。shortageTabBarHtml 删 logic btn，renderShortage 删 logic 分支，renderShortageLogic 函数整体删除（不被调用即负债）。v148: 面向新用户重写双高文案 + 加独立判定逻辑 Tab——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
+const DB_VERSION = 150; // v150: 有效组合阈值 MIN_DAYS 3→4（用户要求更严的样本门槛）。影响：① 8月有效组合 283→252（少 31 个 3 天单的 SKU，被归入噪声）；② 噪声剔除 82→113（多 31）；③ build 函数 isPersistent 判定多排一组（原本 3 天单就进双高，现排除）；④ 改 4 处硬编码文案：KPI 解释段「有效组合 = ≥ 3 天」→「≥ 4 天」、详情面板⑤「1~2 天」→「1~3 天」、底部口径说明同步、rdc-noise 下钻 sub「1~2 天」→「1~3 天」；⑤ 用 MS_PROFILE.MIN_DAYS 模板的 4 处自动更新（气泡图副标题/rdc-valid/rdc: 下钻 sub）。v149: 删除 v148 独立判定逻辑 Tab 改 KPI 内可折叠面板——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4164,7 +4164,7 @@ let shortagePage = 1;
 //     写死分母会把所有 SKU 的频率系统性稀释。
 //  4. 双高门槛：MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支
 //     （2026-08 实测命中 34 个，占 365 个缺货组合的 9.3%）
-var MS_PROFILE = { MR: 0.6, SF: 0.6, MIN_DAYS: 3, MIN_QTY: 500 };
+var MS_PROFILE = { MR: 0.6, SF: 0.6, MIN_DAYS: 4, MIN_QTY: 500 };
 // v147: 综合严重度评分（4 维度加权和，弥补 60%/60% 单门槛忽略规模的缺陷）
 // sizeTerm = min(1, log10(缺货量+1) / 4.5)  // 3.16 万支 = 1.0
 // mrTerm   = min(1, MR)
@@ -4681,7 +4681,7 @@ function renderShortageMonthly() {
     r.order += p.orderQty;
     r.short += p.shortQty;
   });
-  // 有缺货的组合再按「有单工作日」分流：≥3 天进有效组合（参与双高判定），<3 天计入噪声剔除
+  // 有缺货的组合再按「有单工作日」分流：≥4 天进有效组合（参与双高判定），<4 天计入噪声剔除
   withShort.forEach(p => {
     const r = rdcSlot(p.rdc);
     if (p.orderDayCnt >= MS_PROFILE.MIN_DAYS) {
@@ -4872,7 +4872,7 @@ function renderShortageMonthly() {
             <span style="background:#FEE2E2;color:#A32D2D;padding:2px 8px;border-radius:4px;margin:0 2px">严重度 ≥ 0.65</span> 触发补货紧急升级（每日「紧急」标签 / 中期「★月度持续」 / 安全库存 SS ×1.3）
           </div>
           <div style="margin-top:8px">
-            <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 3 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~2 天（频率无统计意义，不参与双高判定）。
+            <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 4 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义，不参与双高判定）。
           </div>
           <div style="margin-top:8px">
             <b>色条规则：</b>双高占比 <span style="color:#EF4444">≥15% 红</span>/<span style="color:#F59E0B">≥10% 黄</span>/<span style="color:#10B981">&lt;10% 绿</span>；首日满足率 <span style="color:#10B981">≥85% 绿</span>/<span style="color:#F59E0B">≥78% 黄</span>/<span style="color:#EF4444">&lt;78% 红</span>；严重度列 <span style="color:#DC2626">≥0.65 红</span>/<span style="color:#D97706">≥0.55 橙</span>/<span style="color:#64748B">&lt;0.55 灰</span>。
@@ -4955,7 +4955,7 @@ function renderShortageMonthly() {
         </div>
       </div>
       <div style="padding:8px 12px 12px;font-size:11px;color:var(--text-secondary);line-height:1.6">
-        有效组合 = 当前窗口内有首日缺货且有单工作日 ≥ ${MS_PROFILE.MIN_DAYS} 天的 SKU×RDC 组合；噪声剔除 = 有缺货但有单仅 1~2 天（频率无统计意义）。<br>
+        有效组合 = 当前窗口内有首日缺货且有单工作日 ≥ ${MS_PROFILE.MIN_DAYS} 天的 SKU×RDC 组合；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义）。<br>
         双高占比 = 双高组合数 ÷ 该仓有效组合数。<strong>大仓组合基数大，绝对数天然偏高，请以占比横向比较</strong>。噪声剔除数多，说明该仓偶发单/新单占比高。<br>
         色条规则:双高占比 <span style="color:#EF4444;font-weight:600">红 ≥ 15%</span> / <span style="color:#F59E0B;font-weight:600">黄 ≥ 10%</span> / <span style="color:#10B981;font-weight:600">绿 &lt; 10%</span> · 首日满足率 <span style="color:#10B981;font-weight:600">绿 ≥ 85%</span> / <span style="color:#F59E0B;font-weight:600">黄 ≥ 78%</span> / <span style="color:#EF4444;font-weight:600">红 &lt; 78%</span>
       </div>
@@ -5124,7 +5124,7 @@ function openDrillModal(key) {
   else if (dr === 'q4') { items = data.q4 || []; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; drillType = 'quadrant'; }
   else if (dr.indexOf('rdc-valid:') === 0) { const rdc = dr.slice(11); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc-hi:') === 0) { const rdc = dr.slice(8); items = data.byRdc[rdc] ? data.byRdc[rdc].filter(p => p.isPersistent) : []; title = rdc + ' · 该仓双高组合'; sub = '严重度评分 ≥ 0.55 的 SKU（缺得多 + 经常缺）'; drillType = 'rdc'; }
-  else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.slice(11); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~2 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.slice(11); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~3 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc-all:') === 0) { const rdc = dr.slice(9); items = data.byRdcAll ? (data.byRdcAll[rdc] || []) : []; title = rdc + ' · 该仓全部缺货'; sub = '当窗口内所有有首日缺货的组合（含有效+噪声），按缺货量降序'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc:') === 0) { const rdc = dr.slice(4); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
   else if (dr.indexOf('sku:') === 0) { const sku = dr.slice(4); const g = data.sku[sku]; if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; } else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前窗口表现（共 ' + items.length + ' 个 RDC）'; } drillType = 'sku'; }
