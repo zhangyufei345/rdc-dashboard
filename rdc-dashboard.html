@@ -677,16 +677,16 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 160; // v160: 三项同步调整（用户反馈 v159 后）
-  // ① 各 RDC 对照表标题：'各 RDC 同口径对照' → '各 RDC 严重度评分分布（按当月严重度 P75 入选）'——明确口径
-  // ② 业务硬保险：缺货量 < 当月 P50（8月 555 支）时 sizePct 强制 0（v131 拍脑袋 500 支 → 数据驱动 P50）
-  //    理由：低于一半 SKU 的规模 = 不算规模；避免某月大量小缺货量 SKU 把 P75 拉低
-  //    效果：严重度高 63 个按缺货量分组：≥5000 占 46% / 1000-5000 占 52% / 500-1000 仅 1 个 / <500 = 0 个
-  // ③ 色条规则分两类标注：
-  //    业务硬阈值（不随月变）：严重度高占比 15%/10%、首日满足率 85%/78%——行业约定
-  //    数据驱动阈值（随月变）：严重度列 ≥P75 橙 / ≥P90 红——用 P75/P90 档位 + 当前月 SEV_DOUBLE_TXT/SEV_HIGH_TXT
-  // finalizeSeverity 新增 shortP50 暴露给 UI（详情面板公式说明 + 基准说明 + 色条规则）
-  // v159.1: 色条规则改档位表达（≥P75 橙 / ≥P90 红）避免显示精确小数
+const DB_VERSION = 162; // v162: 用户质疑 4 个问题后整改
+  // ① 删 500 支硬下限（v161 双重保险里的）——用户问"500 支这个数字是否合理"，回答：0 统计根据
+  //    v160 单纯 P50 自适应（淡季 P50 变小硬下限自动降；旺季反之）
+  // ② 首日满足率阈值 85%/78% → 90%/80%（用户新阈值，业务自定义）
+  // ③ 删"行业约定/业务标准"——这是我编的，0 来源；改为"v131 经验值（无行业标准）"
+  // ④ 加 P75/P90 解释：分位数 = "75%/90% 的 SKU 比它小"，不是"75%/90% 的得分"
+  //    P75 = 前 25%（严重度高）/ P90 = 前 10%（紧急升级），比例 25%/10% 来自 v153 经验
+  //    P75/P90 是"前 X%"的简称写法（v153 沿用），未来如需更严谨可改成"严重度前 25%""前 10%"中文写法
+  // v161: hardFloor = max(P50, 500) 双重保险——已废（500 无统计根据）
+  // v160: 业务硬保险 P50 + 标题改 + 色条分两类
   // 同时补「具体阈值随当月数据自适应」说明，括号里展示当前月 SEV_DOUBLE_TXT/SEV_HIGH_TXT。
   // 用户反馈: 0.74/0.59 看着奇怪（其实是 v153 旧版 P75/P50，浏览器缓存）—— 强刷后应为 0.64/0.76。
   // 改后文案更稳: 档位（≥P75 橙）不随月变，具体数字（0.64/0.76）会随月自适应。
@@ -4268,15 +4268,16 @@ function finalizeSeverity(list) {
     idx += group.length;
   });
 
-  // v160: 业务硬保险——缺货量低于当月中位数（shortP50）的组合，sizePct 记 0
-  // 理由：P50 = 8月 555 支，即"中等规模下限"。低于此说明"全场一半 SKU 都比这缺得多"，
-  // 即便率/频双高也不应作为"严重"SKU 入选（避免小规模大单被误判）
-  // 业务硬阈值 v131 拍脑袋 500 支 → 现改为数据驱动的"当月 P50 缺货量"（业务可解释：低于一半 SKU 的规模 = 不算规模）
+  // v162: 业务硬保险只用 P50（数据自适应）— 删除 v161 双重保险中的 500 支硬下限
+  //   理由：500 支是 v131 拍脑袋值，0 个分位数 0 个行业基准；P50 自适应已能排除小规模 SKU
+  //   业务可解释：低于一半 SKU 的规模 = 不算规模
+  //   如淡季 P50 太低（< 200 支）让用户觉得"过松"，可加更高分位（如 P25）作为 hardFloor
   var shortP50 = quantile(shorts, 0.50);
   list.forEach(function(q) {
     if (q.sizePct == null) q.sizePct = 0;
-    if ((q.shortQty || 0) > 0 && (q.shortQty || 0) < shortP50) q.sizePct = 0;  // 业务硬保险
+    if ((q.shortQty || 0) > 0 && (q.shortQty || 0) < shortP50) q.sizePct = 0;  // v162 回归只用 P50
   });
+  var hardFloor = shortP50;  // 兼容 v161 暴露的 hardFloor 字段
 
   // 代入新公式算 severity
   list.forEach(function(q) { q.severity = calcSeverity(q, q.sizePct); });
@@ -4292,7 +4293,7 @@ function finalizeSeverity(list) {
                         q.orderDayCnt >= MS_PROFILE.MIN_DAYS);
     q.isPersistent = q.isPersistentOld || q.severity >= sevP75;   // 严重度高 = 前 25%
   });
-  return { shortP50: shortP50, shortP75: shortP75, sizeDivisor: sizeDivisor, sevP50: sevP50, sevP75: sevP75, sevP90: sevP90 };
+  return { shortP50: shortP50, hardFloor: hardFloor, shortP75: shortP75, sizeDivisor: sizeDivisor, sevP50: sevP50, sevP75: sevP75, sevP90: sevP90 };
 }
 
 function isWeekendDate(ds) {
@@ -4982,7 +4983,7 @@ function renderShortageMonthly() {
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#1E40AF">率</b> = 窗口内首日缺货量 ÷ 订单量　<span style="color:#64748B">// 100%=1.0</span></div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#92400E">频</b> = 缺货工作日 ÷ 有单工作日　<span style="color:#64748B">// 100%=1.0</span></div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#185FA5">为什么规模不压缩</b>：缺货量本身是长尾（最大是中位数的 50 倍），用分位排名<span style="color:#64748B">保留原始排序</span>，前 25% 的 SKU 能覆盖约 77% 的缺货量</div>
-            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#791F1F">规模下限保险（v160 新增）</b>：缺货量 &lt; <b>${Math.round(dynTh.shortP50).toLocaleString()} 支</b>（当月 P50）时 sizePct 强制记 0，避免小规模大单被误判为"严重"。替代 v131 拍脑袋的 500 支硬门槛</div>
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#791F1F">规模下限保险（v161 升级为双重兜底）</b>：缺货量 &lt; <b>${hardFloor.toLocaleString()} 支</b> = max(当月 P50, 500) 时 sizePct 强制记 0，避免小规模大单被误判为"严重"。P50 = 中等规模下限（数据驱动），500 = 业务硬下限（兜底新数据 P50 偏低时仍能保 500 支以下不进）。</div>
           </div>
           <div style="margin-top:10px">
             <b>四象限怎么划分？</b>横轴=频（持续性），纵轴=率（强度），各以 50% 划线。
@@ -5000,7 +5001,7 @@ function renderShortageMonthly() {
           <div style="margin-top:6px;color:#64748B;font-size:11px">
             本月基准：严重度评分 P75 = ${SEV_DOUBLE_TXT}、P90 = ${SEV_HIGH_TXT}（中位数 P50 = ${(dynTh.sevP50||0).toFixed(2)} 仅供参考）。<b>阈值跟随当月数据自适应</b>，淡季自动降低、旺季自动提高，清单长度恒定（约 25% / 10%）。
             <div style="margin-top:4px">集中度：按严重度排序，<b>前 25% 的 SKU 覆盖约 77% 的缺货量</b>，前 10% 覆盖约 46%——接近 2/8 法则，重点明确。</div>
-            <div style="margin-top:4px"><b>业务硬保险</b>：缺货量低于当月中位数 <b>${Math.round(dynTh.shortP50).toLocaleString()} 支</b>（8月 P50=555 支）的 SKU，规模项强制记 0，<b>即率/频双高也不进入严重度高清单</b>——避免小规模大单被误判为"严重"。替代 v131 拍脑袋的 500 支硬门槛，业务可解释：低于一半 SKU 的规模 = 不算规模。</div>
+            <div style="margin-top:4px"><b>业务硬保险</b>：缺货量低于 <b>${hardFloor.toLocaleString()} 支</b> = max(当月 P50, 500 支业务硬下限) 的 SKU，规模项强制记 0，<b>即率/频双高也不进入严重度高清单</b>——避免小规模大单被误判为"严重"。替代 v161 的 500 支硬下限（无统计根据，已删）。<br><span style="color:#64748B">· P50 自适应：淡季 P50 变小 → 硬下限自动降低；旺季 P50 变大 → 硬下限自动升高<br>· 业务可解释：缺货量低于当月 P50 = 规模排后 50%，不算"严重"</span></div>
           </div>
           <div style="margin-top:8px">
             <b>有效组合 vs 噪声剔除：</b>有效组合 = 当窗口有缺货 + 有单工作日 ≥ 4 天的 SKU×RDC；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义，不参与严重度高判定）。
@@ -5008,14 +5009,14 @@ function renderShortageMonthly() {
           <div style="margin-top:8px">
             <b>色条规则（分两类）：</b>
             <div style="margin-top:4px;padding:6px 10px;background:#F8FAFC;border-radius:4px">
-              <b>① 业务硬阈值（不随月变）</b> — 行业约定/业务标准：<br>
-              · 严重度高占比 <span style="color:#EF4444">≥15% 红</span>/<span style="color:#F59E0B">≥10% 黄</span>/<span style="color:#10B981">&lt;10% 绿</span>　· 首日满足率 <span style="color:#10B981">≥85% 绿</span>/<span style="color:#F59E0B">≥78% 黄</span>/<span style="color:#EF4444">&lt;78% 红</span>
+              <b>① 业务硬阈值（不随月变）</b> — 业务自定义（v131 经验值，无行业标准）：<br>
+              · 严重度高占比 <span style="color:#EF4444">≥15% 红</span>/<span style="color:#F59E0B">≥10% 黄</span>/<span style="color:#10B981">&lt;10% 绿</span>　· 首日满足率 <span style="color:#10B981">≥90% 绿</span>/<span style="color:#F59E0B">≥80% 黄</span>/<span style="color:#EF4444">&lt;80% 红</span>
             </div>
             <div style="margin-top:4px;padding:6px 10px;background:#FAFBFC;border-radius:4px">
               <b>② 数据驱动阈值（随当月数据自适应）</b> — 档位不随月变，具体数字会变：<br>
               · 严重度列 <span style="color:#DC2626">≥P90 红（紧急升级）</span>/<span style="color:#D97706">≥P75 橙（严重度高）</span>/<span style="color:#64748B">&lt;P75 灰</span>　
               当前月：严重度高 ≥ ${SEV_DOUBLE_TXT}（P75），紧急 ≥ ${SEV_HIGH_TXT}（P90）<br>
-              · 规模下限保险：缺货量 &lt; <b>${Math.round(dynTh.shortP50).toLocaleString()} 支</b>（当月 P50）不进入严重度高
+              · 规模下限保险：缺货量 &lt; <b>${hardFloor.toLocaleString()} 支</b> = max(P50, 500) 不进入严重度高
             </div>
           </div>
         </div>
