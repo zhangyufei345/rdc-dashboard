@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 144; // v144: (1) 频/率文字解释段（KPI 卡下方，向用户解释「率=强度/按量算」「频=持续性/按天算」，配举例）；(2) RDC 对照表改为卡片网格（3列×2行，每卡含双高占比色徽章+3数字格+首日满足率色条），点击下钻该 RDC——改用 data-rdc + 事件委托（彻底绕开之前 v140/v142 的 inline onclick 引号嵌套 SyntaxError）。 用户需求重读——「散点图(左) + 数字版四象限方块图(右) 同一层面并列」，v142 删浮层+上下排列走过头了。修复：恢复 row-2 grid 1fr 1fr，左侧是散点图（无浮层），右侧是「象限 SKU 数量分布」数字版方块图（2×2 grid，每格含象限名+数量+简短描述，可点击下钻该象限）——承担象限信息显示，散点不再被遮挡；RDC 对照表移到 row-2 下方独立一行。颜色与 v133/v134 浮层一致（红/黄/蓝/灰四象限色系）。v142: 用户反馈：(1) 4 个象限浮层挡住右上密集红气泡——删除 quadLabel 整套（函数+变量+v141 prepend JS+${quadLabelsHtml}引用），象限数量信息改由 card-header 副标题一行文字"高率+高频 52 · 高频低率 19 · 低频高率 10 · 双低 ·偶发 202 · 双高命中 34 · 点击散点可下钻"承载，散点 click 下钻保留；(2) 四象限图和各 RDC 同口径对照表不要并列展示——`row-2` grid 1fr 1fr 改为 `flex-direction:column`，两个 card 上下堆叠（四象限图在上全宽，对照表在下），chart-container 高度 320→340 配合更宽布局；移除 overflow:visible（不再需要）。v141: 修复象限浮层仍不显示的真根因——**echarts.init() 会清空容器内容**，page.innerHTML 里渲染的浮层被 init 删除，导致 v140 的 prepend 拿到 0 个元素、循环没执行（v133~v140 一直误判为 z-index 问题）。修复：在 initChart 之后用 quadLabelsHtml 重新创建浮层并 prepend（DOM 顺序在 zrender 容器之前 + z-index:9999）。教训：涉及 ECharts 容器的子元素，必须在 init 之后插入，不能靠 page.innerHTML 预置；mock 测试无真 ECharts，测不出这个行为，必须用 agent-browser 实测。v140: 修复象限浮层在浏览器中不显示——v133 加浮层时只设 z-index:2，但 ECharts zrender 容器 append 到 chart-container 末尾，DOM 顺序靠后 + 可能创建新 stacking context，浮层被遮挡。修复三件套：①z-index 2→9999；②chart-container 加 overflow:visible；③ECharts setOption 后用 JS 强制 prepend .quadLabel 到 chart-container 第一个子位置（DOM 顺序 + z-index 双重保证）。教训：mock 测试只能验证 DOM 内容含不含，不能验证 z-index/CSS 真实显示行为。v139: tab 标题恢复版本号显示（「vXX · 页面名」），便于一眼确认是否命中最新部署，无需开 F12。setTitle 内动态设置 + 首屏 IIFE 兜底。背景：CF Pages 的 Git 部署有 20~60s 延迟，且浏览器可能残留旧版 disk cache，用户习惯靠 tab 标题 vXX 判断版本。v138: 双高清单加「总仓供应 / 异常天数 / 补货瓶颈」3 列——v138 新增 buildMonthlyDCSupplyProfile 按 (月|SKU) 聚合 dcSupply（缺货报告口径）：dcShortDayCnt = 当月 dcSupply 含「整体缺货」或「供应紧张」的 distinct 日期数；dcSupplyLatest = 最新一日的 dcSupply 文本 + dcStockLatest。新增 judgeBottleneck(p, dcs) 判定：总仓异常天数 ≥ SKU×RDC 缺货天数 → 「总仓卡死·需总仓协调」（红）；部分依赖 → 「部分依赖总仓·并行处理」（黄）；总仓正常 → 「总仓正常·问题在 RDC 内部」（绿）。用 sku-level 维度对比 sku×RDC 维度——总仓供应与 RDC 解耦。v137: 修正「月缺货量(箱)」计算——原 v136 用 shortageData 跨日累加日缺货箱数，同一批未满足订单在多日重复显示会严重虚增（同一订单今天缺 100 箱、明天再缺 100 箱，旧算法得 200 箱，实际是同一批 100 箱）。v131 铁律要求「先按 SKU 聚合后除 boxSpec」，buildMonthlyShortageProfile 新增 boxSpec 字段并派生 shortBoxes = firstDayShort 累加 ÷ boxSpec；distAdjustments 改用 ms.shortBoxes。v136: 双高产品接入补货建议决策——①每日补货建议：双高 SKU 强制升级到「紧急」标签，评分不动（Top20 排序不受影响）；②中期分仓需求调整：双高 SKU 加「★月度持续」标签，置顶排序（persistence desc → monthShort desc），SKU 编码后加红「持续」徽章；③安全库存调整：双高 SKU 理论 SS 系数自动 ×1.3 上调，ssBase 记录原值渲染时显示「(×1.3·原N)」，SKU 编码后加红「持续」徽章 + suggestion 文案追加「· ★月度持续」。三处共用顶部 msProf/msPersistent 辅助函数（v131 的月度画像从 displayList 局部上提为 renderReplenishment 共享）。v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 145; // v145: (1) 下钻改 modal 弹框（fixed 居中遮罩 + ESC 关闭 + 点击遮罩关闭），不再在页面下方展开；(2) RDC 卡片数字下钻：双高占比徽章、有效组合、双高、噪声 4 个数字格 + 首日满足率色条 都加 data-rdc-drill（5 个下钻维度：rdc-valid/rdc-hi/rdc-noise/rdc-all + 兜底 rdc-valid）；(3) 下钻面板先按品牌聚合（buildBrandSummary：每个品牌一行，按累计缺货量降序），再列明细（renderDrillTableBody 分页 30/页）；(4) 散点/象限色块 click 全部走 openDrillModal（替代之前的 _msDrill + renderShortage 模式）；(5) 数据预聚合扩 byRdcNoise（噪声剔除）和 byRdcAll（含有效+噪声全部有缺货组合）支持数字下钻。v144: (1) KPI卡下方加「率/频」文字解释段；(2) RDC 对照表改为卡片网格；(3) 数据窗口切换默认滚动30天 用户需求重读——「散点图(左) + 数字版四象限方块图(右) 同一层面并列」，v142 删浮层+上下排列走过头了。修复：恢复 row-2 grid 1fr 1fr，左侧是散点图（无浮层），右侧是「象限 SKU 数量分布」数字版方块图（2×2 grid，每格含象限名+数量+简短描述，可点击下钻该象限）——承担象限信息显示，散点不再被遮挡；RDC 对照表移到 row-2 下方独立一行。颜色与 v133/v134 浮层一致（红/黄/蓝/灰四象限色系）。v142: 用户反馈：(1) 4 个象限浮层挡住右上密集红气泡——删除 quadLabel 整套（函数+变量+v141 prepend JS+${quadLabelsHtml}引用），象限数量信息改由 card-header 副标题一行文字"高率+高频 52 · 高频低率 19 · 低频高率 10 · 双低 ·偶发 202 · 双高命中 34 · 点击散点可下钻"承载，散点 click 下钻保留；(2) 四象限图和各 RDC 同口径对照表不要并列展示——`row-2` grid 1fr 1fr 改为 `flex-direction:column`，两个 card 上下堆叠（四象限图在上全宽，对照表在下），chart-container 高度 320→340 配合更宽布局；移除 overflow:visible（不再需要）。v141: 修复象限浮层仍不显示的真根因——**echarts.init() 会清空容器内容**，page.innerHTML 里渲染的浮层被 init 删除，导致 v140 的 prepend 拿到 0 个元素、循环没执行（v133~v140 一直误判为 z-index 问题）。修复：在 initChart 之后用 quadLabelsHtml 重新创建浮层并 prepend（DOM 顺序在 zrender 容器之前 + z-index:9999）。教训：涉及 ECharts 容器的子元素，必须在 init 之后插入，不能靠 page.innerHTML 预置；mock 测试无真 ECharts，测不出这个行为，必须用 agent-browser 实测。v140: 修复象限浮层在浏览器中不显示——v133 加浮层时只设 z-index:2，但 ECharts zrender 容器 append 到 chart-container 末尾，DOM 顺序靠后 + 可能创建新 stacking context，浮层被遮挡。修复三件套：①z-index 2→9999；②chart-container 加 overflow:visible；③ECharts setOption 后用 JS 强制 prepend .quadLabel 到 chart-container 第一个子位置（DOM 顺序 + z-index 双重保证）。教训：mock 测试只能验证 DOM 内容含不含，不能验证 z-index/CSS 真实显示行为。v139: tab 标题恢复版本号显示（「vXX · 页面名」），便于一眼确认是否命中最新部署，无需开 F12。setTitle 内动态设置 + 首屏 IIFE 兜底。背景：CF Pages 的 Git 部署有 20~60s 延迟，且浏览器可能残留旧版 disk cache，用户习惯靠 tab 标题 vXX 判断版本。v138: 双高清单加「总仓供应 / 异常天数 / 补货瓶颈」3 列——v138 新增 buildMonthlyDCSupplyProfile 按 (月|SKU) 聚合 dcSupply（缺货报告口径）：dcShortDayCnt = 当月 dcSupply 含「整体缺货」或「供应紧张」的 distinct 日期数；dcSupplyLatest = 最新一日的 dcSupply 文本 + dcStockLatest。新增 judgeBottleneck(p, dcs) 判定：总仓异常天数 ≥ SKU×RDC 缺货天数 → 「总仓卡死·需总仓协调」（红）；部分依赖 → 「部分依赖总仓·并行处理」（黄）；总仓正常 → 「总仓正常·问题在 RDC 内部」（绿）。用 sku-level 维度对比 sku×RDC 维度——总仓供应与 RDC 解耦。v137: 修正「月缺货量(箱)」计算——原 v136 用 shortageData 跨日累加日缺货箱数，同一批未满足订单在多日重复显示会严重虚增（同一订单今天缺 100 箱、明天再缺 100 箱，旧算法得 200 箱，实际是同一批 100 箱）。v131 铁律要求「先按 SKU 聚合后除 boxSpec」，buildMonthlyShortageProfile 新增 boxSpec 字段并派生 shortBoxes = firstDayShort 累加 ÷ boxSpec；distAdjustments 改用 ms.shortBoxes。v136: 双高产品接入补货建议决策——①每日补货建议：双高 SKU 强制升级到「紧急」标签，评分不动（Top20 排序不受影响）；②中期分仓需求调整：双高 SKU 加「★月度持续」标签，置顶排序（persistence desc → monthShort desc），SKU 编码后加红「持续」徽章；③安全库存调整：双高 SKU 理论 SS 系数自动 ×1.3 上调，ssBase 记录原值渲染时显示「(×1.3·原N)」，SKU 编码后加红「持续」徽章 + suggestion 文案追加「· ★月度持续」。三处共用顶部 msProf/msPersistent 辅助函数（v131 的月度画像从 displayList 局部上提为 renderReplenishment 共享）。v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4665,15 +4665,34 @@ function renderShortageMonthly() {
   });
   Object.values(q).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
 
-  // v133：下钻数据池（按象限 / 按 RDC / 按 SKU 三个维度预聚合，避免 inline JSON 撑大 HTML）
+  // v145: 下钻数据池扩展——除了原有 byRdc(有效组合) / sku，新增 rdc-noise / rdc-all 支持数字下钻
   window._msDrillData = {
     q1: q.q1, q2: q.q2, q3: q.q3, q4: q.q4,
-    byRdc: {},
-    sku: {}  // 按 sku 索引，存该 SKU 当月在所有 RDC 的画像
+    byRdc: {},        // 该 RDC 有效组合（参与双高判定）
+    byRdcNoise: {},   // 该 RDC 噪声剔除（有缺货但有单<3天）
+    byRdcAll: {},     // 该 RDC 所有有缺货组合（有效+噪声）
+    sku: {}
   };
-  rdcList.forEach(r => { window._msDrillData.byRdc[r.rdc] = []; });
-  valid.forEach(p => { if (window._msDrillData.byRdc[p.rdc]) window._msDrillData.byRdc[p.rdc].push(p); });
+  rdcList.forEach(r => {
+    window._msDrillData.byRdc[r.rdc] = [];
+    window._msDrillData.byRdcNoise[r.rdc] = [];
+    window._msDrillData.byRdcAll[r.rdc] = [];
+  });
+  // 有效组合 → byRdc
+  valid.forEach(p => {
+    if (window._msDrillData.byRdc[p.rdc]) window._msDrillData.byRdc[p.rdc].push(p);
+    if (window._msDrillData.byRdcAll[p.rdc]) window._msDrillData.byRdcAll[p.rdc].push(p);
+  });
+  // 噪声 → byRdcNoise + byRdcAll
+  withShort.forEach(p => {
+    if (p.orderDayCnt < MS_PROFILE.MIN_DAYS) {
+      if (window._msDrillData.byRdcNoise[p.rdc]) window._msDrillData.byRdcNoise[p.rdc].push(p);
+      if (window._msDrillData.byRdcAll[p.rdc]) window._msDrillData.byRdcAll[p.rdc].push(p);
+    }
+  });
   Object.values(window._msDrillData.byRdc).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
+  Object.values(window._msDrillData.byRdcNoise).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
+  Object.values(window._msDrillData.byRdcAll).forEach(arr => arr.sort((a, b) => b.shortQty - a.shortQty));
   valid.forEach(p => {
     if (!window._msDrillData.sku[p.sku]) window._msDrillData.sku[p.sku] = { name: p.name, brand: p.brand, list: [] };
     window._msDrillData.sku[p.sku].list.push(p);
@@ -4779,22 +4798,22 @@ function renderShortageMonthly() {
           <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击色块下钻该象限</span></div>
         <div style="padding:12px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;height:316px">
-            <div onclick="window._msDrill='q2';window._msDrillPage=1;renderShortage()" style="cursor:pointer;border-radius:6px;background:#FEF3C7;border:1px solid #FDE68A;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看高频低率象限的 ${q.q2.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q2')" style="cursor:pointer;border-radius:6px;background:#FEF3C7;border:1px solid #FDE68A;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看高频低率象限的 ${q.q2.length} 个 SKU×RDC 组合明细">
               <div style="font-size:12px;color:#854F0B;font-weight:500">高频低率</div>
               <div style="font-size:32px;font-weight:500;color:#854F0B;line-height:1.1">${q.q2.length}</div>
               <div style="font-size:11px;color:#92400E">每单缺一点</div>
             </div>
-            <div onclick="window._msDrill='q1';window._msDrillPage=1;renderShortage()" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双高象限的 ${q.q1.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双高象限的 ${q.q1.length} 个 SKU×RDC 组合明细">
               <div style="font-size:12px;color:#A32D2D;font-weight:500">双高 · 重点跟进</div>
               <div style="font-size:32px;font-weight:500;color:#A32D2D;line-height:1.1">${q.q1.length}</div>
               <div style="font-size:11px;color:#7F1D1D">缺货量 ≥ ${MS_PROFILE.MIN_QTY} 支 → ${hi.length} 个</div>
             </div>
-            <div onclick="window._msDrill='q4';window._msDrillPage=1;renderShortage()" style="cursor:pointer;border-radius:6px;background:#F1EFE8;border:1px solid #D3D1C7;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双低象限的 ${q.q4.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q4')" style="cursor:pointer;border-radius:6px;background:#F1EFE8;border:1px solid #D3D1C7;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双低象限的 ${q.q4.length} 个 SKU×RDC 组合明细">
               <div style="font-size:12px;color:#5F5E5A;font-weight:500">双低 · 偶发</div>
               <div style="font-size:32px;font-weight:500;color:#444441;line-height:1.1">${q.q4.length}</div>
               <div style="font-size:11px;color:#5F5E5A">噪声区</div>
             </div>
-            <div onclick="window._msDrill='q3';window._msDrillPage=1;renderShortage()" style="cursor:pointer;border-radius:6px;background:#E6F1FB;border:1px solid #85B7EB;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看低频高率象限的 ${q.q3.length} 个 SKU×RDC 组合明细">
+            <div onclick="openDrillModal('q3')" style="cursor:pointer;border-radius:6px;background:#E6F1FB;border:1px solid #85B7EB;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看低频高率象限的 ${q.q3.length} 个 SKU×RDC 组合明细">
               <div style="font-size:12px;color:#185FA5;font-weight:500">低频高率</div>
               <div style="font-size:32px;font-weight:500;color:#185FA5;line-height:1.1">${q.q3.length}</div>
               <div style="font-size:11px;color:#0C447C">一次性大单嫌疑</div>
@@ -4813,24 +4832,27 @@ function renderShortageMonthly() {
             var fillColor = r.hiPct >= 0.15 ? '#EF4444' : r.hiPct >= 0.10 ? '#F59E0B' : '#10B981';
             var satisfyColor = (1 - r.mr) >= 0.85 ? '#10B981' : (1 - r.mr) >= 0.78 ? '#F59E0B' : '#EF4444';
             var satisfyWidth = Math.max(2, Math.min(100, (1 - r.mr) * 100));
-            return '<div data-rdc="' + String(r.rdc).replace(/"/g, '&quot;') + '" ' +
+            var rdcAttr = String(r.rdc).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+            return '<div data-rdc="' + rdcAttr + '" ' +
               'style="cursor:pointer;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:8px;padding:14px;transition:transform 0.15s,box-shadow 0.15s" ' +
               'onmouseover="if(!this.dataset.busy)this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,0.08)\'" ' +
               'onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'" ' +
-              'title="点击查看 ' + String(r.rdc).replace(/"/g, '&quot;') + ' 全部有效组合明细">' +
+              'title="点击 RDC 名称下钻该仓全部缺货组合；点击数字格子下钻对应明细">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
                 '<div style="font-weight:600;font-size:14px;color:#1F2937">' + r.rdc + '</div>' +
-                '<span style="padding:3px 9px;border-radius:4px;font-size:11px;font-weight:600;color:#FFFFFF;background:' + fillColor + '">双高 ' + (r.hiPct * 100).toFixed(1) + '%</span>' +
+                '<span data-rdc-drill="rdc-hi:' + rdcAttr + '" style="padding:3px 9px;border-radius:4px;font-size:11px;font-weight:600;color:#FFFFFF;background:' + fillColor + ';cursor:pointer" title="点击下钻双高 ' + r.hi + ' 个组合">双高 ' + (r.hiPct * 100).toFixed(1) + '%</span>' +
               '</div>' +
               '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">' +
-                '<div style="text-align:center;padding:6px 4px;background:#F8FAFC;border-radius:4px"><div style="font-size:10px;color:#6B7280">有效组合</div><div style="font-size:18px;font-weight:600;line-height:1.2;color:#1F2937">' + r.valid + '</div></div>' +
-                '<div style="text-align:center;padding:6px 4px;background:#FEF2F2;border-radius:4px"><div style="font-size:10px;color:#6B7280">双高</div><div style="font-size:18px;font-weight:600;color:' + fillColor + ';line-height:1.2">' + r.hi + '</div></div>' +
-                '<div style="text-align:center;padding:6px 4px;background:#F8FAFC;border-radius:4px"><div style="font-size:10px;color:#6B7280">噪声</div><div style="font-size:18px;font-weight:600;color:#9CA3AF;line-height:1.2">' + (r.noise || '—') + '</div></div>' +
+                '<div data-rdc-drill="rdc-valid:' + rdcAttr + '" style="text-align:center;padding:6px 4px;background:#F8FAFC;border-radius:4px;cursor:pointer" title="点击下钻有效组合"><div style="font-size:10px;color:#6B7280">有效组合</div><div style="font-size:18px;font-weight:600;line-height:1.2;color:#1F2937">' + r.valid + '</div></div>' +
+                '<div data-rdc-drill="rdc-hi:' + rdcAttr + '" style="text-align:center;padding:6px 4px;background:#FEF2F2;border-radius:4px;cursor:pointer" title="点击下钻双高组合"><div style="font-size:10px;color:#6B7280">双高</div><div style="font-size:18px;font-weight:600;color:' + fillColor + ';line-height:1.2">' + r.hi + '</div></div>' +
+                '<div data-rdc-drill="rdc-noise:' + rdcAttr + '" style="text-align:center;padding:6px 4px;background:#F8FAFC;border-radius:4px;cursor:pointer" title="点击下钻噪声剔除"><div style="font-size:10px;color:#6B7280">噪声</div><div style="font-size:18px;font-weight:600;color:#9CA3AF;line-height:1.2">' + (r.noise || '—') + '</div></div>' +
               '</div>' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#6B7280;margin-bottom:4px">' +
-                '<span>首日满足率</span><span style="font-weight:600;color:' + satisfyColor + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</span>' +
+              '<div data-rdc-drill="rdc-all:' + rdcAttr + '" style="cursor:pointer" title="点击下钻该仓全部缺货组合（含有效+噪声）">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#6B7280;margin-bottom:4px">' +
+                  '<span>首日满足率</span><span style="font-weight:600;color:' + satisfyColor + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</span>' +
+                '</div>' +
+                '<div style="background:#F3F4F6;height:6px;border-radius:3px;overflow:hidden"><div style="background:' + satisfyColor + ';height:100%;width:' + satisfyWidth.toFixed(1) + '%"></div></div>' +
               '</div>' +
-              '<div style="background:#F3F4F6;height:6px;border-radius:3px;overflow:hidden"><div style="background:' + satisfyColor + ';height:100%;width:' + satisfyWidth.toFixed(1) + '%"></div></div>' +
             '</div>';
           }).join('') : '<div style="padding:40px;text-align:center;color:var(--text-secondary);grid-column:1/4">暂无数据</div>'}
         </div>
@@ -4842,8 +4864,7 @@ function renderShortageMonthly() {
       </div>
     </div>
 
-    ${renderDrillPanel()}
-
+    
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <span class="card-title">双高重点跟进清单（${hi.length} 个 · 率+频次双命中 且 缺货量≥${MS_PROFILE.MIN_QTY}支）</span>
@@ -4959,68 +4980,135 @@ function renderShortageMonthly() {
     ]
   }, true);
   // v142: v141 的 prepend JS 已无用（quadLabel 浮层整体删除，象限信息改到 card-header 副标题）
-  // 散点 click → 下钻该 SKU 跨 RDC 画像（v133 保留）
+  // 散点 click → 下钻该 SKU 跨 RDC 画像（v133 保留，v145 改走 modal）
   chart.on('click', function(params) {
     if (params.componentType !== 'series' || !params.data || !params.data.sku) return;
-    window._msDrill = 'sku:' + params.data.sku;
-    window._msDrillPage = 1;
-    renderShortage();
+    openDrillModal('sku:' + params.data.sku);
   });
 
-  // v144-2：RDC 卡片事件代理（click 下钻该 RDC 有效组合）
-  // 用事件委托避免在 JS 字符串拼接中嵌套 onclick 引号（之前 v140 路线证明嵌套引号很脆弱）
+  // v145: RDC 卡片事件代理（v144-2 升级：支持数字格子精化下钻）
+  // 优先级：data-rdc-drill > data-rdc（数字格子的精化下钻优先，空白区域走 RDC 整体下钻）
   try {
     var grid = document.getElementById('rdc-card-grid');
     if (grid && !grid._rdcBound) {
       grid._rdcBound = true;
       grid.addEventListener('click', function(ev) {
+        // 先找精确下钻（数字格子 / 色条 / 徽章）
+        var drillEl = ev.target && ev.target.closest && ev.target.closest('[data-rdc-drill]');
+        if (drillEl) {
+          var drillKey = drillEl.getAttribute('data-rdc-drill');
+          if (drillKey) { openDrillModal(drillKey); return; }
+        }
+        // 兜底：卡片整体（RDC 名 / 空白处）→ rdc-valid 等同默认
         var card = ev.target && ev.target.closest && ev.target.closest('[data-rdc]');
-        if (!card) return;
-        var rdc = card.getAttribute('data-rdc');
-        if (!rdc) return;
-        window._msDrill = 'rdc:' + rdc;
-        window._msDrillPage = 1;
-        renderShortage();
+        if (card) {
+          var rdc = card.getAttribute('data-rdc');
+          if (rdc) { openDrillModal('rdc-valid:' + rdc); return; }
+        }
       });
     }
-  } catch (e) { console.warn('[v144] RDC 卡片事件代理失败', e); }
+  } catch (e) { console.warn('[v145] RDC 卡片事件代理失败', e); }
 }
 
-// v133：下钻面板（按象限 / RDC / SKU 三种 drill key 渲染统一表格）
-function renderDrillPanel() {
-  if (!window._msDrill) return '';
+// v145: 下钻面板改为 modal 弹框（fixed 居中遮罩），不再在页面下方展开
+// 同时加「按品牌总览」——每个 SKU×RDC 组合先按品牌聚合，再列明细
+function openDrillModal(key) {
+  if (!key) { closeDrillModal(); return; }
+  window._msDrill = key;
+  window._msDrillPage = 1;
+  closeDrillModal(); // 先清旧 modal
   const data = window._msDrillData || {};
-  let items, title, sub;
-  const dr = window._msDrill;
-  if (dr === 'q1') { items = data.q1; title = 'Q1 · 双高命中 · 重点跟进'; sub = '率与频次双命中 — 重点跟进'; }
-  else if (dr === 'q2') { items = data.q2; title = 'Q2 · 高频低率'; sub = '频次高但单次缺货率低 — 每单都缺一点'; }
-  else if (dr === 'q3') { items = data.q3; title = 'Q3 · 低频高率'; sub = '样本少但单次率高 — 一次性大单嫌疑'; }
-  else if (dr === 'q4') { items = data.q4; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; }
-  else if (typeof dr === 'string' && dr.indexOf('rdc:') === 0) {
-    const rdc = dr.slice(4);
-    items = data.byRdc[rdc] || [];
-    title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合';
+  let items, title, sub, drillType;
+  const dr = key;
+  if (dr === 'q1') { items = data.q1 || []; title = 'Q1 · 双高命中 · 重点跟进'; sub = '率与频次双命中 — 重点跟进'; drillType = 'quadrant'; }
+  else if (dr === 'q2') { items = data.q2 || []; title = 'Q2 · 高频低率'; sub = '频次高但单次缺货率低 — 每单都缺一点'; drillType = 'quadrant'; }
+  else if (dr === 'q3') { items = data.q3 || []; title = 'Q3 · 低频高率'; sub = '样本少但单次率高 — 一次性大单嫌疑'; drillType = 'quadrant'; }
+  else if (dr === 'q4') { items = data.q4 || []; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; drillType = 'quadrant'; }
+  else if (dr.indexOf('rdc-valid:') === 0) { const rdc = dr.slice(11); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-hi:') === 0) { const rdc = dr.slice(8); items = data.byRdc[rdc] ? data.byRdc[rdc].filter(p => p.isPersistent) : []; title = rdc + ' · 该仓双高组合'; sub = '率+频次双命中 且 缺货量≥' + MS_PROFILE.MIN_QTY + ' 支的重点 SKU'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.slice(11); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~2 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-all:') === 0) { const rdc = dr.slice(9); items = data.byRdcAll ? (data.byRdcAll[rdc] || []) : []; title = rdc + ' · 该仓全部缺货'; sub = '当窗口内所有有首日缺货的组合（含有效+噪声），按缺货量降序'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc:') === 0) { const rdc = dr.slice(4); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
+  else if (dr.indexOf('sku:') === 0) { const sku = dr.slice(4); const g = data.sku[sku]; if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; } else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前窗口表现（共 ' + items.length + ' 个 RDC）'; } drillType = 'sku'; }
+  else return;
+
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // 品牌总览（v145 新增）
+  const brandSummary = buildBrandSummary(items);
+  const brandHtml = brandSummary.length === 0 ? '<div style="padding:12px;text-align:center;color:#94A3B8">无品牌聚合数据</div>' :
+    '<table class="data-table" style="font-size:12px;margin-bottom:8px">' +
+    '<thead><tr>' +
+    '<th style="text-align:left">品牌</th><th style="text-align:right">组合数</th><th style="text-align:right;color:var(--color-red)">双高</th>' +
+    '<th style="text-align:right">累计订单量</th><th style="text-align:right;color:var(--color-red)">累计首日缺货量</th>' +
+    '<th style="text-align:right">首日缺货率</th>' +
+    '</tr></thead><tbody>' +
+    brandSummary.map(b => '<tr>' +
+      '<td style="text-align:left;font-weight:500">' + esc(b.brand) + '</td>' +
+      '<td style="text-align:right">' + b.count + '</td>' +
+      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + b.hi + '</td>' +
+      '<td style="text-align:right">' + b.order.toLocaleString() + '</td>' +
+      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + b.short.toLocaleString() + '</td>' +
+      '<td style="text-align:right">' + (b.mr * 100).toFixed(1) + '%</td>' +
+      '</tr>').join('') +
+    '</tbody></table>';
+
+  const modal = document.createElement('div');
+  modal.id = 'drill-modal-root';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px';
+  modal.innerHTML =
+    '<div style="background:#FFFFFF;border-radius:10px;width:100%;max-width:1180px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.25);overflow:hidden">' +
+      '<div style="display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid #E5E7EB;background:#F8FAFC">' +
+        '<span style="font-size:16px;font-weight:600;color:#1F2937">📍 ' + esc(title) + '（' + items.length + ' 个）</span>' +
+        '<span style="font-size:11px;color:#64748B;margin-left:8px">' + esc(sub) + '</span>' +
+        '<button onclick="closeDrillModal()" style="margin-left:auto;padding:4px 12px;border:1px solid #D1D5DB;background:#FFFFFF;border-radius:4px;font-size:12px;cursor:pointer;color:#374151">✕ 关闭</button>' +
+      '</div>' +
+      '<div style="overflow-y:auto;flex:1;padding:16px 20px">' +
+        (items.length === 0 ? '<div style="padding:40px;text-align:center;color:var(--text-secondary)">当前条件下无数据</div>' :
+        '<details open style="margin-bottom:16px">' +
+          '<summary style="font-size:13px;font-weight:600;color:#1F2937;cursor:pointer;padding:6px 0;user-select:none">按品牌总览（' + brandSummary.length + ' 个品牌，点击收起）</summary>' +
+          '<div style="margin-top:8px;padding:8px;background:#FAFBFC;border-radius:6px;border:1px solid #E5E7EB">' + brandHtml + '</div>' +
+        '</details>' +
+        '<details open>' +
+          '<summary style="font-size:13px;font-weight:600;color:#1F2937;cursor:pointer;padding:6px 0;user-select:none">明细数据（' + items.length + ' 个 SKU×RDC 组合）</summary>' +
+          '<div style="margin-top:8px">' + renderDrillTableBody(items) + '</div>' +
+        '</details>') +
+      '</div>' +
+    '</div>';
+  // 点击遮罩关闭（但点击内容不关闭）
+  modal.addEventListener('click', function(ev) { if (ev.target === modal) closeDrillModal(); });
+  document.body.appendChild(modal);
+  // ESC 关闭
+  document.addEventListener('keydown', modal._escHandler = function(ev) { if (ev.key === 'Escape') closeDrillModal(); });
+}
+function closeDrillModal() {
+  const old = document.getElementById('drill-modal-root');
+  if (old) {
+    if (old._escHandler) document.removeEventListener('keydown', old._escHandler);
+    old.remove();
   }
-  else if (typeof dr === 'string' && dr.indexOf('sku:') === 0) {
-    const sku = dr.slice(4);
-    const g = data.sku[sku];
-    if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; }
-    else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前月表现（共 ' + items.length + ' 个 RDC）'; }
-  }
-  else return '';
-  if (!items.length) {
-    return '<div class="card" style="margin-bottom:12px;border:2px solid #3B82F6"><div class="card-header" style="display:flex;align-items:center;gap:8px">' +
-      '<span class="card-title">📍 ' + title + '（0 个）</span>' +
-      '<button class="btn-export" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="window._msDrill=null;window._msDrillPage=1;renderShortage()">关闭下钻</button></div>' +
-      '<div style="padding:24px;text-align:center;color:var(--text-secondary)">当前条件下无数据</div></div>';
-  }
-  const perPage = 30;
-  if (!window._msDrillPage) window._msDrillPage = 1;
-  const tp = Math.ceil(items.length / perPage) || 1;
-  const p = Math.min(Math.max(1, window._msDrillPage), tp);
-  const start = (p - 1) * perPage;
-  const page = items.slice(start, start + perPage);
-  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  window._msDrill = null;
+  window._msDrillPage = 1;
+}
+window.openDrillModal = openDrillModal;
+window.closeDrillModal = closeDrillModal;
+
+function buildBrandSummary(items) {
+  const byBrand = {};
+  items.forEach(p => {
+    const b = String(p.brand || '其他');
+    if (!byBrand[b]) byBrand[b] = { brand: b, count: 0, hi: 0, order: 0, short: 0 };
+    byBrand[b].count++;
+    if (p.isPersistent) byBrand[b].hi++;
+    byBrand[b].order += p.orderQty || 0;
+    byBrand[b].short += p.shortQty || 0;
+  });
+  return Object.values(byBrand)
+    .map(b => ({ ...b, mr: b.order > 0 ? b.short / b.order : 0 }))
+    .sort((a, b) => b.short - a.short);
+}
+
+function renderDrillTableBody(items) {
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const tagHtml = p => {
     if (p.isPersistent) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#FEE2E2;color:#DC2626;white-space:nowrap;font-weight:600">持续</span>';
     if (p.mr >= MS_PROFILE.MR && p.sf >= MS_PROFILE.SF) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#FEF3C7;color:#92400E;white-space:nowrap">高率+高频</span>';
@@ -5028,14 +5116,19 @@ function renderDrillPanel() {
     if (p.sf >= MS_PROFILE.SF) return '<span style="padding:1px 6px;border-radius:4px;font-size:10px;background:#DBEAFE;color:#2563EB;white-space:nowrap">高频</span>';
     return '<span style="color:#CBD5E1;font-size:10px">—</span>';
   };
-  return '<div class="card" style="margin-bottom:12px;border:2px solid #3B82F6">' +
-    '<div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-    '<span class="card-title">📍 ' + esc(title) + '（' + items.length + ' 个）</span>' +
-    '<span style="font-size:11px;color:var(--text-secondary)">' + esc(sub) + '</span>' +
-    '<button class="btn-export" style="margin-left:auto;font-size:11px;padding:3px 10px" onclick="window._msDrill=null;window._msDrillPage=1;renderShortage()">关闭下钻</button>' +
-    '</div>' +
-    '<div class="table-wrap" style="max-height:520px;overflow-y:auto">' +
-    '<table class="data-table" style="font-size:11px">' +
+  const perPage = 30;
+  const p = Math.min(Math.max(1, window._msDrillPage || 1), Math.ceil(items.length / perPage) || 1);
+  const tp = Math.ceil(items.length / perPage) || 1;
+  const start = (p - 1) * perPage;
+  const page = items.slice(start, start + perPage);
+  const navHtml = tp > 1 ?
+    '<div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center;border-top:1px solid #E5E7EB">' +
+      '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p - 1) + ';openDrillModal(window._msDrill)" ' + (p <= 1 ? 'disabled' : '') + '>上一页</button>' +
+      '<span style="font-size:12px;color:var(--text-secondary)">第 ' + p + '/' + tp + ' 页</span>' +
+      '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p + 1) + ';openDrillModal(window._msDrill)" ' + (p >= tp ? 'disabled' : '') + '>下一页</button>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">共 ' + items.length + ' 个</span>' +
+    '</div>' : '';
+  return '<div class="table-wrap"><table class="data-table" style="font-size:11px">' +
     '<thead><tr>' +
     '<th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th>' +
     '<th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>' +
@@ -5054,14 +5147,11 @@ function renderDrillPanel() {
       '<td style="text-align:right">' + (p.sf * 100).toFixed(0) + '%</td>' +
       '<td style="text-align:center">' + tagHtml(p) + '</td>' +
       '</tr>').join('') +
-    '</tbody></table></div>' +
-    '<div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center">' +
-    '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p - 1) + ';renderShortage()" ' + (p <= 1 ? 'disabled' : '') + '>上一页</button>' +
-    '<span style="font-size:12px;color:var(--text-secondary)">第 ' + p + '/' + tp + ' 页</span>' +
-    '<button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._msDrillPage=' + (p + 1) + ';renderShortage()" ' + (p >= tp ? 'disabled' : '') + '>下一页</button>' +
-    '<span style="font-size:11px;color:var(--text-secondary)">共 ' + items.length + ' 个</span>' +
-    '</div></div>';
+    '</tbody></table></div>' + navHtml;
 }
+
+// 兼容老 renderDrillPanel 调用（空函数，已被 modal 取代）
+function renderDrillPanel() { return ''; }
 
 function exportShortageCSV() {
   const data = getFilteredShortage();
