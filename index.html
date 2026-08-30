@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 146; // v146: (1) 模块名「月度缺货全貌」→「缺货四象限分析」——setTitle + Tab 按钮文字同步；(2) 月度全貌页 tab 行下方加 3 个筛选下拉框：RDC（all/各 RDC）/ 品牌（all/各品牌）/ 海南花露水（全部/仅/不含）；(3) 筛选作用于 withShort / valid / 双高 / RDC 卡片 / 四象限等所有下游（rdcOptions/brandOptions 从 prof.list 动态派生，海南花露水复用全局 _skuIsHainan）；(4) 切筛选时自动 closeDrillModal，避免下钻面板与筛选结果不一致；(5) 右上角显示窗口内总组合数 / 筛选后数 + 「清空筛选」一键复位。v145: 下钻改 modal + 数字下钻 + 品牌总览 用户需求重读——「散点图(左) + 数字版四象限方块图(右) 同一层面并列」，v142 删浮层+上下排列走过头了。修复：恢复 row-2 grid 1fr 1fr，左侧是散点图（无浮层），右侧是「象限 SKU 数量分布」数字版方块图（2×2 grid，每格含象限名+数量+简短描述，可点击下钻该象限）——承担象限信息显示，散点不再被遮挡；RDC 对照表移到 row-2 下方独立一行。颜色与 v133/v134 浮层一致（红/黄/蓝/灰四象限色系）。v142: 用户反馈：(1) 4 个象限浮层挡住右上密集红气泡——删除 quadLabel 整套（函数+变量+v141 prepend JS+${quadLabelsHtml}引用），象限数量信息改由 card-header 副标题一行文字"高率+高频 52 · 高频低率 19 · 低频高率 10 · 双低 ·偶发 202 · 双高命中 34 · 点击散点可下钻"承载，散点 click 下钻保留；(2) 四象限图和各 RDC 同口径对照表不要并列展示——`row-2` grid 1fr 1fr 改为 `flex-direction:column`，两个 card 上下堆叠（四象限图在上全宽，对照表在下），chart-container 高度 320→340 配合更宽布局；移除 overflow:visible（不再需要）。v141: 修复象限浮层仍不显示的真根因——**echarts.init() 会清空容器内容**，page.innerHTML 里渲染的浮层被 init 删除，导致 v140 的 prepend 拿到 0 个元素、循环没执行（v133~v140 一直误判为 z-index 问题）。修复：在 initChart 之后用 quadLabelsHtml 重新创建浮层并 prepend（DOM 顺序在 zrender 容器之前 + z-index:9999）。教训：涉及 ECharts 容器的子元素，必须在 init 之后插入，不能靠 page.innerHTML 预置；mock 测试无真 ECharts，测不出这个行为，必须用 agent-browser 实测。v140: 修复象限浮层在浏览器中不显示——v133 加浮层时只设 z-index:2，但 ECharts zrender 容器 append 到 chart-container 末尾，DOM 顺序靠后 + 可能创建新 stacking context，浮层被遮挡。修复三件套：①z-index 2→9999；②chart-container 加 overflow:visible；③ECharts setOption 后用 JS 强制 prepend .quadLabel 到 chart-container 第一个子位置（DOM 顺序 + z-index 双重保证）。教训：mock 测试只能验证 DOM 内容含不含，不能验证 z-index/CSS 真实显示行为。v139: tab 标题恢复版本号显示（「vXX · 页面名」），便于一眼确认是否命中最新部署，无需开 F12。setTitle 内动态设置 + 首屏 IIFE 兜底。背景：CF Pages 的 Git 部署有 20~60s 延迟，且浏览器可能残留旧版 disk cache，用户习惯靠 tab 标题 vXX 判断版本。v138: 双高清单加「总仓供应 / 异常天数 / 补货瓶颈」3 列——v138 新增 buildMonthlyDCSupplyProfile 按 (月|SKU) 聚合 dcSupply（缺货报告口径）：dcShortDayCnt = 当月 dcSupply 含「整体缺货」或「供应紧张」的 distinct 日期数；dcSupplyLatest = 最新一日的 dcSupply 文本 + dcStockLatest。新增 judgeBottleneck(p, dcs) 判定：总仓异常天数 ≥ SKU×RDC 缺货天数 → 「总仓卡死·需总仓协调」（红）；部分依赖 → 「部分依赖总仓·并行处理」（黄）；总仓正常 → 「总仓正常·问题在 RDC 内部」（绿）。用 sku-level 维度对比 sku×RDC 维度——总仓供应与 RDC 解耦。v137: 修正「月缺货量(箱)」计算——原 v136 用 shortageData 跨日累加日缺货箱数，同一批未满足订单在多日重复显示会严重虚增（同一订单今天缺 100 箱、明天再缺 100 箱，旧算法得 200 箱，实际是同一批 100 箱）。v131 铁律要求「先按 SKU 聚合后除 boxSpec」，buildMonthlyShortageProfile 新增 boxSpec 字段并派生 shortBoxes = firstDayShort 累加 ÷ boxSpec；distAdjustments 改用 ms.shortBoxes。v136: 双高产品接入补货建议决策——①每日补货建议：双高 SKU 强制升级到「紧急」标签，评分不动（Top20 排序不受影响）；②中期分仓需求调整：双高 SKU 加「★月度持续」标签，置顶排序（persistence desc → monthShort desc），SKU 编码后加红「持续」徽章；③安全库存调整：双高 SKU 理论 SS 系数自动 ×1.3 上调，ssBase 记录原值渲染时显示「(×1.3·原N)」，SKU 编码后加红「持续」徽章 + suggestion 文案追加「· ★月度持续」。三处共用顶部 msProf/msPersistent 辅助函数（v131 的月度画像从 displayList 局部上提为 renderReplenishment 共享）。v135: 统一「首日缺货率」命名——补货建议表头原为「月缺货率」，与月度缺货全貌页的「首日缺货率」不一致，且「月」字会误导（分子是「首日缺货量」这个日维度概念，只有分母是月累计，容易被理解成"这个月缺了多少天的货"）。现两处统一为「首日缺货率」，表头 title 补充说明"分子是首日缺货量，非全月缺货"。v134: 修正四象限 Q1 浮层与双高清单的口径歧义——Q1 象限(率+频次双命中)52 个 ≠ 双高清单(再叠加缺货量≥500支)34 个。Q1 浮层标题由「双高 · 重点跟进」改为「高率+高频」，下方补一行「其中双高 ≥500支：34」；双高清单卡片标题补规模门槛说明。quadLabel 新增可选 note 参数。v133: 「月度缺货全貌」四象限叠加文字+数量浮层（点击下钻该象限），散点 click 下钻该 SKU 跨 RDC 画像，RDC 对照表行 click 下钻该 RDC 有效组合清单；下钻数据池 window._msDrillData 预聚合避免 inline JSON 撑大 HTML；下钻面板 10 列含品牌/编码/名称/RDC/订单量/缺货量/率/天数/频率/标记。v132: 「月度缺货全貌」各 RDC 同口径对照表新增「噪声剔除」列——有首日缺货但当月有单工作日仅 1~2 天的 SKU×RDC 组合数（样本太少，缺货频率无统计意义，不参与双高判定），同步在表下补充有效组合/噪声剔除的口径说明。v131: 新增「月度缺货全貌」Tab（缺货分析页第三个 Tab）——按 SKU×RDC 聚合整月首日缺货、剔除双休日，产出月度首日缺货率 MR(缺货量÷订单量) 与缺货频率 SF(缺货工作日÷有单工作日)，四象限交叉 + 双高清单(MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支)；补货建议表格只读增加「月缺货率/缺货天数/频率」3 列与「持续缺货」标签，评分模型与 Top20 排序不变。v130: 「补货驾驶舱·总览」页 Top 20 缺货物料卡片新增「品牌」「RDC」两个下拉筛选框，与排序/明细切换并列；筛选作用于 SKU 聚合源数据（品牌=精确匹配，RDC=该 RDC 缺货>0）并联动 RDC 明细视图。v129: 修复「不含花露水」时品牌×RDC 出货进度矩阵全显示 100% 的 bug——根因是兜底品牌累加循环的条件写反（hainan==='no' && !isH 应为 && isH），导致非花露水 SKU 被 return 跳过、brandRdcPlan 累加为空；同步把 onlyOrder 分支从「100%」绿底改为「无计划」红字，避免再有数据异常被误显示为 100%
+const DB_VERSION = 147; // v147: 综合严重度评分（4 维度加权和）替代单一 60% 门槛——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4165,6 +4165,21 @@ let shortagePage = 1;
 //  4. 双高门槛：MR≥60% 且 SF≥60% 且有单≥3天 且 缺货量≥500支
 //     （2026-08 实测命中 34 个，占 365 个缺货组合的 9.3%）
 var MS_PROFILE = { MR: 0.6, SF: 0.6, MIN_DAYS: 3, MIN_QTY: 500 };
+// v147: 综合严重度评分（4 维度加权和，弥补 60%/60% 单门槛忽略规模的缺陷）
+// sizeTerm = min(1, log10(缺货量+1) / 4.5)  // 3.16 万支 = 1.0
+// mrTerm   = min(1, MR)
+// sfTerm   = min(1, SF)
+// dayTerm  = min(1, 缺货天数 / 10)            // 10 天 = 1.0
+// severity = 0.4*size + 0.3*mr + 0.2*sf + 0.1*day
+var MS_SEVERITY = { SEV_DOUBLE: 0.55, SEV_HIGH: 0.65 };
+
+function calcSeverity(p) {
+  var sizeTerm = Math.min(1, Math.log10((p.shortQty || 0) + 1) / 4.5);
+  var mrTerm   = Math.min(1, p.mr || 0);
+  var sfTerm   = Math.min(1, p.sf || 0);
+  var dayTerm  = Math.min(1, (p.shortDayCnt || 0) / 10);
+  return 0.4 * sizeTerm + 0.3 * mrTerm + 0.2 * sfTerm + 0.1 * dayTerm;
+}
 
 function isWeekendDate(ds) {
   if (!ds || ds.length < 10) return false;
@@ -4213,8 +4228,13 @@ function buildMonthlyShortageProfile() {
     // v137: 派生月缺货箱数 = 整月 firstDayShort 累加 ÷ boxSpec
     // 用「按 SKU 聚合后的支数 ÷ 箱规」公式（v131 铁律），避免跨日累加导致的「同一批未满足订单在多日重复计入」虚增
     q.shortBoxes = (q.boxSpec && q.boxSpec > 0) ? Math.round(q.shortQty / q.boxSpec) : null;
-    q.isPersistent = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
+    // v147: 综合严重度评分（4 维度加权和）
+    q.severity = calcSeverity(q);
+    // v147: 新双高判定 = 老门槛 OR 严重度≥0.55（捕获「低率但高规模」类SKU）
+    q.isPersistentOld = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
                       q.orderDayCnt >= MS_PROFILE.MIN_DAYS && q.shortQty >= MS_PROFILE.MIN_QTY);
+    q.isPersistent = q.isPersistentOld || q.severity >= MS_SEVERITY.SEV_DOUBLE;
+    q.isHighSeverity = q.severity >= MS_SEVERITY.SEV_HIGH;
     list.push(q);
   }
   var mwd = {};
@@ -4295,8 +4315,11 @@ function buildRollingShortageProfile() {
     q.mr = q.orderQty > 0 ? q.shortQty / q.orderQty : 0;
     q.sf = q.orderDayCnt > 0 ? q.shortDayCnt / q.orderDayCnt : 0;
     q.shortBoxes = (q.boxSpec && q.boxSpec > 0) ? Math.round(q.shortQty / q.boxSpec) : null;
-    q.isPersistent = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
+    q.severity = calcSeverity(q);
+    q.isPersistentOld = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
                       q.orderDayCnt >= MS_PROFILE.MIN_DAYS && q.shortQty >= MS_PROFILE.MIN_QTY);
+    q.isPersistent = q.isPersistentOld || q.severity >= MS_SEVERITY.SEV_DOUBLE;
+    q.isHighSeverity = q.severity >= MS_SEVERITY.SEV_HIGH;
     list.push(q);
   }
   return { list: list, byKey: byKey, periodWorkdays: { rolling30: Object.keys(wdSet).length }, maxDs: maxDs, cutoffDs: cutoffDs };
@@ -4735,9 +4758,10 @@ function renderShortageMonthly() {
     (hi.length ? '  ·  双高命中 ' + hi.length : '') +
     '  ·  点击散点可下钻</div>';
 
-  window._msSort = window._msSort || 'qty';
+  window._msSort = window._msSort || 'sev'; // v147: 默认按严重度排序
   let sorted = hi.slice();
-  if (window._msSort === 'qty') sorted.sort((a, b) => b.shortQty - a.shortQty);
+  if (window._msSort === 'sev') sorted.sort((a, b) => (b.severity || 0) - (a.severity || 0) || b.shortQty - a.shortQty);
+  else if (window._msSort === 'qty') sorted.sort((a, b) => b.shortQty - a.shortQty);
   else if (window._msSort === 'mr') sorted.sort((a, b) => b.mr - a.mr || b.shortQty - a.shortQty);
   else if (window._msSort === 'sf') sorted.sort((a, b) => b.sf - a.sf || b.shortDayCnt - a.shortDayCnt);
 
@@ -4909,10 +4933,10 @@ function renderShortageMonthly() {
     
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <span class="card-title">双高重点跟进清单（${hi.length} 个 · 率+频次双命中 且 缺货量≥${MS_PROFILE.MIN_QTY}支）</span>
+        <span class="card-title">双高重点跟进清单（${hi.length} 个 · 老门槛(率+频次双命中) 或 严重度≥0.55）</span>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
-          ${sortBtn('qty', '缺货量')}${sortBtn('mr', '首日缺货率')}${sortBtn('sf', '缺货频率')}
+          ${sortBtn('sev', '严重度')}${sortBtn('qty', '缺货量')}${sortBtn('mr', '首日缺货率')}${sortBtn('sf', '缺货频率')}
         </div>
       </div>
       <div class="table-wrap" style="max-height:500px;overflow-y:auto">
@@ -5175,6 +5199,7 @@ function renderDrillTableBody(items) {
     '<th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th>' +
     '<th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>' +
     '<th style="text-align:right">首日缺货率</th><th style="text-align:right">缺货天数/有单天数</th><th style="text-align:right">缺货频率</th>' +
+    '<th style="text-align:right" title="综合严重度：0.4×规模(log10) + 0.3×率 + 0.2×频 + 0.1×持续天数,≥0.55 入选双高,≥0.65 触发补货升级">严重度</th>' +
     '<th style="text-align:center">标记</th>' +
     '</tr></thead><tbody>' +
     page.map(p => '<tr>' +
@@ -5187,6 +5212,7 @@ function renderDrillTableBody(items) {
       '<td style="text-align:right">' + (p.mr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right">' + p.shortDayCnt + '/' + p.orderDayCnt + '</td>' +
       '<td style="text-align:right">' + (p.sf * 100).toFixed(0) + '%</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + ((p.severity||0) >= MS_SEVERITY.SEV_HIGH ? '#DC2626' : (p.severity||0) >= MS_SEVERITY.SEV_DOUBLE ? '#D97706' : '#64748B') + '">' + (p.severity != null ? p.severity.toFixed(2) : '—') + '</td>' +
       '<td style="text-align:center">' + tagHtml(p) + '</td>' +
       '</tr>').join('') +
     '</tbody></table></div>' + navHtml;
@@ -8120,7 +8146,7 @@ function renderReplenishment() {
   // v136: 月度缺货画像提到顶部供「每日建议紧急度升级/中期分仓置顶/安全库存SS系数」三处共享
   var msProf = getMonthlyShortageProfile();
   var msMonth = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
-  function msPersistent(sku, rdc) { var ms = msProf.byKey[msMonth + '|' + sku + '|' + rdc]; return !!(ms && ms.isPersistent); }
+  function msPersistent(sku, rdc) { var ms = msProf.byKey[msMonth + '|' + sku + '|' + rdc]; return !!(ms && ms.isHighSeverity); }
   // Step 1: Candidate SKU x RDC combos from latest shortage
   var rdcKeyMap = { '华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort' };
   var rdcKeys = Object.keys(rdcKeyMap);
