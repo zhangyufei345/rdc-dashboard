@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 155; // v155: 修复 v145 引入的下钻翻页 bug——openDrillModal 内部调 closeDrillModal(), 后者会重置 _msDrillPage=1, 导致用户点「下一页」时弹框被关闭后重建,且永远显示第1页(用户报告「点击下一页弹框就消失了」)。修复: 拆分 closeDrillModalDOM (仅清 DOM) 和 closeDrillModal (清 DOM + 重置状态) 两函数; openDrillModal 改调 closeDrillModalDOM 保留页码; 加 resetPage 第二参数(默认 true, 数字块点击重置第1页; 翻页按钮传 false 保留页码)。v154: ① 修复 v153 引入的下钻报错 (ReferenceError: SEV_HIGH is not defined) ② 散点按严重度档分 3 色
+const DB_VERSION = 156; // v156: 修复 openDrillModal 内 Q1/rdc-hi sub 文字硬编码「≥0.55」(v145/v152 遗留)——v153 改动态分位数后实际阈值 ≠0.55, 用户看到「0 个」以为是没数据, 实际是门槛动态但 sub 显示固定值。修复: sub 改用 (window._msSevDouble||0.55).toFixed(2) 显示当月实际 P50 阈值。v155: 修复 v145 翻页 bug
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -5174,12 +5174,12 @@ function openDrillModal(key, resetPage) {
   const data = window._msDrillData || {};
   let items, title, sub, drillType;
   const dr = key;
-  if (dr === 'q1') { items = data.q1 || []; title = 'Q1 · 严重度高 · 重点跟进'; sub = '严重度评分 ≥ 0.55（综合规模/率/频/持续天数）'; drillType = 'quadrant'; }
+  if (dr === 'q1') { items = data.q1 || []; title = 'Q1 · 严重度高 · 重点跟进'; sub = '严重度评分 ≥ ' + (window._msSevDouble||0.55).toFixed(2) + '（综合规模/率/频/持续天数）'; drillType = 'quadrant'; }
   else if (dr === 'q2') { items = data.q2 || []; title = 'Q2 · 高频低率'; sub = '频次高但单次缺货率低 — 每单都缺一点'; drillType = 'quadrant'; }
   else if (dr === 'q3') { items = data.q3 || []; title = 'Q3 · 低频高率'; sub = '样本少但单次率高 — 一次性大单嫌疑'; drillType = 'quadrant'; }
   else if (dr === 'q4') { items = data.q4 || []; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; drillType = 'quadrant'; }
   else if (dr.indexOf('rdc-valid:') === 0) { const rdc = dr.slice(11); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
-  else if (dr.indexOf('rdc-hi:') === 0) { const rdc = dr.slice(8); items = data.byRdc[rdc] ? data.byRdc[rdc].filter(p => p.isPersistent) : []; title = rdc + ' · 该仓严重度高组合'; sub = '严重度评分 ≥ 0.55 的 SKU（缺得多 + 经常缺）'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-hi:') === 0) { const rdc = dr.slice(8); items = data.byRdc[rdc] ? data.byRdc[rdc].filter(p => p.isPersistent) : []; title = rdc + ' · 该仓严重度高组合'; sub = '严重度评分 ≥ ' + (window._msSevDouble||0.55).toFixed(2) + '（本月 P50）的 SKU（缺得多 + 经常缺）'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.slice(11); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~3 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc-all:') === 0) { const rdc = dr.slice(9); items = data.byRdcAll ? (data.byRdcAll[rdc] || []) : []; title = rdc + ' · 该仓全部缺货'; sub = '当窗口内所有有首日缺货的组合（含有效+噪声），按缺货量降序'; drillType = 'rdc'; }
   else if (dr.indexOf('rdc:') === 0) { const rdc = dr.slice(4); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
