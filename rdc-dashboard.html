@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 153; // v153: 严重度评分参数全面数据驱动（用户选混合方案：动态分位数 + 显示当月基准）。问题：① sizeTerm 除数 4.5（=log10(31623)，"3.16万支=满分"）是 v147 拍脑袋定；② 阈值 0.55/0.65 也是 v147 拍脑袋定，且 v150(MIN_DAYS 3→4)+v151(划分线 60%→50%) 后严重度分布右移（中位数 0.714），0.55 已失效——8月入选 239/252=95%，"重点跟进"清单变成全量列表失去筛选意义。修复：① 新增 quantile() 分位数函数（线性插值）；② 新增 finalizeSeverity(list) 两阶段计算——阶段1 用「有效组合缺货量 P75 的 log10」作 sizeTerm 除数（8月 P75=2168支 → 除数 3.34，自适应业务量级），阶段2 求 severity 分布的 P50/P75 作阈值（8月 P50=0.714 入选 126 个=50%、P75=0.801 入选 63 个=25%）；③ build 函数返回 dynamicThresholds 供 UI 显示；④ renderShortageMonthly 读 dynTh 动态阈值（SEV_DOUBLE/SEV_HIGH）替代 MS_SEVERITY 固定值；⑤ UI 全部显示当月基准：清单标题「严重度 ≥ 0.71（本月 P50 中位数）」、详情面板「两个阈值每月自动算」+「本月基准 P75=2168 支 / P50=0.71 / P75=0.80」、底部口径说明同步。MS_SEVERITY 降为兜底默认值。v152: 删「双高」两字 + 删 500 支硬门槛叠面板——size=0.4×log10(缺货量+1)/4.5 + 0.3×率 + 0.2×频 + 0.1×缺货天数/10。0=不严重，1=最严重（3.16万支/100%率/天天缺/10天以上）。问题：原门槛 60%/60% 漏判「低率但高规模」SKU（如 72043 华南 49.9%率/27%频/4天/缺货15192支——用户截图 72043 华中 42552 缺货/9/20 也是同类）。修复：① 增 severity 字段（buildMonthlyShortageProfile + buildRollingShortageProfile 派生）；② 双高判定升级 isPersistent = (老门槛) OR (severity≥0.55)，8月 34→90 个；③ 补货建议紧急升级 isHighSeverity = severity≥0.65（替代老的 isPersistent）→ 升级每日「紧急」标签 / 中期分仓「★月度持续」 / 安全库存 SS ×1.3；④ 双高清单默认按 severity 降序，排序按钮加「严重度」；⑤ 双高清单明细表增「严重度」列，≥0.65 红 / ≥0.55 橙 / 其余灰；⑥ 双高清单标题更新「率+频次双命中 或 严重度≥0.55」。v146: 模块名改"缺货四象限分析" + 3 个筛选下拉框
+const DB_VERSION = 154; // v154: ① 修复 v153 引入的下钻报错——SEV_HIGH/SEV_DOUBLE 是 renderShortageMonthly 函数内 const, renderDrillTableBody 顶层函数看不见, Q1/Q2/Q3/Q4 数字块点击报 ReferenceError: SEV_HIGH is not defined。修复：动态阈值同步到 window._msSevDouble/_msSevHigh 全局, renderDrillTableBody 读 window.* 兜底用 MS_SEVERITY。② 散点按严重度档分 3 色：红=sev≥P75（紧急升级）、黄=sev≥P50（严重度高）、灰=sev<P50（不急），位置仍按 MR×SF 画——「红色=严重」在任何象限都醒目, 纠正 v151 之前「红色只聚集 Q1」的视觉误导（用户截图反馈 Q4 区也有红气泡）。markLine 移到黄 series 上, 避开红 series 干扰。v153: 严重度评分参数全面数据驱动（用户选混合方案：动态分位数 + 显示当月基准）。问题：① sizeTerm 除数 4.5（=log10(31623)，"3.16万支=满分"）是 v147 拍脑袋定；② 阈值 0.55/0.65 也是 v147 拍脑袋定，且 v150(MIN_DAYS 3→4)+v151(划分线 60%→50%) 后严重度分布右移（中位数 0.714），0.55 已失效——8月入选 239/252=95%，"重点跟进"清单变成全量列表失去筛选意义。修复：① 新增 quantile() 分位数函数（线性插值）；② 新增 finalizeSeverity(list) 两阶段计算——阶段1 用「有效组合缺货量 P75 的 log10」作 sizeTerm 除数（8月 P75=2168支 → 除数 3.34，自适应业务量级），阶段2 求 severity 分布的 P50/P75 作阈值（8月 P50=0.714 入选 126 个=50%、P75=0.801 入选 63 个=25%）；③ build 函数返回 dynamicThresholds 供 UI 显示；④ renderShortageMonthly 读 dynTh 动态阈值（SEV_DOUBLE/SEV_HIGH）替代 MS_SEVERITY 固定值；⑤ UI 全部显示当月基准：清单标题「严重度 ≥ 0.71（本月 P50 中位数）」、详情面板「两个阈值每月自动算」+「本月基准 P75=2168 支 / P50=0.71 / P75=0.80」、底部口径说明同步。MS_SEVERITY 降为兜底默认值。v152: 删「双高」两字 + 删 500 支硬门槛
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -4728,6 +4728,9 @@ function renderShortageMonthly() {
   const SEV_HIGH = dynTh.sevP75;
   const SEV_DOUBLE_TXT = SEV_DOUBLE.toFixed(2);
   const SEV_HIGH_TXT = SEV_HIGH.toFixed(2);
+  // v154: 同步到 window 全局，供 renderDrillTableBody 等顶层函数使用（v153 漏这一步导致 Q1/Q2/Q3/Q4 数字块下钻报错 SEV_HIGH is not defined）
+  window._msSevDouble = SEV_DOUBLE;
+  window._msSevHigh = SEV_HIGH;
 
   // v151: 象限分流重定义——Q1 = 「严重度高 · 重点跟进」(=严重度评分≥P50)，与 KPI 双高卡数字口径完全一致；
   // Q2/Q3/Q4 保留率×频 50% 划分（仅算严重度低的，避免和 Q1 重复计数）
@@ -4780,11 +4783,14 @@ function renderShortageMonthly() {
   });
   Object.values(window._msDrillData.sku).forEach(g => g.list.sort((a, b) => b.shortQty - a.shortQty));
 
-  // 散点数据（双高红 / 非命中灰）
-  const hiPts = q.q1.map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
-    q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
-  const loPts = [...q.q2, ...q.q3, ...q.q4].map(p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
-    q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf }));
+  // 散点数据 v154: 按严重度档分 3 色（位置按 MR×SF，颜色代表严重度档）
+  //   红 = sev ≥ P75（紧急升级）、黄 = sev ≥ P50 但 < P75（严重度高）、灰 = sev < P50（不急）
+  //   这样「红色 = 严重」在任何象限都醒目，纠正 v151 之前"红色只聚集在 Q1"造成的视觉误导
+  const mapPt = p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
+    q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf, sev: p.severity });
+  const sevHighPts = valid.filter(p => p.severity >= SEV_HIGH).map(mapPt);
+  const sevMidPts  = valid.filter(p => p.severity >= SEV_DOUBLE && p.severity < SEV_HIGH).map(mapPt);
+  const sevLowPts  = valid.filter(p => p.severity < SEV_DOUBLE).map(mapPt);
 
   // v142: 删掉象限文字浮层（用户反馈：4 个浮层会盖住右上密集的红气泡，看不清散点分布）
   // 象限数量信息改由 card-header 副标题"高率+高频 52 / 高频低率 19 / 低频高率 10 / 双低 ·偶发 202 · 点击下钻"承担
@@ -5102,20 +5108,25 @@ function renderShortageMonthly() {
     },
     series: [
       {
-        name: '未命中', type: 'scatter', data: loPts,
-        symbolSize: v => Math.max(5, Math.min(22, Math.sqrt(v[2]) / 6)),
-        itemStyle: { color: '#94A3B8', opacity: 0.55 }
+        name: '不急（严重度 < P50）', type: 'scatter', data: sevLowPts,
+        symbolSize: v => Math.max(4, Math.min(18, Math.sqrt(v[2]) / 8)),
+        itemStyle: { color: '#94A3B8', opacity: 0.45 }
       },
       {
-        name: '严重度高命中', type: 'scatter', data: hiPts,
-        symbolSize: v => Math.max(6, Math.min(26, Math.sqrt(v[2]) / 6)),
-        itemStyle: { color: '#EF4444', opacity: 0.85 },
+        name: '严重度高（P50 ≤ sev < P75）', type: 'scatter', data: sevMidPts,
+        symbolSize: v => Math.max(5, Math.min(22, Math.sqrt(v[2]) / 6)),
+        itemStyle: { color: '#F59E0B', opacity: 0.85 },
         markLine: {
           silent: true, symbol: 'none',
-          lineStyle: { color: '#DC2626', type: 'dashed', width: 1 },
+          lineStyle: { color: '#94A3B8', type: 'dashed', width: 1 },
           label: { fontSize: 10, formatter: '业务上「经常缺」≈ ' + (MS_PROFILE.MR * 100).toFixed(0) + '%', position: 'insideEndTop' },
           data: [{ xAxis: MS_PROFILE.SF }, { yAxis: MS_PROFILE.MR }]
         }
+      },
+      {
+        name: '紧急升级（严重度 ≥ P75）', type: 'scatter', data: sevHighPts,
+        symbolSize: v => Math.max(6, Math.min(28, Math.sqrt(v[2]) / 5)),
+        itemStyle: { color: '#EF4444', opacity: 0.9 }
       }
     ]
   }, true);
@@ -5286,7 +5297,7 @@ function renderDrillTableBody(items) {
       '<td style="text-align:right">' + (p.mr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right">' + p.shortDayCnt + '/' + p.orderDayCnt + '</td>' +
       '<td style="text-align:right">' + (p.sf * 100).toFixed(0) + '%</td>' +
-      '<td style="text-align:right;font-weight:600;color:' + ((p.severity||0) >= SEV_HIGH ? '#DC2626' : (p.severity||0) >= SEV_DOUBLE ? '#D97706' : '#64748B') + '">' + (p.severity != null ? p.severity.toFixed(2) : '—') + '</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + ((p.severity||0) >= (window._msSevHigh||MS_SEVERITY.SEV_HIGH) ? '#DC2626' : (p.severity||0) >= (window._msSevDouble||MS_SEVERITY.SEV_DOUBLE) ? '#D97706' : '#64748B') + '">' + (p.severity != null ? p.severity.toFixed(2) : '—') + '</td>' +
       '<td style="text-align:center">' + tagHtml(p) + '</td>' +
       '</tr>').join('') +
     '</tbody></table></div>' + navHtml;
