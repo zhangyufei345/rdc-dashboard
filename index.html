@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 156; // v156: 修复 openDrillModal 内 Q1/rdc-hi sub 文字硬编码「≥0.55」(v145/v152 遗留)——v153 改动态分位数后实际阈值 ≠0.55, 用户看到「0 个」以为是没数据, 实际是门槛动态但 sub 显示固定值。修复: sub 改用 (window._msSevDouble||0.55).toFixed(2) 显示当月实际 P50 阈值。v155: 修复 v145 翻页 bug
+const DB_VERSION = 157; // v157: 修复 RDC 下钻 key 解析 bug——v145 用 dr.slice(8) 切 rdc 名称, 但 'rdc-hi:华中RDC' slice(8) = '中RDC' (少了"华"), data.byRdc['中RDC'] 是 undefined → items=[] → modal 显示 0 个。根因: slice(N) 在中文 key 上算错(没考虑 UTF-8 字节数 vs char 数, 这里 char 数正确但 slice 位置算错)。修复: 所有 drill 解析用 dr.substring(dr.indexOf(':') + 1) 替代 dr.slice(N), 通过冒号定位避免长度算错。涉及 5 个分支: rdc-valid: rdc-hi: rdc-noise: rdc-all: rdc:。v156: 修复 openDrillModal sub 文字硬编码 0.55
   // 「无真实缺货·防呆滞」advice 仅在该 SKU×RDC 满足慢动品分析页可达（isSlowCoverage + hasAvailableStock + !isExcludedProduct）时显示橙「→ 慢动诊断」；
   // 其他 advice（总仓缺货/追计划/超额/正常）→ 蓝「→ 补货建议」；
   // 既非慢动品也不在补货清单的滞后品 → 不显示按钮（避免点空联动）。
@@ -5178,11 +5178,11 @@ function openDrillModal(key, resetPage) {
   else if (dr === 'q2') { items = data.q2 || []; title = 'Q2 · 高频低率'; sub = '频次高但单次缺货率低 — 每单都缺一点'; drillType = 'quadrant'; }
   else if (dr === 'q3') { items = data.q3 || []; title = 'Q3 · 低频高率'; sub = '样本少但单次率高 — 一次性大单嫌疑'; drillType = 'quadrant'; }
   else if (dr === 'q4') { items = data.q4 || []; title = 'Q4 · 双低 · 偶发小量'; sub = '噪声区 — 偶发小量缺货'; drillType = 'quadrant'; }
-  else if (dr.indexOf('rdc-valid:') === 0) { const rdc = dr.slice(11); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
-  else if (dr.indexOf('rdc-hi:') === 0) { const rdc = dr.slice(8); items = data.byRdc[rdc] ? data.byRdc[rdc].filter(p => p.isPersistent) : []; title = rdc + ' · 该仓严重度高组合'; sub = '严重度评分 ≥ ' + (window._msSevDouble||0.55).toFixed(2) + '（本月 P50）的 SKU（缺得多 + 经常缺）'; drillType = 'rdc'; }
-  else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.slice(11); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~3 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
-  else if (dr.indexOf('rdc-all:') === 0) { const rdc = dr.slice(9); items = data.byRdcAll ? (data.byRdcAll[rdc] || []) : []; title = rdc + ' · 该仓全部缺货'; sub = '当窗口内所有有首日缺货的组合（含有效+噪声），按缺货量降序'; drillType = 'rdc'; }
-  else if (dr.indexOf('rdc:') === 0) { const rdc = dr.slice(4); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-valid:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-hi:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdc[rdc] ? data.byRdc[rdc].filter(p => p.isPersistent) : []; title = rdc + ' · 该仓严重度高组合'; sub = '严重度评分 ≥ ' + (window._msSevDouble||0.55).toFixed(2) + '（本月 P50）的 SKU（缺得多 + 经常缺）'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-noise:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdcNoise ? (data.byRdcNoise[rdc] || []) : []; title = rdc + ' · 该仓噪声剔除'; sub = '有缺货但有单仅 1~3 天（频率无统计意义，不参与双高判定）'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc-all:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdcAll ? (data.byRdcAll[rdc] || []) : []; title = rdc + ' · 该仓全部缺货'; sub = '当窗口内所有有首日缺货的组合（含有效+噪声），按缺货量降序'; drillType = 'rdc'; }
+  else if (dr.indexOf('rdc:') === 0) { const rdc = dr.substring(dr.indexOf(':') + 1); items = data.byRdc[rdc] || []; title = rdc + ' · 该仓有效组合'; sub = '有首日缺货 且 有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的全部组合'; drillType = 'rdc'; }
   else if (dr.indexOf('sku:') === 0) { const sku = dr.slice(4); const g = data.sku[sku]; if (!g) { items = []; title = sku + ' · 跨 RDC 画像'; sub = '该 SKU 在所有 RDC 的当前月数据'; } else { items = g.list; title = sku + ' ' + g.name + ' · 跨 RDC 画像'; sub = '品牌：' + g.brand + ' · 同一 SKU 在所有 RDC 的当前窗口表现（共 ' + items.length + ' 个 RDC）'; } drillType = 'sku'; }
   else return;
 
