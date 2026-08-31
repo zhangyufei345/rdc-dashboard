@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 164; // v164: P90 紧急升级真正接入补货建议三处联动（用户问"P90 如何让补货建议预警"）
+const DB_VERSION = 165; // v165: 更新8月订单数据（8月RDC订单满足汇总 8-31版，订单明细17664→23385行），bump触发IDB重新解析
   // 背景：v136 埋了钩子（每日紧急标签/中期★月度持续/安全库存SS×1.3），但 v147 改 isHighSeverity(P90)
   // 后每日补货建议那处**没同步**——还用 ms.isPersistent（P75 严重度高，前 25%），与用户要的 P90 不符
   //
