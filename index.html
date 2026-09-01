@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 167; // v167: 修复「率频双中」小 SKU 直接入选严重度高清单的 v131 老 bug
+const DB_VERSION = 168; // v168: RDC 卡片「严重度高占比」色条改跨 RDC 分位驱动（红≥P75/黄≥P50/绿<P50），替代 v131 拍脑袋的 15%/10%（实测 6 仓全红、无判别力）；首日满足率修正 v162 漏改的 85%/78% → 业务阈值 90%/80%
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -4866,6 +4866,19 @@ function renderShortageMonthly() {
     .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
     .sort((a, b) => b.hiPct - a.hiPct);
 
+  // v168: 「严重度高占比」色条改「跨 RDC 分位数」驱动，与严重度评分 P75/P90 同源
+  //   旧版 15%/10% 是 v131 拍脑袋值（代码注释自己写明「无行业标准、0 来源」），
+  //   且与已数据驱动的严重度判定（isPersistent=P75 / isHighSeverity=P90）口径脱节
+  //   新规则：红 ≥ 跨 RDC P75（占比最高的 25% 仓）/ 黄 ≥ P50（中位数以上）/ 绿 < P50
+  //   注：quantile 要求升序数组，rdcList 已按 hiPct 降序，需重新升序排列后再算
+  //   首日满足率保持业务硬阈值 90%/80%（v162 业务自定义），v168 修复 v162 漏改的 85%/78%
+  const _hiPctAsc = rdcList.map(r => r.hiPct).sort((a, b) => a - b);
+  const hiPctP50 = quantile(_hiPctAsc, 0.50);
+  const hiPctP75 = quantile(_hiPctAsc, 0.75);
+  rdcList.forEach(r => {
+    r.hiPctColor = r.hiPct >= hiPctP75 ? '#EF4444' : (r.hiPct >= hiPctP50 ? '#F59E0B' : '#10B981');
+  });
+
   // v159: 动态分位数阈值收窄——严重度高=P75(前25%)，紧急升级=P90(前10%)
   // 旧版 P50(前50%) 会让一半 SKU 入选，清单失去"重点"意义（用户反馈：没有重点）
   const dynTh = prof.dynamicThresholds || { shortP75: 0, sizeDivisor: 4.5, sevP75: MS_SEVERITY.SEV_DOUBLE, sevP90: MS_SEVERITY.SEV_HIGH };
@@ -5076,13 +5089,14 @@ function renderShortageMonthly() {
           <div style="margin-top:8px">
             <b>色条规则（分两类）：</b>
             <div style="margin-top:4px;padding:6px 10px;background:#F8FAFC;border-radius:4px">
-              <b>① 业务硬阈值（不随月变）</b> — 业务自定义（v131 经验值，无行业标准）：<br>
-              · 严重度高占比 <span style="color:#EF4444">≥15% 红</span>/<span style="color:#F59E0B">≥10% 黄</span>/<span style="color:#10B981">&lt;10% 绿</span>　· 首日满足率 <span style="color:#10B981">≥90% 绿</span>/<span style="color:#F59E0B">≥80% 黄</span>/<span style="color:#EF4444">&lt;80% 红</span>
+              <b>① 业务硬阈值（不随月变）</b> — 业务自定义（v162 业务口径，无行业标准）：<br>
+              · 首日满足率 <span style="color:#10B981">≥90% 绿</span>/<span style="color:#F59E0B">≥80% 黄</span>/<span style="color:#EF4444">&lt;80% 红</span>（衡量订单交付水平，属对客户的业务承诺口径，需跨月可比，故不随数据浮动）
             </div>
             <div style="margin-top:4px;padding:6px 10px;background:#FAFBFC;border-radius:4px">
               <b>② 数据驱动阈值（随当月数据自适应）</b> — 档位不随月变，具体数字会变：<br>
               · 严重度列 <span style="color:#DC2626">≥P90 红（紧急升级）</span>/<span style="color:#D97706">≥P75 橙（严重度高）</span>/<span style="color:#64748B">&lt;P75 灰</span>　
               当前月：严重度高 ≥ ${SEV_DOUBLE_TXT}（P75），紧急 ≥ ${SEV_HIGH_TXT}（P90）<br>
+              · RDC 卡片「严重度高占比」色条 <span style="color:#EF4444">≥P75 红</span>/<span style="color:#F59E0B">≥P50 黄</span>/<span style="color:#10B981">&lt;P50 绿</span>　当前月：红 ≥ <b>${(hiPctP75 * 100).toFixed(1)}%</b>（6 个仓中占比最高的 25%）、黄 ≥ <b>${(hiPctP50 * 100).toFixed(1)}%</b>（中位数以上）<br>
               · 规模下限保险：缺货量 &lt; <b>${dynTh.hardFloor.toLocaleString()} 支</b>（几何平均）时规模项软衰减 ×(缺货量/hardFloor)，不硬归零
             </div>
           </div>
@@ -5131,12 +5145,14 @@ function renderShortageMonthly() {
 
     <div class="card" style="margin-bottom:12px">
       <div class="card-header"><span class="card-title">各 RDC 严重度评分分布（按当月严重度 P75 入选）</span>
-        <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击卡片下钻该 RDC 有效组合。色条:严重度高占比(业务硬阈值)红≥15%/黄≥10%/绿&lt;10% &amp; 首日满足率绿≥85%/黄≥78%/红&lt;78%</span></div>
+        <span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击卡片下钻该 RDC 有效组合。色条:严重度高占比(跨RDC分位)红≥P75 ${(hiPctP75 * 100).toFixed(1)}%/黄≥P50 ${(hiPctP50 * 100).toFixed(1)}%/绿&lt;P50 &amp; 首日满足率绿≥90%/黄≥80%/红&lt;80%</span></div>
       <div style="padding:12px">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px" id="rdc-card-grid">
           ${rdcList.length > 0 ? rdcList.map(r => {
-            var fillColor = r.hiPct >= 0.15 ? '#EF4444' : r.hiPct >= 0.10 ? '#F59E0B' : '#10B981';
-            var satisfyColor = (1 - r.mr) >= 0.85 ? '#10B981' : (1 - r.mr) >= 0.78 ? '#F59E0B' : '#EF4444';
+            // v168: 严重度高占比 = 跨 RDC 分位驱动（红 ≥P75 / 黄 ≥P50 / 绿 <P50），颜色已在 rdcList 预置为 r.hiPctColor
+            //       首日满足率 = 业务硬阈值 90%/80%（v162 业务自定义，v168 修正 v162 漏改的 85%/78%）
+            var fillColor = r.hiPctColor || '#10B981';
+            var satisfyColor = (1 - r.mr) >= 0.90 ? '#10B981' : (1 - r.mr) >= 0.80 ? '#F59E0B' : '#EF4444';
             var satisfyWidth = Math.max(2, Math.min(100, (1 - r.mr) * 100));
             var rdcAttr = String(r.rdc).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
             return '<div data-rdc="' + rdcAttr + '" ' +
@@ -5166,7 +5182,7 @@ function renderShortageMonthly() {
       <div style="padding:8px 12px 12px;font-size:11px;color:var(--text-secondary);line-height:1.6">
         有效组合 = 当前窗口内有首日缺货且有单工作日 ≥ ${MS_PROFILE.MIN_DAYS} 天的 SKU×RDC 组合；噪声剔除 = 有缺货但有单仅 1~3 天（频率无统计意义）。<br>
         严重度高占比 = 严重度高组合数 ÷ 该仓有效组合数。<strong>大仓组合基数大，绝对数天然偏高，请以占比横向比较</strong>。噪声剔除数多，说明该仓偶发单/新单占比高。<br>
-        色条规则:严重度高占比 <span style="color:#EF4444;font-weight:600">红 ≥ 15%</span> / <span style="color:#F59E0B;font-weight:600">黄 ≥ 10%</span> / <span style="color:#10B981;font-weight:600">绿 &lt; 10%</span> · 首日满足率 <span style="color:#10B981;font-weight:600">绿 ≥ 85%</span> / <span style="color:#F59E0B;font-weight:600">黄 ≥ 78%</span> / <span style="color:#EF4444;font-weight:600">红 &lt; 78%</span>
+        色条规则:<b>严重度高占比</b>（跨 6 个 RDC 分位数，随当月数据自适应）<span style="color:#EF4444;font-weight:600">红 ≥ ${(hiPctP75 * 100).toFixed(1)}%（P75，占比最高的 25% 仓）</span> / <span style="color:#F59E0B;font-weight:600">黄 ≥ ${(hiPctP50 * 100).toFixed(1)}%（P50，中位数以上）</span> / <span style="color:#10B981;font-weight:600">绿 &lt; ${(hiPctP50 * 100).toFixed(1)}%</span>　· <b>首日满足率</b>（业务硬阈值，不随月变）<span style="color:#10B981;font-weight:600">绿 ≥ 90%</span> / <span style="color:#F59E0B;font-weight:600">黄 ≥ 80%</span> / <span style="color:#EF4444;font-weight:600">红 &lt; 80%</span>
       </div>
     </div>
 
