@@ -677,7 +677,31 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 165; // v165: 更新8月订单数据（8月RDC订单满足汇总 8-31版，订单明细17664→23385行），bump触发IDB重新解析
+const DB_VERSION = 166; // v166: 分仓计划监控——时间进度口径修复 + 月份下拉框
+  // 用户反馈：顶部 KPI 是 8 月口径，下方「时间进度 vs 出货进度对比」显示 3.2%(1/31) 已进入 9 月
+  //   "一块是 8 月，一块已进入 9 月"，要求整个页面时间口径统一 + 加月份选择下拉框
+  //
+  // 根因（renderPlanMonitor 13966-13970）：
+  //   targetMonth 从 cov 数据推导 = '2026-08'（8月，正确）
+  //   daysInMonth 用 targetMonth = 31（8月天数，正确）
+  //   但 dayOfMonth = now.getDate() = 1（今天 9/1）← BUG，与 targetMonth 无关
+  //   → 1/31 = 3.2%，与同页 8 月 KPI 口径冲突
+  //
+  // 修复 ①：dayOfMonth 按「目标月与当前月的关系」计算
+  //   目标月 == 当前月 → now.getDate()（进行中）
+  //   目标月 < 当前月 → daysInMonth（已过完，100%）
+  //   目标月 > 当前月 → 0（未开始）
+  //   验证：8月 31/31=100%（旧 3.2%）/ 9月 1/30=3.3% / 10月 0/31=0%
+  //
+  // 修复 ②：加月份下拉框（window._planMonthIdx，默认 0）
+  //   选项来自 getCovMonthConfig(covSource).labels（cov7 → 8月~次年1月）
+  //   之前 targetField 写死 cfg.fields[0]，无法查看其他月份
+  //   切换后 targetMonth/targetLabel/订单过滤（dateStr.indexOf(targetMonth)）
+  //   /时间进度/KPI/品牌矩阵/趋势曲线 全部跟随——整个页面口径统一
+  //
+  // 修复 ③：说明文字同步（"覆盖表首列需求"→"覆盖表 X月需求"；
+  //   对比卡副标题标注"两处口径均为 YYYY-MM，跟随上方月份下拉框"）
+  // v165: 更新8月订单数据
   // 背景：v136 埋了钩子（每日紧急标签/中期★月度持续/安全库存SS×1.3），但 v147 改 isHighSeverity(P90)
   // 后每日补货建议那处**没同步**——还用 ms.isPersistent（P75 严重度高，前 25%），与用户要的 P90 不符
   //
@@ -13959,14 +13983,29 @@ function renderPlanMonitor() {
     });
   }
   const cfg = getCovMonthConfig(covSource);
-  const targetField = cfg.fields[0];
+  // v165: 目标月可切换（之前写死 cfg.fields[0]，无法查看其他月份）
+  const _planMonthIdx = Math.min(Math.max(0, parseInt(window._planMonthIdx, 10) || 0), cfg.fields.length - 1);
+  window._planMonthIdx = _planMonthIdx;
+  const targetField = cfg.fields[_planMonthIdx];
   const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
   const targetMonth = COV_TO_YM[targetField] || '2026-08';
-  const targetLabel = cfg.labels[0];
+  const targetLabel = cfg.labels[_planMonthIdx];
   const now = new Date();
   const ym = targetMonth.split('-');
   const daysInMonth = new Date(+ym[0], +ym[1], 0).getDate();
-  const dayOfMonth = Math.min(now.getDate(), daysInMonth);
+  // v165: 时间进度按「目标月」算，不是「今天」——
+  //   之前 dayOfMonth = now.getDate()，查看 8 月（已完整过去）时显示 1/31=3.2%（因为今天 9/1），
+  //   与同页 KPI/矩阵 的 8 月口径冲突（用户反馈"一块是 8 月，一块已进入 9 月"）
+  //   目标月已过完 → 100%；目标月是当月 → 已过天数/总天数；目标月未到 → 0%
+  const nowYM = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  let dayOfMonth;
+  if (targetMonth === nowYM) {
+    dayOfMonth = Math.min(now.getDate(), daysInMonth);   // 当月：已过天数
+  } else if (targetMonth < nowYM) {
+    dayOfMonth = daysInMonth;                             // 已过完的月份：100%
+  } else {
+    dayOfMonth = 0;                                       // 未来月份：未开始 0%
+  }
   const monthElapsed = dayOfMonth / daysInMonth;
   const viewMode = window._planView || 'month';
   window._planView = viewMode;
@@ -14111,7 +14150,9 @@ function renderPlanMonitor() {
   let html = '';
   html += '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:16px 20px;background:var(--bg-card);border-radius:12px;margin-bottom:16px;align-items:center">';
   html += '<span style="font-size:13px;font-weight:600;color:var(--text-primary)">📊 分仓计划监控</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary)">目标月：'+targetLabel+'（'+targetMonth+'）｜计划口径：'+covSource.toUpperCase()+' 覆盖表首列需求（支）</span>';
+  // v165: 月份下拉框——切换后整个页面（时间进度/完成率/品牌矩阵/趋势曲线）口径统一跟随
+  html += '<select onchange="window._planMonthIdx=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;font-weight:600" title="切换目标月：整个页面所有进度（时间进度、完成率、品牌矩阵、趋势曲线）统一切换到该月">' + cfg.fields.map(function(f, i){ return '<option value="'+i+'"'+(String(_planMonthIdx)===String(i)?' selected':'')+'>'+cfg.labels[i]+'</option>'; }).join('') + '</select>';
+  html += '<span style="font-size:11px;color:var(--text-secondary)">目标月：'+targetLabel+'（'+targetMonth+'）｜计划口径：'+covSource.toUpperCase()+' 覆盖表 '+targetLabel+' 需求（支）</span>';
   html += '<select onchange="window._planRdc=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
   html += '<select onchange="window._invHainan=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(hainan==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainan==='yes'?' selected':'')+'>仅海南花露水</option><option value="no"'+(hainan==='no'?' selected':'')+'>不含海南花露水</option></select>';
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月订单量(支)/分仓计划(支)；全月预测=完成率÷已过天数占比</span>';
@@ -14179,7 +14220,7 @@ function renderPlanMonitor() {
   const barSlot = 'rgba(148,163,184,0.18)';
   const timeColor = '#64748B';
   html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">⏱️ 时间进度 vs 出货进度对比</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">时间进度＝已过大月天数占比（'+dayOfMonth+'/'+daysInMonth+'）｜出货进度＝整体订单量/分仓计划</span></div>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">时间进度＝'+targetLabel+'已过天数占比（'+dayOfMonth+'/'+daysInMonth+'）｜出货进度＝'+targetLabel+'订单量/'+targetLabel+'分仓计划　<span style="color:#64748B">（两处口径均为 '+targetMonth+'，跟随上方月份下拉框）</span></span></div>';
   html += '<div style="padding:16px 18px">';
   html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:84px;font-size:12px;color:var(--text-secondary)">时间进度</div><div style="flex:1;height:22px;background:'+barSlot+';border-radius:11px;overflow:hidden"><div style="width:'+(timeProg*100).toFixed(1)+'%;height:100%;background:'+timeColor+'"></div></div><div style="width:62px;text-align:right;font-size:13px;font-weight:700;color:'+timeColor+'">'+(timeProg*100).toFixed(1)+'%</div></div>';
   html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:84px;font-size:12px;color:var(--text-secondary)">出货进度</div><div style="flex:1;height:22px;background:'+barSlot+';border-radius:11px;overflow:hidden"><div style="width:'+(shipProg*100).toFixed(1)+'%;height:100%;background:'+planCompColor(shipProg)+'"></div></div><div style="width:62px;text-align:right;font-size:13px;font-weight:700;color:'+planCompColor(shipProg)+'">'+(shipProg*100).toFixed(1)+'%</div></div>';
