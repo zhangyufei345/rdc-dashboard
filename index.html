@@ -677,7 +677,16 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 166; // v166: 分仓计划监控——时间进度口径修复 + 月份下拉框
+const DB_VERSION = 167; // v167: 修复「率频双中」小 SKU 直接入选严重度高清单的 v131 老 bug
+  // 之前 isPersistent = isPersistentOld || severity >= sevP75
+  //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
+  //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
+  //   → 实际入选原因：isPersistentOld OR 关系把 率 ≥ 50% 的小 SKU 全部放行
+  // 修复：去掉 isPersistentOld fallback，isPersistent = severity >= sevP75
+  //   缺货量下限由 v163 hardFloor (几何平均) 兜底；硬地板太小时（用户新数据几何平均可能仅 100~300），
+  //   缺货量低于 hardFloor 的小 SKU 会通过软衰减 sizePct × 比例压低 sev，自然不入选
+  // 副作用：「率频双中」KPI 卡数会减少（不再含 OR 关系），但这才是真正的"严重度高"
+  // v166: 分仓计划监控——时间进度口径修复 + 月份下拉框
   // 用户反馈：顶部 KPI 是 8 月口径，下方「时间进度 vs 出货进度对比」显示 3.2%(1/31) 已进入 9 月
   //   "一块是 8 月，一块已进入 9 月"，要求整个页面时间口径统一 + 加月份选择下拉框
   //
@@ -4341,9 +4350,12 @@ function finalizeSeverity(list) {
   var sevP90 = quantile(sevs, 0.90);   // 紧急升级（立即处理）
   list.forEach(function(q) {
     q.isHighSeverity = q.severity >= sevP90;   // 紧急升级 = 前 10%
-    q.isPersistentOld = (q.mr >= MS_PROFILE.MR && q.sf >= MS_PROFILE.SF &&
-                        q.orderDayCnt >= MS_PROFILE.MIN_DAYS);
-    q.isPersistent = q.isPersistentOld || q.severity >= sevP75;   // 严重度高 = 前 25%
+    // v167: isPersistent 改为仅看严重度评分（去掉 isPersistentOld OR 关系）
+    //   之前 isPersistent = isPersistentOld || severity >= sevP75
+    //   isPersistentOld 是「率 ≥ 50% 且 频 ≥ 50%」硬门槛——不看缺货量
+    //   导致「率 100% 频 53% 缺 360 支」这种小 SKU 通过老口径直接入选严重度高清单
+    //   去掉 OR 后：严重度高 = 严重度评分 ≥ P75（前 25%），缺货量下限由 v163 hardFloor (几何平均) 兜底
+    q.isPersistent = q.severity >= sevP75;
   });
   return { shortP50: shortP50, geoMean: geoMean, hardFloor: hardFloor, shortP75: shortP75, sizeDivisor: sizeDivisor, sevP50: sevP50, sevP75: sevP75, sevP90: sevP90 };
 }
