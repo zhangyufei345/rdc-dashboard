@@ -482,6 +482,12 @@ const dataStore = {
   customerFulfill: [],
   transship: [],
   otherOrders: [],
+  // v173: 未放行订单（SAP 中已创建但尚未放行的未清订单，会安排补货，需计入销售进度）
+  // 来源：月度 xlsx 的「未放行订单」sheet（存量快照，按创建日期归月）
+  unreleasedOrders: [],
+  // v173: 装运条件 → RDC 映射（来自同文件「装运条件定义」sheet：20=东北 50=华南 60=西北 70=华中 80=西南 90=华北）
+  // 未放行订单没有「仓库名称」字段，只能靠装运条件反查 RDC
+  shipCondRdcMap: {},
   loaded: false,
   // Inventory structure data (from 库存分析模版.xlsx)
   inventory: null
@@ -677,7 +683,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 172; // v172: 切换日订单满足率为驾驶舱 MTD 口径 + 删除"年度同比概览"模块。①大图 renderOverviewHistoryCharts 的 avgArr 2026 改全 RDC 汇总求率（sum/sum），与驾驶舱 MTD 80.7% 同口径；v171 实时聚合（每仓求率再算 RDC 平均）→ 80.7%（分子分母直接相加），差异 -0.8pp。②删除 fulfillment 页"年度同比概览（截至 X 月）"KPI 卡（81.5% 与 80.7% 口径冲突，且切换 MTD 后大图已为权威值，无需再单列）。③小倍数折线图保留原 liveFulfillmentByType（每 RDC 一张图，求率口径与历史折线图延续性更稳）。实测 8月 大图 81.5% → 80.71% (与驾驶舱 80.7% 完全一致)，1-7 月 2026 全部有数据，2025 全年零改动
+const DB_VERSION = 173; // v173: 分仓计划监控新增「订单放行」筛选——未放行订单（SAP 已创建但未放行、属未清订单会安排补货）可计入销售进度。①parseExcel 新增解析月度 xlsx 的「装运条件定义」sheet（20=东北/50=华南/60=西北/70=华中/80=西南/90=华北，注意与收货库位规则华南=40 不同，必须读定义 sheet）与「未放行订单」sheet（列按表头名动态定位；表头有两组同名「订单数量」，取最后一组=基本单位支口径，即 U 列）；②renderPlanMonitor 把 SKU×RDC/品牌×RDC/按日×RDC 三处累加抽成共用 accumulate()，已放行与未放行共用同一实现保证同口径；③筛选框默认「仅已放行」（现有口径不变），选「含未放行」才计入，按创建日期归月；④开关旁显示本目标月未放行笔数/支数/切片日期。实测：8 月开关前后 7,182,573 支零差异（创建日期均 9/1，不计入 8 月）；9 月 +199,866 支 / 100 笔 / 69 个 SKU×RDC；华中 +152,308 支与 RDC 筛选联动一致；RDC 映射失败 0 行
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -1222,6 +1228,8 @@ function parseExcel(rawData, mode, options) {
       dataStore.customerFulfill = [];
       dataStore.transship = [];
       dataStore.otherOrders = [];
+      dataStore.unreleasedOrders = [];
+      dataStore.shipCondRdcMap = {};
     }
 
     // Create dedup key Sets from existing data (append mode) or empty (replace mode)
@@ -1232,6 +1240,8 @@ function parseExcel(rawData, mode, options) {
     const existingOrderKeys = new Set(dataStore.orderDetail.map(d => d.dateStr + '|' + d.orderNo + '|' + d.skuCode));
     const existingTransKeys = new Set(dataStore.transship.map(d => d.dateStr + '|' + d.material + '|' + d.location));
     const existingOtherKeys = new Set(dataStore.otherOrders.map(d => d.dateStr + '|' + d.orderNo + '|' + d.skuCode + '|' + d.orderType));
+    // v173: 未放行订单按「创建日期+销售订单+物料」去重（存量快照，多个月文件可能重复携带同一批）
+    const existingUnreleasedKeys = new Set(dataStore.unreleasedOrders.map(d => d.dateStr + '|' + d.orderNo + '|' + d.skuCode));
 
     // Sheet1: 缺货汇总 (2 header rows)
     const sh1 = sheetToArray(wb.Sheets[sheetNames[0]]);
@@ -1457,6 +1467,80 @@ function parseExcel(rawData, mode, options) {
           warehouse: getSafeStr(r, O_RDC), orderQty: getSafeNum(r, O_QTY),
           firstDayQty: getSafeNum(r, O_FIRST), totalFulfillQty: getSafeNum(r, O_FULFILL)
         });
+      }
+    }
+
+    // ===== v173: 未放行订单 + 装运条件定义 =====
+    // 业务背景：SAP 中已创建但尚未放行的订单同样是未清订单，会安排补货，
+    //   因此销售进度（分仓计划监控的「订单量/计划量」）需要能把它算进来；
+    //   但满足率类指标（首日排单/总履约）拿不到，故仅在「分仓计划监控」页使用，其他板块不受影响。
+    // Sheet「装运条件定义」：A 装运条件 / B RDC（20=东北 50=华南 60=西北 70=华中 80=西南 90=华北）
+    //   注意：这里的编码是「装运条件」，与收货库位编码规则（华南=40）不同，必须读定义 sheet，不能套库位规则。
+    const shipDefIdx = sheetNames.findIndex(function(n) { return String(n || '').indexOf('装运条件') >= 0; });
+    if (shipDefIdx >= 0) {
+      const shS = sheetToArray(wb.Sheets[sheetNames[shipDefIdx]]);
+      for (let i = 1; i < shS.length; i++) {
+        const r = shS[i];
+        if (!r || r.length < 2) continue;
+        // 装运条件在 xlsx 里是数字（20/50/70…），统一转字符串并去掉可能的 ".0" 小数尾巴
+        const cond = String(r[0] == null ? '' : r[0]).trim().replace(/\.0$/, '');
+        const rdcName = String(r[1] == null ? '' : r[1]).trim();
+        if (!cond || !rdcName) continue;
+        dataStore.shipCondRdcMap[cond] = normalizeRdcName(rdcName);
+      }
+    }
+    // Sheet「未放行订单」表头（列号按名称动态定位，避免源表增删列导致错位）：
+    //   创建日期 / 凭证行创建日期 / 切片日期 / 公司 / 公司名称 / 销售订单 / 项目 / 物料 / 物料描述 /
+    //   产品组 / 产品组描述 / 物料组 / 物料组描述 / 销售组 / 销售组描述 / 销售单位 /
+    //   订单数量 / 已交货数量 / 未清数量 / 基本单位 / 订单数量(U列,支) / 已交货数量 / 未清数量 / 放行日期 / …
+    //   装运条件（AG列）→ 由「装运条件定义」反查 RDC
+    // ⚠️ 表头里有两组同名「订单数量/已交货数量/未清数量」（销售单位口径在前、基本单位口径在后），
+    //    一律取最后一组（基本单位=支），与订单明细的「订单支数」同口径。
+    const unrelIdx = sheetNames.findIndex(function(n) { return String(n || '').indexOf('未放行') >= 0; });
+    if (unrelIdx >= 0) {
+      const shU = sheetToArray(wb.Sheets[sheetNames[unrelIdx]]);
+      const uHeader = shU[0] || [];
+      function uLastCol(name) { // 取同名列的最后一个（基本单位口径）
+        let idx = -1;
+        for (let i = 0; i < uHeader.length; i++) {
+          if (String(uHeader[i] || '').trim() === name) idx = i;
+        }
+        return idx;
+      }
+      function uCol(name) {
+        for (let i = 0; i < uHeader.length; i++) {
+          if (String(uHeader[i] || '').trim() === name) return i;
+        }
+        return -1;
+      }
+      const U_DATE = uCol('创建日期'), U_NO = uCol('销售订单'), U_MAT = uCol('物料'),
+            U_NAME = uCol('物料描述'), U_BRAND = uCol('产品组描述'),
+            U_QTY = uLastCol('订单数量'), U_OPEN = uLastCol('未清数量'),
+            U_COND = uCol('装运条件'), U_SLICE = uCol('切片日期');
+      if (U_DATE >= 0 && U_MAT >= 0 && U_QTY >= 0) {
+        for (let i = 1; i < shU.length; i++) {
+          const r = shU[i];
+          if (!r) continue;
+          const d = normalizeDate(r[U_DATE]);
+          if (!d) continue;                       // 无创建日期的行无法归月，跳过
+          const sku = getSafeStr(r, U_MAT);
+          if (!sku) continue;
+          const q = getSafeNum(r, U_QTY);
+          if (!(q > 0)) continue;                 // 0 量行不参与统计（本批 U=未清，已交货均为 0）
+          const cond = String(r[U_COND] == null ? '' : r[U_COND]).trim().replace(/\.0$/, '');
+          const rdc = normalizeRdcName(dataStore.shipCondRdcMap[cond] || '');
+          const uKey = fmtDate(d) + '|' + getSafeStr(r, U_NO) + '|' + sku;
+          if (existingUnreleasedKeys.has(uKey)) continue;
+          existingUnreleasedKeys.add(uKey);
+          dataStore.unreleasedOrders.push({
+            date: d, dateStr: fmtDate(d),
+            orderNo: getSafeStr(r, U_NO), skuCode: sku, skuName: getSafeStr(r, U_NAME),
+            brand: normalizeBrandName(getSafeStr(r, U_BRAND)),
+            shipCond: cond, warehouse: rdc,
+            orderQty: q, openQty: U_OPEN >= 0 ? getSafeNum(r, U_OPEN) : q,
+            sliceDate: U_SLICE >= 0 ? (function() { const sd = normalizeDate(r[U_SLICE]); return sd ? fmtDate(sd) : ''; })() : ''
+          });
+        }
       }
     }
 
@@ -14178,6 +14262,12 @@ function renderPlanMonitor() {
 
   function isH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); } // v113: 用 window._skuIsHainan 而非局部 const（之前因 TDZ 永远 false，导致"不含海南花露水"开关失效 + 品牌矩阵累计被 return 跳过 → 全部 100%）
 
+  // v173: 订单放行筛选——默认「仅已放行」（现有口径），选「含未放行」时才把未放行订单计入销售进度。
+  //   未放行订单 = SAP 已创建但尚未放行、仍属未清订单、会安排补货，因此需要能并入订单进度。
+  //   仅在分仓计划监控（销售进度）使用；满足率类指标拿不到首日排单/总履约字段，其他板块不受影响。
+  const includeUnrel = window._planIncludeUnreleased || 'no';
+  window._planIncludeUnreleased = includeUnrel;
+
   // 出货口径 = 订单口径：orderQty（订单支数），有订单即计入，不等实际出库
   // 聚合：SKU×RDC（明细用），品牌×RDC（矩阵用），按日×RDC（曲线用）
   const shipMap = {};       // sku|rdc -> orderQty
@@ -14187,6 +14277,21 @@ function renderPlanMonitor() {
   const brandRdcPlan = {};  // brand -> rdc -> planQty
   const skuRdcPlan = {};    // sku|rdc -> planQty（兜底来自 cov）
   const RDCS = [];
+  // v173: 已放行与未放行订单共用同一累加实现，保证 SKU×RDC / 品牌×RDC / 按日×RDC 三处口径完全一致
+  function accumulate(sku, rdc, br, q, day) {
+    const key = sku + '|' + rdc;
+    shipMap[key] = (shipMap[key] || 0) + q;
+    if (br) skuRdcBrand[key] = br;
+    if (br) {
+      if (!brandRdcOrder[br]) brandRdcOrder[br] = {};
+      brandRdcOrder[br][rdc] = (brandRdcOrder[br][rdc] || 0) + q;
+    }
+    if (!isNaN(day) && day >= 1 && day <= daysInMonth) {
+      if (!dayOrderByRdc[rdc]) dayOrderByRdc[rdc] = {};
+      dayOrderByRdc[rdc][day] = (dayOrderByRdc[rdc][day] || 0) + q;
+    }
+    if (RDCS.indexOf(rdc) === -1) RDCS.push(rdc);
+  }
   orders.forEach(function(d) {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
@@ -14195,21 +14300,27 @@ function renderPlanMonitor() {
     const rdc = normalizeRdcName(d.warehouse);
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
     const sku = d.skuCode || '';
-    const key = sku + '|' + rdc;
     const q = d.orderQty || 0;
-    shipMap[key] = (shipMap[key] || 0) + q;
-    const br = d.brand || '';
-    if (br) skuRdcBrand[key] = br;
-    if (br) {
-      if (!brandRdcOrder[br]) brandRdcOrder[br] = {};
-      brandRdcOrder[br][rdc] = (brandRdcOrder[br][rdc] || 0) + q;
-    }
-    const day = Number(d.dateStr.slice(8, 10));
-    if (!isNaN(day) && day >= 1 && day <= daysInMonth) {
-      if (!dayOrderByRdc[rdc]) dayOrderByRdc[rdc] = {};
-      dayOrderByRdc[rdc][day] = (dayOrderByRdc[rdc][day] || 0) + q;
-    }
-    if (RDCS.indexOf(rdc) === -1) RDCS.push(rdc);
+    accumulate(sku, rdc, d.brand || '', q, Number(d.dateStr.slice(8, 10)));
+  });
+
+  // v173: 未放行订单计入销售进度（按「创建日期」归月，与已放行订单同口径）
+  //   数据源是「截至切片日仍未放行」的存量快照；9/1 创建的订单只计入 9 月，不计入 8 月。
+  //   过滤条件与已放行订单保持一致：海南花露水开关、RDC 筛选、促销装/新品期剔除。
+  const unrelStat = { cnt: 0, qty: 0, slice: '', noRdc: 0 };
+  (dataStore.unreleasedOrders || []).forEach(function(d) {
+    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
+    if (hainan === 'yes' && !isH(d.skuCode)) return;
+    if (hainan === 'no' && isH(d.skuCode)) return;
+    if (_excludedSkuSet[d.skuCode]) return;
+    const rdc = normalizeRdcName(d.warehouse);
+    if (!rdc) { unrelStat.noRdc++; return; } // 装运条件无法映射到 RDC 的不计入（避免落到空的 RDC 维度）
+    if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
+    unrelStat.cnt++;
+    unrelStat.qty += d.orderQty || 0;
+    if (d.sliceDate && d.sliceDate > unrelStat.slice) unrelStat.slice = d.sliceDate;
+    if (includeUnrel !== 'yes') return;
+    accumulate(d.skuCode || '', rdc, d.brand || '', d.orderQty || 0, Number(d.dateStr.slice(8, 10)));
   });
 
   // 计算偏差
@@ -14321,11 +14432,19 @@ function renderPlanMonitor() {
   html += '<span style="font-size:11px;color:var(--text-secondary)">目标月：'+targetLabel+'（'+targetMonth+'）｜计划口径：'+covSource.toUpperCase()+' 覆盖表 '+targetLabel+' 需求（支）</span>';
   html += '<select onchange="window._planRdc=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
   html += '<select onchange="window._invHainan=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(hainan==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainan==='yes'?' selected':'')+'>仅海南花露水</option><option value="no"'+(hainan==='no'?' selected':'')+'>不含海南花露水</option></select>';
+  // v173: 订单放行筛选（是否把未放行订单计入销售进度）
+  html += '<span style="font-size:11px;color:var(--text-secondary)">订单放行：</span>';
+  html += '<select onchange="window._planIncludeUnreleased=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px'+(includeUnrel==='yes'?';font-weight:600;border-color:var(--color-blue);color:var(--color-blue)':'')+'" title="未放行订单 = SAP 已创建但尚未放行的未清订单，同样会安排补货。选择「含未放行」后计入本页销售进度（订单量/完成率/品牌矩阵/MTD曲线/明细/导出全部跟随）。按创建日期归月，与已放行订单同口径。"><option value="no"'+(includeUnrel==='no'?' selected':'')+'>仅已放行</option><option value="yes"'+(includeUnrel==='yes'?' selected':'')+'>含未放行</option></select>';
+  html += '<span style="font-size:11px;color:'+(unrelStat.cnt>0?'#B45309':'var(--text-secondary)')+'" title="口径与本页订单量完全一致：按创建日期归属目标月 '+targetMonth+'，已应用海南花露水 / RDC / 促销装及新品期剔除；数量为「未放行订单」sheet U 列订单数量（支）。">' +
+    (unrelStat.cnt > 0
+      ? ('本目标月未放行 <b>'+unrelStat.cnt+'</b> 笔 / <b>'+formatNum(unrelStat.qty)+'</b> 支'+(unrelStat.slice?('（切片 '+unrelStat.slice+'）'):'')+(includeUnrel==='yes'?' · 已计入':' · 未计入'))
+      : '本目标月无未放行订单') +
+    '</span>';
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月订单量(支)/分仓计划(支)；全月预测=完成率÷已过天数占比</span>';
   html += '</div>';
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">';
-  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（订单口径）</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
+  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（订单口径'+(includeUnrel==='yes'?' · 含未放行':'')+'）</div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
   html += '<div class="kpi-card green"><div class="kpi-label">跑赢时间线的 SKU（>时间进度）</div><div class="kpi-value" style="color:#15803D">'+overCnt+'</div></div>';
   // v113: 顶部 KPI 补"正常"分类卡（之前漏掉，漏斗里有，KPI 行没有，对不上账）
   html += '<div class="kpi-card gray"><div class="kpi-label">正常 SKU（70%~110% 贴近时间线）</div><div class="kpi-value" style="color:#475569">'+normalCnt+'</div></div>';
@@ -14399,7 +14518,7 @@ function renderPlanMonitor() {
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击单元格 → 下钻 SKU 明细 ｜ 月度=MTD订单量(8月1日至今天)/分仓计划(8月)</span>';
   html += '</div><div id="pm-brand-rdc-matrix"></div><div id="pm-sku-drill"></div></div>';
 
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 各 RDC MTD 累计完成率曲线（订单口径）</span>';
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 各 RDC MTD 累计完成率曲线（订单口径'+(includeUnrel==='yes'?' · 含未放行':'')+'）</span>';
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">横轴：'+targetMonth+' 第 1 ~ '+dayOfMonth+' 日 ｜ 每条线 = 一个 RDC 的 MTD 累计完成率%</span>';
   html += '</div><div id="pm-rdc-trend" style="height:340px"></div></div>';
 
