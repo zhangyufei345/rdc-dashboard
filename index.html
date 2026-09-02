@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 170; // v170: 「严重度高重点跟进清单」新增 CSV 导出按钮。表体预计算 window._msFocusList（dcSupply/bottleneck 一次算好，避免 export 重复逻辑 + 口径漂移）。CSV 列与表头 17 列一字不差；含逗号/引号字段走标准 CSV 转义；数字保留原始值（无千分位逗号——否则 18,240 会被 Excel 拆列，已踩坑并复用现有 export 约定）。文件命名：`严重度高重点跟进清单_<期间>_<行数>_<导出日>.csv`
+const DB_VERSION = 171; // v171: 修复「日订单满足率」大图与 KPI 卡口径不一致（8月 82.1% vs 81.5%）。根因：大图 renderOverviewHistoryCharts 纯读 history.json 静态值，KPI 卡 renderFulfillmentHistoryCharts 2026 年走实时聚合。修复：①liveFulfillmentByType 从 renderFulfillmentHistoryCharts 内部提取到全局（行2632），两处共用同一实现；②大图 avgArr 改为 2026 实时优先、无数据回退 history；③标题硬编码「1–6月」改为动态取 _availableMonths。实测 8月 大图 82.084%→81.527%，与 KPI 卡差异 0.000000pp；1-7月与2025全年零改动（无实时数据时正确回退 history）
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -2623,12 +2623,36 @@ function normalizeTrendChannel(ch) {
   return '其他';
 }
 
+// v171 当月实时聚合：从 orderDetail 按 RDC×月聚合订单满足率
+// type='daily'   用首日排单 / 订单总量（日满足率）
+// type='monthly' 用总履约排单 / 订单总量（月均满足率）
+// 2026 年优先走实时聚合（避免 history.json 陈旧快照覆盖最新订单数据），实时无数据再回退 history
+// 必须放全局作用域：renderOverviewHistoryCharts（大图）+ renderFulfillmentHistoryCharts（KPI 卡）
+// 两处共用同一实现，否则同一页面会出现两个口径不同的「8月日满足率」（v171 修复的就是这个）
+function liveFulfillmentByType(rdcName, ym, type) {
+  let sNum = 0, sOrder = 0;
+  (dataStore.orderDetail || []).forEach(function(d) {
+    if (d.warehouse !== rdcName) return;
+    if (!d.dateStr || d.dateStr.slice(0, 7) !== ym) return;
+    sOrder += d.orderQty || 0;
+    sNum += (type === 'monthly' ? (d.totalFulfillQty || 0) : (d.firstDayQty || 0));
+  });
+  if (sOrder <= 0) return null;
+  return sNum / sOrder;
+}
+
 // 日度订单满足率历史趋势卡片（HTML 部分）
 function renderOverviewHistory() {
   if (!dataStore.history || !dataStore.history.fulfillment) return '';
+  // v171: 标题月份范围动态化（原硬编码「1–6月」，数据已到 8 月后显示错误）
+  const m26 = (window._availableMonths && window._availableMonths.length > 0)
+    ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; })
+    : [];
+  const latestM = m26.length ? parseInt(m26[m26.length - 1].split('-')[1], 10) : 6;
+  const rangeLabel = m26.length ? ('1–' + latestM + '月') : '1–6月';
   return '<div class="card" style="margin-bottom:16px">' +
-    '<div class="card-header"><span class="card-title">📅 日度订单满足率历史趋势（2025 全年 vs 2026 1–6月，全RDC均值）</span></div>' +
-    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">蓝色实线 = 2026 · 灰色虚线 = 2025 · 数据为每月代表性工作日日满足率</div>' +
+    '<div class="card-header"><span class="card-title">📅 日度订单满足率历史趋势（2025 全年 vs 2026 ' + rangeLabel + '，全RDC均值）</span></div>' +
+    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">蓝色实线 = 2026 · 灰色虚线 = 2025 · 2026 各月按订单明细实时聚合（与下方「' + latestM + '月份日满足率」同口径），2025 为历史快照</div>' +
     '<div class="chart-container" id="chart-overview-history-fulfill"></div>' +
   '</div>';
 }
@@ -2638,11 +2662,21 @@ function renderOverviewHistoryCharts() {
   if (!dataStore.history || !dataStore.history.fulfillment) return;
   const H = dataStore.history.fulfillment;
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  // v171: 2026 年优先走实时聚合，与 KPI 卡 avgOf() 同口径
+  // 之前这里纯读 history.json 静态值，导致大图 8月显示 82.1%、KPI 卡显示 81.5%（同一页面两个数）
   function avgArr(year, key) {
     key = key || 'daily';
     return months12.map((_, i) => {
       let s = 0, c = 0;
-      RDC_LIST.forEach(r => { const v = H[year][key] && H[year][key][r] && H[year][key][r][i]; if (v != null) { s += v; c++; } });
+      RDC_LIST.forEach(r => {
+        if (year === '2026') {
+          const ym = '2026-' + String(i + 1).padStart(2, '0');
+          const live = liveFulfillmentByType(r, ym, key);
+          if (live != null) { s += live; c++; return; }
+        }
+        const v = H[year][key] && H[year][key][r] && H[year][key][r][i];
+        if (v != null) { s += v; c++; }
+      });
       return c ? s / c : null;
     });
   }
@@ -2986,20 +3020,8 @@ function renderFulfillmentHistoryCharts() {
   const H = dataStore.history.fulfillment;
   const rdc = window._fulHtyRdc || 'all';
 
-  // ========== 当月实时聚合：从 orderDetail 按 RDC×月聚合 ==========
-  // type='daily' 用首日排单 / 订单总量；type='monthly' 用总履约排单 / 订单总量
-  // 2026 年优先走实时聚合（避免 history.json 陈旧数据覆盖最新订单数据），实时无数据再回退 history
-  function liveFulfillmentByType(rdcName, ym, type) {
-    let sNum = 0, sOrder = 0;
-    (dataStore.orderDetail || []).forEach(function(d) {
-      if (d.warehouse !== rdcName) return;
-      if (!d.dateStr || d.dateStr.slice(0, 7) !== ym) return;
-      sOrder += d.orderQty || 0;
-      sNum += (type === 'monthly' ? (d.totalFulfillQty || 0) : (d.firstDayQty || 0));
-    });
-    if (sOrder <= 0) return null;
-    return sNum / sOrder;
-  }
+  // v171: liveFulfillmentByType 已提取到全局作用域（行 2632），此处直接复用
+  // 保证大图与 KPI 卡同口径，避免同一页面出现两个不同的「当月日满足率」
   function getDailyRate(rdcName, year, monthIdx0) {
     // 2026 年优先实时聚合（日满足率），无数据再回退 history
     if (year === '2026') {
