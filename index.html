@@ -683,7 +683,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 173; // v173: 分仓计划监控新增「订单放行」筛选——未放行订单（SAP 已创建但未放行、属未清订单会安排补货）可计入销售进度。①parseExcel 新增解析月度 xlsx 的「装运条件定义」sheet（20=东北/50=华南/60=西北/70=华中/80=西南/90=华北，注意与收货库位规则华南=40 不同，必须读定义 sheet）与「未放行订单」sheet（列按表头名动态定位；表头有两组同名「订单数量」，取最后一组=基本单位支口径，即 U 列）；②renderPlanMonitor 把 SKU×RDC/品牌×RDC/按日×RDC 三处累加抽成共用 accumulate()，已放行与未放行共用同一实现保证同口径；③筛选框默认「仅已放行」（现有口径不变），选「含未放行」才计入，按创建日期归月；④开关旁显示本目标月未放行笔数/支数/切片日期。实测：8 月开关前后 7,182,573 支零差异（创建日期均 9/1，不计入 8 月）；9 月 +199,866 支 / 100 笔 / 69 个 SKU×RDC；华中 +152,308 支与 RDC 筛选联动一致；RDC 映射失败 0 行
+const DB_VERSION = 174; // v174: 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -14189,6 +14189,20 @@ function jumpToSlowDiagnosis(sku, rdc) {
   navigateTo('slow-moving');
 }
 
+// v174: 已放行订单号集合——未放行订单去重用。
+//   业务规则：同一「销售订单号」若同时出现在已放行与未放行数据中，说明该单实际已放行，
+//   未放行侧的快照行是陈旧残留，**只取已放行订单的数据**，未放行侧整单剔除（避免重复计数）。
+//   实现：懒加载 + 按 dataStore.orderDetail.length 变化自动失效（重新上传/换月后行数变化即重算）。
+function releasedOrderNoSet() {
+  const n = (dataStore.orderDetail || []).length;
+  if (window._releasedOrderNos && window._releasedOrderNosLen === n) return window._releasedOrderNos;
+  const s = new Set();
+  (dataStore.orderDetail || []).forEach(function(d) { if (d.orderNo) s.add(String(d.orderNo)); });
+  window._releasedOrderNos = s;
+  window._releasedOrderNosLen = n;
+  return s;
+}
+
 function renderPlanMonitor() {
   setTitle('分仓计划监控');
   const page = document.getElementById('page-plan-monitor');
@@ -14307,17 +14321,31 @@ function renderPlanMonitor() {
   // v173: 未放行订单计入销售进度（按「创建日期」归月，与已放行订单同口径）
   //   数据源是「截至切片日仍未放行」的存量快照；9/1 创建的订单只计入 9 月，不计入 8 月。
   //   过滤条件与已放行订单保持一致：海南花露水开关、RDC 筛选、促销装/新品期剔除。
-  const unrelStat = { cnt: 0, qty: 0, slice: '', noRdc: 0 };
+  // v174: 订单号级去重——订单号若已在已放行订单中出现，则该单实际已放行，未放行侧整单剔除（不只剔除同 SKU 行）。
+  //   同一订单号在「未放行订单」sheet 里通常有多行（一行一物料），去重与「笔」的统计都按订单号口径。
+  const unrelStat = { cnt: 0, rows: 0, qty: 0, slice: '', noRdc: 0, dup: 0, dupRows: 0, dupQty: 0 };
+  const relNoSet = releasedOrderNoSet();
+  const _unrelNos = new Set();    // 本目标月已计入的未放行订单号（用于按订单号统计「笔」）
+  const _unrelDupNos = new Set(); // 本目标月因订单号重复被剔除的订单号
   (dataStore.unreleasedOrders || []).forEach(function(d) {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
+    // v174: 已放行订单优先——同一订单号只取已放行数据，未放行行既不计数也不累加（避免一笔单算两次）
+    if (d.orderNo && relNoSet.has(String(d.orderNo))) {
+      unrelStat.dupRows++;
+      unrelStat.dupQty += d.orderQty || 0;
+      if (!_unrelDupNos.has(String(d.orderNo))) { _unrelDupNos.add(String(d.orderNo)); unrelStat.dup++; }
+      return;
+    }
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
     if (_excludedSkuSet[d.skuCode]) return;
     const rdc = normalizeRdcName(d.warehouse);
     if (!rdc) { unrelStat.noRdc++; return; } // 装运条件无法映射到 RDC 的不计入（避免落到空的 RDC 维度）
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
-    unrelStat.cnt++;
+    unrelStat.rows++;
     unrelStat.qty += d.orderQty || 0;
+    const _noKey = d.orderNo ? ('#' + d.orderNo) : ('@' + unrelStat.rows);
+    if (!_unrelNos.has(_noKey)) { _unrelNos.add(_noKey); unrelStat.cnt++; }
     if (d.sliceDate && d.sliceDate > unrelStat.slice) unrelStat.slice = d.sliceDate;
     if (includeUnrel !== 'yes') return;
     accumulate(d.skuCode || '', rdc, d.brand || '', d.orderQty || 0, Number(d.dateStr.slice(8, 10)));
@@ -14435,10 +14463,12 @@ function renderPlanMonitor() {
   // v173: 订单放行筛选（是否把未放行订单计入销售进度）
   html += '<span style="font-size:11px;color:var(--text-secondary)">订单放行：</span>';
   html += '<select onchange="window._planIncludeUnreleased=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px'+(includeUnrel==='yes'?';font-weight:600;border-color:var(--color-blue);color:var(--color-blue)':'')+'" title="未放行订单 = SAP 已创建但尚未放行的未清订单，同样会安排补货。选择「含未放行」后计入本页销售进度（订单量/完成率/品牌矩阵/MTD曲线/明细/导出全部跟随）。按创建日期归月，与已放行订单同口径。"><option value="no"'+(includeUnrel==='no'?' selected':'')+'>仅已放行</option><option value="yes"'+(includeUnrel==='yes'?' selected':'')+'>含未放行</option></select>';
-  html += '<span style="font-size:11px;color:'+(unrelStat.cnt>0?'#B45309':'var(--text-secondary)')+'" title="口径与本页订单量完全一致：按创建日期归属目标月 '+targetMonth+'，已应用海南花露水 / RDC / 促销装及新品期剔除；数量为「未放行订单」sheet U 列订单数量（支）。">' +
+  html += '<span style="font-size:11px;color:'+(unrelStat.cnt>0?'#B45309':'var(--text-secondary)')+'" title="口径与本页订单量完全一致：按创建日期归属目标月 '+targetMonth+'，已应用海南花露水 / RDC / 促销装及新品期剔除；数量为「未放行订单」sheet U 列订单数量（支）。'+'\n· 「笔」按销售订单号去重统计（一个订单多行物料只算一笔），'+unrelStat.cnt+' 笔 = '+unrelStat.rows+' 行'+'\n· 订单号若已出现在已放行订单中，视为该单已放行，未放行侧整单剔除，只取已放行数据（本次剔除 '+unrelStat.dup+' 笔 / '+unrelStat.dupRows+' 行 / '+formatNum(unrelStat.dupQty)+' 支）">' +
     (unrelStat.cnt > 0
-      ? ('本目标月未放行 <b>'+unrelStat.cnt+'</b> 笔 / <b>'+formatNum(unrelStat.qty)+'</b> 支'+(unrelStat.slice?('（切片 '+unrelStat.slice+'）'):'')+(includeUnrel==='yes'?' · 已计入':' · 未计入'))
-      : '本目标月无未放行订单') +
+      ? ('本目标月未放行 <b>'+unrelStat.cnt+'</b> 笔 / <b>'+formatNum(unrelStat.qty)+'</b> 支'+(unrelStat.slice?('（切片 '+unrelStat.slice+'）'):'')+(includeUnrel==='yes'?' · 已计入':' · 未计入')+(unrelStat.dup>0?(' · 订单号重复已剔除 '+unrelStat.dup+' 笔'):''))
+      : (unrelStat.dup > 0
+          ? ('本目标月未放行订单 '+unrelStat.dup+' 笔均与已放行订单号重复，已全部剔除')
+          : '本目标月无未放行订单')) +
     '</span>';
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月订单量(支)/分仓计划(支)；全月预测=完成率÷已过天数占比</span>';
   html += '</div>';
