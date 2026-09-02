@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 171; // v171: 修复「日订单满足率」大图与 KPI 卡口径不一致（8月 82.1% vs 81.5%）。根因：大图 renderOverviewHistoryCharts 纯读 history.json 静态值，KPI 卡 renderFulfillmentHistoryCharts 2026 年走实时聚合。修复：①liveFulfillmentByType 从 renderFulfillmentHistoryCharts 内部提取到全局（行2632），两处共用同一实现；②大图 avgArr 改为 2026 实时优先、无数据回退 history；③标题硬编码「1–6月」改为动态取 _availableMonths。实测 8月 大图 82.084%→81.527%，与 KPI 卡差异 0.000000pp；1-7月与2025全年零改动（无实时数据时正确回退 history）
+const DB_VERSION = 172; // v172: 切换日订单满足率为驾驶舱 MTD 口径 + 删除"年度同比概览"模块。①大图 renderOverviewHistoryCharts 的 avgArr 2026 改全 RDC 汇总求率（sum/sum），与驾驶舱 MTD 80.7% 同口径；v171 实时聚合（每仓求率再算 RDC 平均）→ 80.7%（分子分母直接相加），差异 -0.8pp。②删除 fulfillment 页"年度同比概览（截至 X 月）"KPI 卡（81.5% 与 80.7% 口径冲突，且切换 MTD 后大图已为权威值，无需再单列）。③小倍数折线图保留原 liveFulfillmentByType（每 RDC 一张图，求率口径与历史折线图延续性更稳）。实测 8月 大图 81.5% → 80.71% (与驾驶舱 80.7% 完全一致)，1-7 月 2026 全部有数据，2025 全年零改动
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -2651,8 +2651,8 @@ function renderOverviewHistory() {
   const latestM = m26.length ? parseInt(m26[m26.length - 1].split('-')[1], 10) : 6;
   const rangeLabel = m26.length ? ('1–' + latestM + '月') : '1–6月';
   return '<div class="card" style="margin-bottom:16px">' +
-    '<div class="card-header"><span class="card-title">📅 日度订单满足率历史趋势（2025 全年 vs 2026 ' + rangeLabel + '，全RDC均值）</span></div>' +
-    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">蓝色实线 = 2026 · 灰色虚线 = 2025 · 2026 各月按订单明细实时聚合（与下方「' + latestM + '月份日满足率」同口径），2025 为历史快照</div>' +
+    '<div class="card-header"><span class="card-title">📅 日度订单满足率历史趋势（2025 全年 vs 2026 ' + rangeLabel + '）</span></div>' +
+    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">蓝色实线 = 2026（汇总求率，与驾驶舱 MTD 同口径：sum(firstDayQty)/sum(orderQty)）· 灰色虚线 = 2025（分仓平均历史快照）</div>' +
     '<div class="chart-container" id="chart-overview-history-fulfill"></div>' +
   '</div>';
 }
@@ -2662,18 +2662,32 @@ function renderOverviewHistoryCharts() {
   if (!dataStore.history || !dataStore.history.fulfillment) return;
   const H = dataStore.history.fulfillment;
   const months12 = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
-  // v171: 2026 年优先走实时聚合，与 KPI 卡 avgOf() 同口径
-  // 之前这里纯读 history.json 静态值，导致大图 8月显示 82.1%、KPI 卡显示 81.5%（同一页面两个数）
+  // v172: 2026 年改用全 RDC 汇总求率（sum/sum），与驾驶舱 MTD 口径一致
+  // 之前用 liveFulfillmentByType（每个 RDC 求率再算 RDC 平均）导致 8 月显示 81.5%，
+  // 与驾驶舱 MTD 80.7% 偏差 0.8pp（v171 修复过大图/KPI 卡口径不一致，但口径本身就是分仓平均）
+  // 验证：8月 汇总求率 = 80.707%，与驾驶舱 MTD 80.7% 完全一致
+  // 2025 年因无订单明细数据，仍按分仓平均（history.json 静态快照）
   function avgArr(year, key) {
     key = key || 'daily';
     return months12.map((_, i) => {
+      // 2026：全 RDC 汇总求率（驾驶舱 MTD 口径）
+      if (year === '2026') {
+        const ym = '2026-' + String(i + 1).padStart(2, '0');
+        let sNum = 0, sOrder = 0;
+        RDC_LIST.forEach(function(r) {
+          (dataStore.orderDetail || []).forEach(function(d) {
+            if (d.warehouse !== r) return;
+            if (!d.dateStr || d.dateStr.slice(0, 7) !== ym) return;
+            sOrder += d.orderQty || 0;
+            sNum += (key === 'monthly' ? (d.totalFulfillQty || 0) : (d.firstDayQty || 0));
+          });
+        });
+        if (sOrder > 0) return sNum / sOrder;
+        return null;
+      }
+      // 2025：分仓平均（无实时订单明细，按 history.json 历史快照）
       let s = 0, c = 0;
-      RDC_LIST.forEach(r => {
-        if (year === '2026') {
-          const ym = '2026-' + String(i + 1).padStart(2, '0');
-          const live = liveFulfillmentByType(r, ym, key);
-          if (live != null) { s += live; c++; return; }
-        }
+      RDC_LIST.forEach(function(r) {
         const v = H[year][key] && H[year][key][r] && H[year][key][r][i];
         if (v != null) { s += v; c++; }
       });
@@ -2996,22 +3010,11 @@ function renderFulfillment() {
 function renderFulfillmentHistory() {
   if (!dataStore.history || !dataStore.history.fulfillment) return '';
   window._fulHtyRdc = window._fulHtyRdc || 'all';
-  const rdc = window._fulHtyRdc;
-  const opts = '<option value="all"' + (rdc === 'all' ? ' selected' : '') + '>全部RDC（均值）</option>' +
-    RDC_LIST.map(r => '<option value="' + r + '"' + (rdc === r ? ' selected' : '') + '>' + r + '</option>').join('');
-  // 与折线图同步 1-最新月（用于卡片标题展示）
-  const months = (window._availableMonths && window._availableMonths.length > 0)
-    ? window._availableMonths.filter(function(m) { return m.indexOf('2026-') === 0; }).map(function(m) { return parseInt(m.split('-')[1], 10) + '月'; })
-    : ['1月', '2月', '3月', '4月', '5月', '6月', '7月'];
-  const latestMonthLabel = months[months.length - 1] || '';
+  // v172: 删除"年度同比概览"模块（KPI 卡），保留"日订单满足率同比对比（2025 vs 2026）"小倍数折线图
   return '' +
     '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📊 日订单满足率同比对比（2025 vs 2026）</span>' +
       '<span style="font-size:11px;color:var(--text-secondary)">每个 RDC 一张折线图，1 位小数百分比，2026年当月按订单数据实时聚合</span>' +
-    '</div><div id="chart-fulfill-history-grid"></div></div>' +
-    '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title" id="kpi-fulfill-history-title">年度同比概览（截至 ' + latestMonthLabel + '）</span>' +
-    '</div>' +
-    '<div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--text-secondary);margin-right:8px">RDC：</span><select id="ful-history-rdc-select" onchange="window._fulHtyRdc=this.value;renderFulfillment()" style="padding:4px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card);color:var(--text-primary);outline:none">' + opts + '</select></div>' +
-    '<div id="kpi-fulfill-history"></div></div>';
+    '</div><div id="chart-fulfill-history-grid"></div></div>';
 }
 
 // 订单满足率历史同比（矩阵 + 年度概览，不含月度折线）
@@ -3133,55 +3136,8 @@ function renderFulfillmentHistoryCharts() {
     });
   }
 
-  // KPI overview（v57：改为只显示当月 环比/同比，去掉 1-X月累计列）
-  const rdcList = rdc === 'all' ? RDC_LIST : [rdc];
-  const monthIdx = monthsData.map(function(d) { return d.histIdx; });
-  const lastIdx = monthIdx[monthIdx.length - 1];
-  const prevIdx = monthIdx.length >= 2 ? monthIdx[monthIdx.length - 2] : null; // 上一月 idx
-  function avgOf(type, year, idxs) {
-    let s = 0, c = 0;
-    rdcList.forEach(r => { idxs.forEach(i => {
-      // 2026 年优先实时聚合，避免 history.json 陈旧值覆盖
-      if (year === '2026') {
-        const ym = '2026-' + String(i + 1).padStart(2, '0');
-        const live = liveFulfillmentByType(r, ym, type);
-        if (live != null) { s += live; c++; return; }
-      }
-      const v = H[year][type][r] && H[year][type][r][i];
-      if (v != null) { s += v; c++; }
-    }); });
-    return c ? s / c : 0;
-  }
-  // 当月（选中月）：环比 vs 上一月
-  const last_26 = avgOf('monthly', '2026', [lastIdx]);
-  const last_26d = avgOf('daily', '2026', [lastIdx]);
-  const prev_26 = prevIdx !== null ? avgOf('monthly', '2026', [prevIdx]) : 0;
-  const prev_26d = prevIdx !== null ? avgOf('daily', '2026', [prevIdx]) : 0;
-  function pp(cur, prev) { const d = cur - prev; return { color: d >= 0 ? 'var(--color-green)' : 'var(--color-red)', txt: (d >= 0 ? '+' : '') + (d * 100).toFixed(1) + 'pp' }; }
-  const aMom = pp(last_26, prev_26);
-  const aMomD = pp(last_26d, prev_26d);
-  const lastLabel = latestMonthLabel + '份';
-  const lastMonthNum = parseInt(String(latestMonthLabel).replace(/月/g,''), 10) || (lastIdx + 1);
-  const prevLabel = prevIdx !== null ? (prevIdx + 1) + '月份' : '上月';
-  // 单行 KPI：指标 / 当月值 / 环比（v59：去掉操作列，文字统一黑色）
-  const kpiRow = function(type, label, value, mom, momColor, momLabel, momVal) {
-    return '<tr>' +
-      '<td style="padding:14px;font-weight:600;color:#000;white-space:nowrap">' + label + '</td>' +
-      '<td style="padding:14px;text-align:right;font-size:20px;font-weight:700;color:' + (type === 'monthly' ? '#2563EB' : '#059669') + '">' + value + '%</td>' +
-      '<td style="padding:14px;font-size:11px;white-space:nowrap;color:#000">' +
-        '<span style="color:' + momColor + '">▲ ' + mom + '</span> <span style="color:#000">vs ' + momLabel + ' ' + momVal + '%</span>' +
-      '</td>' +
-    '</tr>';
-  };
-  const kpiHtml = '<table class="data-table" style="width:100%"><thead><tr style="background:#f3f4f6">' +
-    '<th style="text-align:left;padding:10px 14px;color:#000;width:24%">指标</th>' +
-    '<th style="text-align:right;padding:10px 14px;color:#000;width:18%">当月值</th>' +
-    '<th style="text-align:left;padding:10px 14px;color:#000;width:58%">环比（vs ' + prevLabel + '）</th>' +
-    '</tr></thead><tbody>' +
-    kpiRow('monthly', lastLabel + '月均满足率', (last_26 * 100).toFixed(1), aMom.txt, aMom.color, prevLabel, (prev_26 * 100).toFixed(1)) +
-    kpiRow('daily', lastLabel + '日满足率', (last_26d * 100).toFixed(1), aMomD.txt, aMomD.color, prevLabel, (prev_26d * 100).toFixed(1)) +
-    '</tbody></table>';
-  document.getElementById('kpi-fulfill-history').innerHTML = kpiHtml;
+  // v172: 删除"年度同比概览"KPI 卡（avgOf/last_26/last_26d/KPI 表格），避免 8月份日满足率 81.5% 与驾驶舱 MTD 80.7% 口径不一致
+  // 日订单满足率改用驾驶舱 MTD 口径后，KPI 卡与大图同源，无需再单列年度概览
 }
 
 // TOP 5 缺货 SKU 弹框（v58：按缺货箱数从大到小，含物料/品名/缺货箱/在途/大仓供应）
