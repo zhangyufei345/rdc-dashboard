@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 168; // v168: RDC 卡片「严重度高占比」色条改跨 RDC 分位驱动（红≥P75/黄≥P50/绿<P50），替代 v131 拍脑袋的 15%/10%（实测 6 仓全红、无判别力）；首日满足率修正 v162 漏改的 85%/78% → 业务阈值 90%/80%
+const DB_VERSION = 169; // v169: 重点跟进清单新增「供应链品类」列（SKU名称后、RDC前），数据源=新增 product.xlsx（产品主数据「产品列表」sheet 的「供应链品类」列）。实测 8月 308 个 SKU 命中率 100%（常规品281/促销装24/非卖品3），查不到显示 —
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -5198,7 +5198,7 @@ function renderShortageMonthly() {
       <div class="table-wrap" style="max-height:500px;overflow-y:auto">
         <table class="data-table" style="font-size:12px">
           <thead><tr>
-            <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th>
+            <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left" title="来自产品主数据「产品列表」sheet 的「供应链品类」列（常规品/促销装/非卖品），与缺货报告「产品分类」同源；查不到显示 —">供应链品类</th><th style="text-align:left">RDC</th>
             <th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>
             <th style="text-align:right;color:var(--color-red)">首日缺货率</th>
             <th style="text-align:right;color:var(--color-purple)">缺货天数</th><th style="text-align:right">有单天数</th>
@@ -5223,6 +5223,7 @@ function renderShortageMonthly() {
                   '<td style="text-align:left">' + p.brand + '</td>' +
                   '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
                   '<td style="text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + p.name + '">' + p.name + '</td>' +
+                  '<td style="text-align:left">' + (function(){ var _c = skuSupplyChainCat(p.sku); return _c ? _c : '<span style="color:#CBD5E1">—</span>'; })() + '</td>' +
                   '<td style="text-align:left">' + p.rdc + '</td>' +
                   '<td style="text-align:right">' + p.orderQty.toLocaleString() + '</td>' +
                   '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.shortQty.toLocaleString() + '</td>' +
@@ -10604,6 +10605,19 @@ function init() {
 
       // 2) IndexedDB 恢复（秒开首屏）
       const restored = await loadFromIDB();
+      // 2.5) v169: 产品主数据（SKU → 供应链品类）——不写入 IDB，每次启动都拉一次（881KB，后台加载不阻塞首屏）
+      //      必须放这里的原因：有缓存时走 refreshFromManifest，不会执行 autoLoadData，
+      //      若只在 autoLoadData 里加载，则老用户（有 IDB 缓存）的品类列会永远显示 —
+      //      加载完成后若正停留在缺货分析页，自动重渲染补上该列；失败则显示 —，不影响主流程
+      (async function loadProductMaster() {
+        try {
+          const prodResp = await fetch('./product.xlsx');
+          if (prodResp.ok) {
+            parseProductMasterExcel(await prodResp.arrayBuffer());
+            if (String(location.hash || '').indexOf('shortage') >= 0 && typeof renderShortage === 'function') renderShortage();
+          }
+        } catch (e) { /* 产品主数据缺失，供应链品类列显示 — */ }
+      })();
       // 自动选中最新月份（在首次渲染前生效，避免先渲染"全部月份"再闪烁切换）
       if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
       if (restored) renderAll();
@@ -10880,6 +10894,64 @@ function diagnoseSlowItem(o) {
   else if (rc === '需求变化待查') adv = '核查5月→6月需求信号变化，确认是否需求虚高导致覆盖骤升';
   else adv = '持续监测';
   return { flags: flags, rc: rc, adv: adv };
+}
+
+// v169: SKU 编码规范化——纯数字去前导零（源 '09698' 与产品主数据 '9698' 需能对应上）
+function normSkuCode(x) {
+  const s = String(x == null ? '' : x).trim();
+  if (!s) return '';
+  return /^\d+$/.test(s) ? String(parseInt(s, 10)) : s;
+}
+
+// v169: 产品主数据解析（桌面「更新部署/产品MMDD.xlsx」复制到项目根，固定命名 product.xlsx）
+//   目的：补「供应链品类」字段。看板现有 productMaster 来自 inventory「基础数据」sheet，
+//   该 sheet 只有 成本价/箱规/品牌/淘汰品，没有供应链品类（2026-09-02 实测确认）
+//   「产品列表」sheet 9 列：产品编码/产品名称/ABC分类/供应链品类/品类/是否为软切新品/生命周期标签/品牌/箱规转化因子
+//   取值说明：「供应链品类」= 常规品/促销装/非卖品，与缺货报告「产品分类」同源（用于区分超销类型）；
+//            另一列「品类」= 面霜/沐浴露/洁面 等才是通常意义的品类，本次未取
+function parseProductMasterExcel(rawData) {
+  try {
+    let wb;
+    if (rawData && rawData.__preparsed) wb = rawData;
+    else wb = XLSX.read(rawData, { type: 'array' });
+    const sheetNames = wb.SheetNames || [];
+    let sn = sheetNames.find(function(n) { return String(n || '').trim() === '产品列表'; });
+    if (!sn) sn = sheetNames.find(function(n) { return String(n || '').indexOf('产品列表') >= 0; });
+    if (!sn) { console.warn('[产品主数据] 未找到「产品列表」sheet，供应链品类列将显示 —'); return; }
+    const arr = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null, blankrows: false });
+    if (!arr || arr.length < 2) { console.warn('[产品主数据] 「产品列表」为空'); return; }
+    const hdr = arr[0] || [];
+    function colIdx(nm) {
+      for (let i = 0; i < hdr.length; i++) if (String(hdr[i] || '').trim() === nm) return i;
+      return -1;
+    }
+    const C_CODE = colIdx('产品编码');
+    const C_CAT = colIdx('供应链品类');
+    if (C_CODE < 0) { console.warn('[产品主数据] 未找到「产品编码」列'); return; }
+    if (C_CAT < 0) { console.warn('[产品主数据] 未找到「供应链品类」列'); return; }
+    const map = {};
+    for (let i = 1; i < arr.length; i++) {
+      const r = arr[i];
+      if (!r) continue;
+      const sku = normSkuCode(r[C_CODE]);
+      if (!sku) continue;
+      const v = String(r[C_CAT] == null ? '' : r[C_CAT]).trim();
+      if (v) map[sku] = v;
+    }
+    // v169 铁律：跨函数使用的查找表必须挂 window，否则下游 render 拿到空
+    window._skuSupplyChainCat = map;
+    dataStore.productCategory = map;
+    console.log('[产品主数据] 供应链品类映射：' + Object.keys(map).length + ' 个 SKU（产品列表 ' + (arr.length - 1) + ' 行）');
+  } catch (e) {
+    console.warn('[产品主数据] 解析失败（不影响主流程）：', e);
+  }
+}
+
+// v169: 取 SKU 的供应链品类（查不到返回空串，由调用方决定显示 —）
+function skuSupplyChainCat(sku) {
+  const m = window._skuSupplyChainCat;
+  if (!m) return '';
+  return m[normSkuCode(sku)] || '';
 }
 function parseInventoryExcel(rawData) {
   try {
