@@ -677,7 +677,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 169; // v169: 重点跟进清单新增「供应链品类」列（SKU名称后、RDC前），数据源=新增 product.xlsx（产品主数据「产品列表」sheet 的「供应链品类」列）。实测 8月 308 个 SKU 命中率 100%（常规品281/促销装24/非卖品3），查不到显示 —
+const DB_VERSION = 170; // v170: 「严重度高重点跟进清单」新增 CSV 导出按钮。表体预计算 window._msFocusList（dcSupply/bottleneck 一次算好，避免 export 重复逻辑 + 口径漂移）。CSV 列与表头 17 列一字不差；含逗号/引号字段走标准 CSV 转义；数字保留原始值（无千分位逗号——否则 18,240 会被 Excel 拆列，已踩坑并复用现有 export 约定）。文件命名：`严重度高重点跟进清单_<期间>_<行数>_<导出日>.csv`
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -4967,6 +4967,35 @@ function renderShortageMonthly() {
   else if (window._msSort === 'mr') sorted.sort((a, b) => b.mr - a.mr || b.shortQty - a.shortQty);
   else if (window._msSort === 'sf') sorted.sort((a, b) => b.sf - a.sf || b.shortDayCnt - a.shortDayCnt);
 
+  // v170: 导出快照——与表体同源、避免 export 时重复 filter+sort+dcs 计算
+  window._msFocusList = (function(){
+    const dcsProf = getMonthlyDCSupplyProfile();
+    return sorted.map(function(p){
+      const dcs = dcsProf.byKey[period + '|' + p.sku] || null;
+      const bn = judgeBottleneck(p, dcs);
+      return {
+        brand: p.brand || '',
+        sku: p.sku || '',
+        name: p.name || '',
+        scc: (window._skuSupplyChainCat && window._skuSupplyChainCat[p.sku]) || '',
+        rdc: p.rdc || '',
+        orderQty: p.orderQty || 0,
+        shortQty: p.shortQty || 0,
+        mr: p.mr || 0,
+        shortDayCnt: p.shortDayCnt || 0,
+        orderDayCnt: p.orderDayCnt || 0,
+        sf: p.sf || 0,
+        severity: p.severity || 0,
+        dcSupplyLatest: (dcs && dcs.dcSupplyLatest) || '',
+        dcStockLatest: (dcs && dcs.dcStockLatest) || 0,
+        dcShortDayCnt: (dcs && dcs.dcShortDayCnt) || 0,
+        bnLabel: (bn && bn.label) || ''
+      };
+    });
+  })();
+  window._msFocusPeriod = period;
+  window._msFocusWindowMode = mode;
+
   const perPage = 20;
   window._msPage = window._msPage || 1;
   const totalPages = Math.ceil(sorted.length / perPage) || 1;
@@ -5191,6 +5220,7 @@ function renderShortageMonthly() {
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <span class="card-title">严重度高重点跟进清单（${hi.length} 个 · 严重度评分 ≥ ${SEV_DOUBLE_TXT}（本月 P75，前 25%））</span>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn-export" style="font-size:11px;padding:4px 12px;background:var(--color-green);color:#fff" onclick="exportShortageFocusListCSV()">⬇ 导出CSV</button>
           <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
           ${sortBtn('sev', '严重度')}${sortBtn('qty', '缺货量')}${sortBtn('mr', '首日缺货率')}${sortBtn('sf', '缺货频率')}
         </div>
@@ -5338,6 +5368,64 @@ function renderShortageMonthly() {
     }
   } catch (e) { console.warn('[v145] RDC 卡片事件代理失败', e); }
 }
+
+// v170: 「严重度高重点跟进清单」导出 CSV
+// 数据来源 window._msFocusList（与表体同源，render 阶段预计算，避免口径漂移）
+// 导出当前筛选+排序后的全部行（非当前页），列与表格一致
+// 铁律：CSV 内数字一律写原始值，不带千分位逗号（与所有现有 export 函数保持一致），
+//      否则 18,240 会被 Excel 拆成两列
+function exportShortageFocusListCSV() {
+  const list = window._msFocusList || [];
+  if (!list.length) {
+    showToast('当前筛选下无数据可导出', true);
+    return;
+  }
+  const mode = window._msFocusWindowMode || window._msWindowMode || 'rolling30';
+  const period = window._msFocusPeriod || (mode === 'rolling30' ? 'rolling30' : (window._latestMonth || ''));
+  const periodLabel = mode === 'rolling30'
+    ? '近30天'
+    : (period || '全部月份');
+
+  // CSV 头部（与表头一一对应）
+  const head = [
+    '品牌', 'SKU编码', 'SKU名称', '供应链品类', 'RDC',
+    '订单量', '首日缺货量', '首日缺货率(%)', '缺货天数', '有单天数', '缺货频率(%)',
+    '严重度评分(0-1)', '严重度等级',
+    '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈'
+  ];
+
+  // 等级映射：与表内标签对齐（CSV 里同事无需再算）
+  function severityLevel(sev) {
+    if (sev >= SEV_HIGH) return '紧急升级 P90';
+    if (sev >= SEV_DOUBLE) return '严重度高 P75';
+    return '关注';
+  }
+  function esc(s) {
+    const v = s == null ? '' : String(s);
+    if (/[",\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  }
+
+  const rows = list.map(function(r){
+    return [
+      esc(r.brand), esc(r.sku), esc(r.name), esc(r.scc), esc(r.rdc),
+      r.orderQty, r.shortQty,
+      (r.mr * 100).toFixed(1),
+      r.shortDayCnt, r.orderDayCnt,
+      Math.round((r.sf || 0) * 100),
+      (r.severity * 100).toFixed(1), severityLevel(r.severity),
+      esc(r.dcSupplyLatest), r.dcStockLatest || 0, r.dcShortDayCnt || 0, esc(r.bnLabel)
+    ].join(',');
+  });
+
+  // UTF-8 BOM 让 Excel 直接打开中文不乱码
+  const csv = '\uFEFF' + head.join(',') + '\n' + rows.join('\n') + '\n';
+  const today = new Date().toISOString().slice(0, 10);
+  const fname = '严重度高重点跟进清单_' + periodLabel + '_' + list.length + '行_' + today + '.csv';
+  downloadFile(fname, csv);
+  showToast('已导出 ' + list.length + ' 行');
+}
+window.exportShortageFocusListCSV = exportShortageFocusListCSV;
 
 // v145: 下钻面板改为 modal 弹框（fixed 居中遮罩），不再在页面下方展开
 // 同时加「按品牌总览」——每个 SKU×RDC 组合先按品牌聚合，再列明细
