@@ -683,7 +683,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 178; // v178: 数据源更新——8 月订单补入 8/31（8/29 亦有补录与修订）。data-2026-08.xlsx 订单明细 23,384 → 24,114 行，日期覆盖 08-01~08-31（原止于 08-29）。9 月 data.json 未动（用户要求）。影响实测：orderDetail 237,026 → 237,756 行；8 月有效 SKU 214 → 215，8 月 P75 0.556 → 0.558、P90 0.689 → 0.683；长期画像默认口径 15/23/5/129/271 不变（「是否进入当月 P75」判的是 9 月，9 月数据未动）；强制回退到 8 月口径下 顽固 13→13、反复 21→21、新发 7 → 8、已缓解 140 → 139、偶发 262→262（合计 443 不变，1 个 SKU 因 8/31 新增缺货进入 8 月 P75，由已缓解转新发）。注：新文件不是纯追加——8/29 有 793 行发生修订（主要是「总履约排单支数」由 0 补登为实际数、「总履约缺口」相应清零），另有 9 个历史日合计 -61 行，属 SAP 月末重抽数，看板口径按首日缺货量计算，不受影响。// v177: 修复 v176 在「月初前几天」数据下长期画像全判成「已缓解」的问题。根因：buildLongTermProfile 用 MS_PROFILE.MIN_DAYS=4 过滤各月有效 SKU，月度清单要这个门槛防「下 1 次缺了就是 100%」的统计噪声；但长期画像只看相对分位，过严会让月初几天全月 SKU 不达标 → 该月 P75 为空 → r.inCurP75 全 false → 历史 P75 过的 SKU 全部误判成「已缓解」。9 月只有 1-2 天数据时 100% 触发（顽固/反复/新发 全 0，已缓解 174）。修：① LT_PARAMS.LT_MIN_DAYS=1（长期画像只看分位，放宽到 1 天即可，9 月实际拿到 71 个有效 SKU）；② LT_PARAMS.MIN_VALID_CNT_MONTH=30，「本月 P75」判定时如果 curMonth validCnt<30 自动回退到上一个样本充足的月份（防月初 P75 极低导致单 SKU 误进顽固）；③ 新增 effectiveCurMonth 字段返回给 UI，tooltip 和口径说明里如实标注「数据不足，已回退到 X 月」。实测（真实 9 月数据 2026-09-01~02）：默认 → 顽固 15/反复 23/新发 5/已缓解 129/偶发 271（之前是 0/0/0/174/179）；强制回退（MIN_VALID_CNT_MONTH=100 模拟更深月初）→ 顽固 13/反复 18/新发 7/已缓解 132/偶发 273——与 v176 上线时 1-8 月数据 13/15/14/128/183 一致，回退逻辑正确。⚠️ 注意：这组数字测于「1-4 月 json 重生成」之前；1-4 月重生成后同口径基线变为 13/21/7/140/262（见 v178），跨版本对比时别拿这两组数字直接相减。// v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
+const DB_VERSION = 179; // v179: 修复「首次加载有数据、F5 刷新后主仪表盘全空」的 IDB 缓存 Bug。根因：saveToIDB 写了 shortage 字段，但 loadFromIDB 的恢复段漏了 dataStore.shortage（只恢复了 overall/dailyDetail/bizDemand/orderDetail/customerFulfill/transship/inventoryTurnover/inventory/history 九项）。后果：①全量加载后 shortage=8261 正常；②F5 走 IDB 缓存路径时 shortage 停在初始 [] → 概览 4 个 KPI（缺货总金额/缺货总箱数/在途总箱数/涉及RDC数）全 0、Top20 显示「暂无缺货数据」、dateLabel 退化成 'all'（ensureOverviewDate 因 getLatestShortageDate() 返回 null 而不更新 overviewDate）；③随后 saveToIDB 把 shortage=[] 写回 IDB，永久覆盖缓存里那 8261 行，此后每次刷新都好不了，只有等下次 manifest.generatedAt 变化触发 clearIDB 才恢复。修：①loadFromIDB 补 dataStore.shortage = req.result.shortage || [];；②IDB 健康检查新增 shMissing（shortage 非数组或长度为 0 即判残缺），让 v179 之前被写坏的存量缓存能自愈回退到全量重拉；③升 DB_VERSION 触发 onupgradeneeded 清空旧缓存，保证所有在线用户一次到位。Playwright 实测：修复前 reload 后 shortage 8261→0（且 IDB 被写成 0）；修复后 reload 后 shortage 稳定 8261、overviewDate 自动定位 2026-09-02、KPI 正常。// v178: 数据源更新——8 月订单补入 8/31（8/29 亦有补录与修订）。data-2026-08.xlsx 订单明细 23,384 → 24,114 行，日期覆盖 08-01~08-31（原止于 08-29）。9 月 data.json 未动（用户要求）。影响实测：orderDetail 237,026 → 237,756 行；8 月有效 SKU 214 → 215，8 月 P75 0.556 → 0.558、P90 0.689 → 0.683；长期画像默认口径 15/23/5/129/271 不变（「是否进入当月 P75」判的是 9 月，9 月数据未动）；强制回退到 8 月口径下 顽固 13→13、反复 21→21、新发 7 → 8、已缓解 140 → 139、偶发 262→262（合计 443 不变，1 个 SKU 因 8/31 新增缺货进入 8 月 P75，由已缓解转新发）。注：新文件不是纯追加——8/29 有 793 行发生修订（主要是「总履约排单支数」由 0 补登为实际数、「总履约缺口」相应清零），另有 9 个历史日合计 -61 行，属 SAP 月末重抽数，看板口径按首日缺货量计算，不受影响。// v177: 修复 v176 在「月初前几天」数据下长期画像全判成「已缓解」的问题。根因：buildLongTermProfile 用 MS_PROFILE.MIN_DAYS=4 过滤各月有效 SKU，月度清单要这个门槛防「下 1 次缺了就是 100%」的统计噪声；但长期画像只看相对分位，过严会让月初几天全月 SKU 不达标 → 该月 P75 为空 → r.inCurP75 全 false → 历史 P75 过的 SKU 全部误判成「已缓解」。9 月只有 1-2 天数据时 100% 触发（顽固/反复/新发 全 0，已缓解 174）。修：① LT_PARAMS.LT_MIN_DAYS=1（长期画像只看分位，放宽到 1 天即可，9 月实际拿到 71 个有效 SKU）；② LT_PARAMS.MIN_VALID_CNT_MONTH=30，「本月 P75」判定时如果 curMonth validCnt<30 自动回退到上一个样本充足的月份（防月初 P75 极低导致单 SKU 误进顽固）；③ 新增 effectiveCurMonth 字段返回给 UI，tooltip 和口径说明里如实标注「数据不足，已回退到 X 月」。实测（真实 9 月数据 2026-09-01~02）：默认 → 顽固 15/反复 23/新发 5/已缓解 129/偶发 271（之前是 0/0/0/174/179）；强制回退（MIN_VALID_CNT_MONTH=100 模拟更深月初）→ 顽固 13/反复 18/新发 7/已缓解 132/偶发 273——与 v176 上线时 1-8 月数据 13/15/14/128/183 一致，回退逻辑正确。⚠️ 注意：这组数字测于「1-4 月 json 重生成」之前；1-4 月重生成后同口径基线变为 13/21/7/140/262（见 v178），跨版本对比时别拿这两组数字直接相减。// v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -881,8 +881,12 @@ async function loadFromIDB() {
           const ord = req.result.orderDetail || [];
           const invMissing = !inv || !inv.cov7 || (Array.isArray(inv.cov7) && inv.cov7.length < 100);
           const ordMissing = !Array.isArray(ord) || ord.length < 100;
-          if (invMissing || ordMissing) {
-            console.warn('[loadFromIDB] IDB 缓存关键字段都缺失 (cov7 + orderDetail)，自动清空回退');
+          // v179: 补 shortage 健康检查——v179 之前被写坏的缓存里 shortage=[]（见上方 v179 修复注释），
+          //       只加恢复行救不了存量坏缓存，必须让健康检查把它判为残缺、回退到全量重拉。
+          const shCache = req.result.shortage || [];
+          const shMissing = !Array.isArray(shCache) || shCache.length === 0;
+          if (invMissing || ordMissing || shMissing) {
+            console.warn('[loadFromIDB] IDB 缓存关键字段缺失 (cov7=' + (inv && inv.cov7 ? inv.cov7.length : 0) + ', orderDetail=' + ord.length + ', shortage=' + shCache.length + ')，自动清空回退');
             try {
               const tx2 = db.transaction(STORE_NAME, 'readwrite');
               tx2.objectStore(STORE_NAME).delete('current_data');
@@ -891,6 +895,13 @@ async function loadFromIDB() {
             resolve(false);
             return;
           }
+          // v179 修复：缺货汇总（dataStore.shortage）此前「只写不读」——saveToIDB 存了，loadFromIDB 漏了。
+          // 后果链：首次加载（manifest 变化触发全量拉 json）shortage=8261 → 一切正常；
+          //        F5 刷新走 IDB 缓存路径 → shortage 停留在初始 [] → 概览 4 个 KPI 全 0、
+          //        Top20「暂无缺货数据」、dateLabel 退化成 'all'；
+          //        随后 saveToIDB 又把 shortage=[] 写回 IDB，把缓存里那 8261 行永久覆盖掉，
+          //        之后每次刷新都好不了，只能等下次 manifest.generatedAt 变化触发 clearIDB 才恢复。
+          dataStore.shortage = req.result.shortage || [];
           dataStore.overall = req.result.overall || { kaDealer: [], dailyFulfill: [], brandFulfill: [] };
           dataStore.dailyDetail = req.result.dailyDetail || [];
           dataStore.bizDemand = req.result.bizDemand || [];
