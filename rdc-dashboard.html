@@ -683,7 +683,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 176; // v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
+const DB_VERSION = 177; // v177: 修复 v176 在「月初前几天」数据下长期画像全判成「已缓解」的问题。根因：buildLongTermProfile 用 MS_PROFILE.MIN_DAYS=4 过滤各月有效 SKU，月度清单要这个门槛防「下 1 次缺了就是 100%」的统计噪声；但长期画像只看相对分位，过严会让月初几天全月 SKU 不达标 → 该月 P75 为空 → r.inCurP75 全 false → 历史 P75 过的 SKU 全部误判成「已缓解」。9 月只有 1-2 天数据时 100% 触发（顽固/反复/新发 全 0，已缓解 174）。修：① LT_PARAMS.LT_MIN_DAYS=1（长期画像只看分位，放宽到 1 天即可，9 月实际拿到 71 个有效 SKU）；② LT_PARAMS.MIN_VALID_CNT_MONTH=30，「本月 P75」判定时如果 curMonth validCnt<30 自动回退到上一个样本充足的月份（防月初 P75 极低导致单 SKU 误进顽固）；③ 新增 effectiveCurMonth 字段返回给 UI，tooltip 和口径说明里如实标注「数据不足，已回退到 X 月」。实测（真实 9 月数据 2026-09-01~02）：默认 → 顽固 15/反复 23/新发 5/已缓解 129/偶发 271（之前是 0/0/0/174/179）；强制回退（MIN_VALID_CNT_MONTH=100 模拟更深月初）→ 顽固 13/反复 18/新发 7/已缓解 132/偶发 273——与 v176 上线时 1-8 月数据 13/15/14/128/183 一致，回退逻辑正确。// v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -4505,11 +4505,21 @@ window.MS_PROFILE = MS_PROFILE;
 //      「一个长期问题 SKU」稀释成 6 个互不相干的仓
 //
 // 指标：
-//   nM        有效月数（该月有缺货 且 有单工作日 ≥ MIN_DAYS）
+//   nM        有效月数（该月有缺货 且 有单工作日 ≥ LT_MIN_DAYS，LT_MIN_DAYS 比月度清单的 MIN_DAYS 宽松）
 //   月度百分位 该月 severity 在当月有效 SKU 中的排名位置 0~1（同分取平均排名）
 //   shrunkPct (Σpct + K×PRIOR) / (nM + K)   ← 判定用（抗短历史污染）
 //   LSI       Σ(pct × 月序) / Σ月序          ← 排序用（近期优先）
 //   职责分离是关键：判定用收缩值、排序用加权值，混用会让「只出现 1 个月但分数极高」的 SKU 排前面
+//
+// 与月度清单的差异（v176.1，2026-09-03 修复月初样本不足导致全判「已缓解」）：
+//   ① MIN_DAYS: 月度清单要 4 天（短历史样本无统计意义 → 必须筛），
+//      长期画像要 LT_MIN_DAYS（默认 1）。理由：月初几天（如 9 月只有 1–2 天），
+//      全月 SKU 都达不到 MIN_DAYS=4 → 该月 P75 为空 → 「本月在 P75」全为 false →
+//      历史上 P75 过的 SKU 全部误判成「已缓解」。放宽到 1 天即可保留分位判定能力
+//      （9 月样本会少，但只要有 1 个缺货 SKU 就能算出 P75）
+//   ② MIN_VALID_CNT_MONTH: 「本月」判定基准要求样本量 ≥ 30（一个淡季全月有效 SKU 也
+//      远超 30）。如果 curMonth 不足，回退到上一个样本充足的月份。理由：9 月只有 2 天时，
+//      P75 哪怕算出来也是噪声（1 个 SKU 排第 1 = 100%），用它判定会让单 SKU 误进顽固型
 //
 // 参数（1–8 月真实数据敏感性测试，非拍脑袋；每次改数据口径都需重跑）：
 //   K = 1       收缩强度。1–8 月真实数据实测：K=0 → 14 个、K=0.5 → 14 个、K=1 → 13 个、
@@ -4522,7 +4532,8 @@ window.MS_PROFILE = MS_PROFILE;
 //               0.75→7 / 0.80→3）。选 0.70 是因为 13 个的量级适合做重点跟进清单
 //               （7 个会漏掉 MR 95% 那类深度问题 SKU）。
 //               注：上述数字每次改数据口径都必须重跑，不能沿用。
-var LT_PARAMS = { K: 1, PRIOR: 0.5, TH_STUB: 0.70, TH_REC: 0.50, MIN_MONTHS: 3 };
+var LT_PARAMS = { K: 1, PRIOR: 0.5, TH_STUB: 0.70, TH_REC: 0.50, MIN_MONTHS: 3,
+                  LT_MIN_DAYS: 1, MIN_VALID_CNT_MONTH: 30 };
 var LT_TIER = {
   stub:     { label: '顽固型', bg: '#FEE2E2', color: '#A32D2D', tip: '长期高严重度 · 建议调整安全库存/补货参数' },
   repeat:   { label: '反复型', bg: '#FEF3C7', color: '#92400E', tip: '中长期反复出现 · 建议复核补货点' },
@@ -4556,7 +4567,7 @@ function buildLongTermProfile() {
     g.rdcSet[rdc] = 1;
   }
   var months = Object.keys(monthSet).sort();
-  if (!months.length) return { months: [], monthMeta: {}, bySku: {}, list: [], counts: {}, curMonth: '' };
+  if (!months.length) return { months: [], monthMeta: {}, bySku: {}, list: [], counts: {}, curMonth: '', effectiveCurMonth: '' };
 
   var bySku = {}, monthMeta = {};
   for (var mi = 0; mi < months.length; mi++) {
@@ -4572,9 +4583,12 @@ function buildLongTermProfile() {
       list.push(q);
     }
     // 各月独立 finalizeSeverity → 各月独立 P75/P90（淡旺季自适应，与月度清单同源码）
+    // 注：本模块用 LT_MIN_DAYS（默认 1）而不是 MS_PROFILE.MIN_DAYS=4。
+    //   月度清单要 ≥4 天防「下 1 次缺了就是 100%」的统计噪声，但长期画像只看相对分位，
+    //   即使只有 1 天数据也保留判定能力（避免月初几天全月 SKU 不达标 → P75 为空）。
     var th = finalizeSeverity(list);
     var validList = list.filter(function(x) {
-      return (x.shortQty || 0) > 0 && (x.orderDayCnt || 0) >= MS_PROFILE.MIN_DAYS;
+      return (x.shortQty || 0) > 0 && (x.orderDayCnt || 0) >= LT_PARAMS.LT_MIN_DAYS;
     });
     validList.sort(function(a, b) { return a.severity - b.severity; });
     var N = validList.length, i2 = 0;
@@ -4603,6 +4617,19 @@ function buildLongTermProfile() {
   }
 
   var curMonth = months[months.length - 1];
+  // v176.1: 本月样本量不足时回退到上一个样本充足的月份做「本月在 P75」判定。
+  //   9 月只有 1–2 天工作日时，curMonth validCnt < 30，单 SKU 排名 100% → 误进顽固。
+  //   找到最后一个 validCnt >= MIN_VALID_CNT_MONTH 的月份即可（历史回看稳定）。
+  //   UI 展示的「本月严重度/率/频」仍用 curMonth 真实数据，不替换。
+  var effectiveCurMonth = curMonth;
+  if ((monthMeta[curMonth] || {}).validCnt < LT_PARAMS.MIN_VALID_CNT_MONTH) {
+    for (var fi = months.length - 2; fi >= 0; fi--) {
+      if ((monthMeta[months[fi]] || {}).validCnt >= LT_PARAMS.MIN_VALID_CNT_MONTH) {
+        effectiveCurMonth = months[fi];
+        break;
+      }
+    }
+  }
   var out = [];
   for (var sk2 in bySku) {
     if (!Object.prototype.hasOwnProperty.call(bySku, sk2)) continue;
@@ -4623,7 +4650,7 @@ function buildLongTermProfile() {
       if (r.m[months[s2]] && r.m[months[s2]].inP75) streak++; else break;
     }
     r.p75Months = ms.filter(function(k) { return r.m[k].inP75; }).length;
-    r.inCurP75 = !!(r.m[curMonth] && r.m[curMonth].inP75);
+    r.inCurP75 = !!(r.m[effectiveCurMonth] && r.m[effectiveCurMonth].inP75);
     r.curMr = r.m[curMonth] ? r.m[curMonth].mr : 0;
     r.curStreak = streak;
     if (nM >= LT_PARAMS.MIN_MONTHS && r.shrunkPct >= LT_PARAMS.TH_STUB && r.inCurP75) r.tier = 'stub';
@@ -4638,7 +4665,7 @@ function buildLongTermProfile() {
   var counts = { stub: 0, repeat: 0, fresh: 0, eased: 0, sporadic: 0 };
   out.forEach(function(r) { counts[r.tier] = (counts[r.tier] || 0) + 1; });
 
-  return { months: months, monthMeta: monthMeta, bySku: bySku, list: out, counts: counts, curMonth: curMonth };
+  return { months: months, monthMeta: monthMeta, bySku: bySku, list: out, counts: counts, curMonth: curMonth, effectiveCurMonth: effectiveCurMonth };
 }
 
 var _ltProfileCache = { len: -1, data: null };
@@ -5473,7 +5500,7 @@ function renderShortageMonthly() {
         <table class="data-table" style="font-size:12px">
           <thead><tr>
             <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left" title="来自产品主数据「产品列表」sheet 的「供应链品类」列（常规品/促销装/非卖品），与缺货报告「产品分类」同源；查不到显示 —">供应链品类</th>
-            <th style="text-align:center" title="长期高严重度分型（SKU 层判定，跨 1–${ltProf.months.length} 月）：顽固型=长期问题 / 反复型=中长期反复 / 新发型=样本不足待查证 / 已缓解=曾进 P75 但本月不在 / 偶发。点击查看完整长期分析。&#10;&#10;⚠️ 口径差异：本列的 P75 是「各月独立计算」（本月有效 SKU ${ltProf.monthMeta[ltProf.curMonth] ? ltProf.monthMeta[ltProf.curMonth].validCnt : 0} 个，P75=${ltProf.monthMeta[ltProf.curMonth] ? ltProf.monthMeta[ltProf.curMonth].sevP75.toFixed(3) : '—'}），而本清单的入选用的是「跨月全局 P75」。两者不完全一致，所以少数行会出现「已缓解」——含义是：该 SKU 按「本月自身的前 25%」标准已经掉出，但按跨月标准仍在本清单里。">长期标记</th>
+            <th style="text-align:center" title="长期高严重度分型（SKU 层判定，跨 1–${ltProf.months.length} 月）：顽固型=长期问题 / 反复型=中长期反复 / 新发型=样本不足待查证 / 已缓解=曾进 P75 但本月不在 / 偶发。点击查看完整长期分析。&#10;&#10;⚠️ 口径差异：本列的 P75 是「各月独立计算」（${ltProf.effectiveCurMonth === ltProf.curMonth ? '本月' : '本月 '+ltProf.curMonth+' 数据不足，回退到 '+ltProf.effectiveCurMonth}有效 SKU ${ltProf.monthMeta[ltProf.effectiveCurMonth] ? ltProf.monthMeta[ltProf.effectiveCurMonth].validCnt : 0} 个，P75=${ltProf.monthMeta[ltProf.effectiveCurMonth] ? ltProf.monthMeta[ltProf.effectiveCurMonth].sevP75.toFixed(3) : '—'}），而本清单的入选用的是「跨月全局 P75」。两者不完全一致，所以少数行会出现「已缓解」——含义是：该 SKU 按「本月自身的前 25%」标准已经掉出，但按跨月标准仍在本清单里。">长期标记</th>
             <th style="text-align:left">RDC</th>
             <th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>
             <th style="text-align:right;color:var(--color-red)">首日缺货率</th>
@@ -5530,7 +5557,7 @@ function renderShortageMonthly() {
       <strong>口径说明：</strong><br>
       · <strong>长期标记列（v176 新增）</strong>：在「长期高严重度分析」TAB 里按 <strong>SKU 层跨月</strong>计算（收缩长期百分位 + LSI），<strong>同一 SKU 的各 RDC 行显示相同标记</strong>。
       ⚠️ <strong>两套 P75 口径不一致</strong>：本清单的入选阈值是「<strong>跨月全局 P75</strong>」<span style="color:#A32D2D">（${ltProf.months.length} 个月的全部组合一起算 → 本月命中 ${hi.length}/${valid.length} = ${valid.length ? (hi.length / valid.length * 100).toFixed(1) : '0'}%）</span>，
-      而长期标记判断「本月是否在 P75」用的是「<strong>各月独立 P75</strong>」<span style="color:#A32D2D">（本月 ${(ltProf.monthMeta[ltProf.curMonth] || {}).validCnt || 0} 个有效 SKU，P75 = ${(ltProf.monthMeta[ltProf.curMonth] || {}).sevP75 != null ? ltProf.monthMeta[ltProf.curMonth].sevP75.toFixed(3) : '—'}，命中 46 个）</span>。
+      而长期标记判断「本月是否在 P75」用的是「<strong>${ltProf.effectiveCurMonth === ltProf.curMonth ? '各月独立' : '回退到 '+ltProf.effectiveCurMonth+' 的'}P75</strong>」<span style="color:#A32D2D">（${ltProf.effectiveCurMonth === ltProf.curMonth ? '本月' : ltProf.effectiveCurMonth} ${(ltProf.monthMeta[ltProf.effectiveCurMonth] || {}).validCnt || 0} 个有效 SKU，P75 = ${(ltProf.monthMeta[ltProf.effectiveCurMonth] || {}).sevP75 != null ? ltProf.monthMeta[ltProf.effectiveCurMonth].sevP75.toFixed(3) : '—'}）</span>${ltProf.effectiveCurMonth !== ltProf.curMonth ? '<br>⚠ 本月 '+ltProf.curMonth+' 数据不足（有效 SKU < '+LT_PARAMS.MIN_VALID_CNT_MONTH+' 个），「本月在 P75」判定已自动回退到 '+ltProf.effectiveCurMonth+'（'+ltProf.monthMeta[ltProf.effectiveCurMonth].validCnt+' 个有效 SKU）' : ''}。
       所以少数行会显示「已缓解」——含义是：该 SKU 按「本月自身前 25%」的标准已掉出，但按跨月标准仍留在本清单内。<br>
       · 已剔除周六周日——周末 RDC 不排单，首日缺货量≈订单量（实测 8/08、8/22 首日满足率仅 0.3%），计入会虚增缺货量并制造虚假缺货组合。<br>
       · <strong>首日缺货率 MR</strong> = 月累计首日缺货量 ÷ 月累计订单量，衡量缺货强度。<br>
