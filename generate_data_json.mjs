@@ -248,6 +248,26 @@ function main() {
       payload.discontinuedMap = pm.discontinuedMap;
       payload.brandMap = pm.brandMap;
       payload.abcMap = pm.abcMap;
+      // 2026-09: 订单导出文件（data.xlsx）可能不带「装运条件定义」sheet，
+      // 而未放行订单需要它把装运条件码映射到 RDC。若缺则从历史月 json（含该 sheet 的最新一个）回填。
+      // 该表为 SAP 静态编码（20东北/50华南/60西北/70华中/80西南/90华北），沿用历史值安全。
+      if (!payload.sheets['装运条件定义']) {
+        const histFiles = fs.readdirSync(ROOT)
+          .filter(f => /^data-\d{4}-\d{2}\.json$/.test(f) && f !== 'data.json')
+          .sort().reverse();
+        for (const hf of histFiles) {
+          try {
+            const hj = JSON.parse(fs.readFileSync(path.join(ROOT, hf), 'utf8'));
+            if (hj.sheets && hj.sheets['装运条件定义'] && Array.isArray(hj.sheets['装运条件定义'])) {
+              payload.sheets['装运条件定义'] = hj.sheets['装运条件定义'];
+              payload.sheetNames = payload.sheetNames.filter(n => n !== '装运条件定义');
+              payload.sheetNames.push('装运条件定义');
+              console.log(`   ⚠️ data.xlsx 缺「装运条件定义」，已从 ${hf} 回填（${payload.sheets['装运条件定义'].length} 行）`);
+              break;
+            }
+          } catch (e) { /* 跳过不可读历史文件 */ }
+        }
+      }
     }
     fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
     // manifest 以「源 xlsx 内容哈希」为键，仅当真实数据变化时才触发网页重新解析
