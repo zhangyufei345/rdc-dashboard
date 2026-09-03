@@ -683,7 +683,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 175; // v174: 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
+const DB_VERSION = 176; // v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -4494,6 +4494,172 @@ function getMonthlyShortageProfile() {
 window.getMonthlyShortageProfile = getMonthlyShortageProfile;
 window.MS_PROFILE = MS_PROFILE;
 
+// ==================== v176 长期高严重度画像（SKU 层 · 跨月）====================
+// 目的：四象限 / 月度清单只看「当前窗口」，无法区分「本月偶然冲高」与「常年高严重度」。
+//       本模块逐月算每个 SKU 的严重度百分位，再跨月收缩，识别结构性长期问题 SKU。
+//
+// 口径（与 buildMonthlyShortageProfile 一致的保留，两处必要差异）：
+//   ① 剔除双休日（同月度口径）。不剔则 2 月缺货量虚高 61%（周末 SAP 放行订单首日排单=0，整单计缺货）
+//   ② 剔除华东 RDC —— 1–4 月有、5–8 月无，不剔则全周期不同口径
+//   ③ 聚合层级 = SKU 层（跨 RDC 合并）。长期标记在 SKU 层判定：同一 SKU 拆到 6 个仓会把
+//      「一个长期问题 SKU」稀释成 6 个互不相干的仓
+//
+// 指标：
+//   nM        有效月数（该月有缺货 且 有单工作日 ≥ MIN_DAYS）
+//   月度百分位 该月 severity 在当月有效 SKU 中的排名位置 0~1（同分取平均排名）
+//   shrunkPct (Σpct + K×PRIOR) / (nM + K)   ← 判定用（抗短历史污染）
+//   LSI       Σ(pct × 月序) / Σ月序          ← 排序用（近期优先）
+//   职责分离是关键：判定用收缩值、排序用加权值，混用会让「只出现 1 个月但分数极高」的 SKU 排前面
+//
+// 参数（1–8 月真实数据敏感性测试，非拍脑袋；每次改数据口径都需重跑）：
+//   K = 1       收缩强度。1–8 月真实数据实测：K=0 → 14 个、K=0.5 → 14 个、K=1 → 13 个、
+//               K=1.5 → 12 个、K=2 → 9 个。差异全落在擦边 SKU 上——20882（六神清凉爽肤
+//               沐浴露 1KG 加量装）收缩值 0.694，距阈值仅 −0.006，K 稍大就被拉下去。
+//               所以「13~14 个顽固型」在 K ∈ [0, 1] 区间稳定，不是调参凑出来的；
+//               K ≥ 1.5 才开始明显误伤 nM=3 的短历史 SKU。
+//   PRIOR = 0.5 先验 = 随机一个 SKU 的平均百分位（分布数学期望，不是估的）
+//   TH 0.70     顽固阈值。真正的分水岭是阈值不是 K（实测 0.60→21 / 0.65→16 / 0.70→13 /
+//               0.75→7 / 0.80→3）。选 0.70 是因为 13 个的量级适合做重点跟进清单
+//               （7 个会漏掉 MR 95% 那类深度问题 SKU）。
+//               注：上述数字每次改数据口径都必须重跑，不能沿用。
+var LT_PARAMS = { K: 1, PRIOR: 0.5, TH_STUB: 0.70, TH_REC: 0.50, MIN_MONTHS: 3 };
+var LT_TIER = {
+  stub:     { label: '顽固型', bg: '#FEE2E2', color: '#A32D2D', tip: '长期高严重度 · 建议调整安全库存/补货参数' },
+  repeat:   { label: '反复型', bg: '#FEF3C7', color: '#92400E', tip: '中长期反复出现 · 建议复核补货点' },
+  fresh:    { label: '新发型', bg: '#DBEAFE', color: '#2563EB', tip: '有效月数不足 3 个月，判不了长期 · 建议先查是否铺货/切换/一次性事件' },
+  eased:    { label: '已缓解', bg: '#D1FAE5', color: '#065F46', tip: '曾长期高严重度，但本月已不在 P75' },
+  sporadic: { label: '偶发',   bg: '#F1EFE8', color: '#5F5E5A', tip: '历史长期百分位偏低，本月偶然冲高' },
+  none:     { label: '—',      bg: 'transparent', color: '#CBD5E1', tip: '该 SKU 在长期画像中无有效数据（多为 1–4 月无有效记录）' }
+};
+
+function buildLongTermProfile() {
+  var snap = {}, monthSet = {};
+  var src = dataStore.orderDetail || [];
+  for (var i = 0; i < src.length; i++) {
+    var d = src[i];
+    if (!d || !d.dateStr || !d.skuCode || !d.warehouse) continue;
+    if (isWeekendDate(d.dateStr)) continue;
+    var rdc = normalizeRdcName(d.warehouse);
+    if (rdc === '华东RDC') continue;
+    var ym = d.dateStr.slice(0, 7);
+    monthSet[ym] = 1;
+    if (!snap[ym]) snap[ym] = {};
+    var g = snap[ym][d.skuCode];
+    if (!g) {
+      g = snap[ym][d.skuCode] = { sku: d.skuCode, name: d.skuName || '', brand: d.brand || '',
+        month: ym, orderQty: 0, shortQty: 0, orderDays: {}, shortDays: {}, rdcSet: {} };
+    }
+    var o = d.orderQty || 0, sh = d.firstDayShort || 0;
+    g.orderQty += o; g.shortQty += sh;
+    g.orderDays[d.dateStr] = 1;
+    if (sh > 0) g.shortDays[d.dateStr] = 1;
+    g.rdcSet[rdc] = 1;
+  }
+  var months = Object.keys(monthSet).sort();
+  if (!months.length) return { months: [], monthMeta: {}, bySku: {}, list: [], counts: {}, curMonth: '' };
+
+  var bySku = {}, monthMeta = {};
+  for (var mi = 0; mi < months.length; mi++) {
+    var ym2 = months[mi], g2 = snap[ym2] || {}, list = [];
+    for (var sk in g2) {
+      if (!Object.prototype.hasOwnProperty.call(g2, sk)) continue;
+      var q = g2[sk];
+      q.shortDayCnt = Object.keys(q.shortDays).length;
+      q.orderDayCnt = Object.keys(q.orderDays).length;
+      q.mr = q.orderQty > 0 ? q.shortQty / q.orderQty : 0;
+      q.sf = q.orderDayCnt > 0 ? q.shortDayCnt / q.orderDayCnt : 0;
+      q.rdcCnt = Object.keys(q.rdcSet).length;
+      list.push(q);
+    }
+    // 各月独立 finalizeSeverity → 各月独立 P75/P90（淡旺季自适应，与月度清单同源码）
+    var th = finalizeSeverity(list);
+    var validList = list.filter(function(x) {
+      return (x.shortQty || 0) > 0 && (x.orderDayCnt || 0) >= MS_PROFILE.MIN_DAYS;
+    });
+    validList.sort(function(a, b) { return a.severity - b.severity; });
+    var N = validList.length, i2 = 0;
+    while (i2 < N) {
+      var j2 = i2 + 1;
+      while (j2 < N && Math.abs(validList[j2].severity - validList[i2].severity) < 1e-12) j2++;
+      var avgPct = N > 1 ? (i2 + (j2 - 1 - i2) / 2) / (N - 1) : 1;
+      for (var kk = i2; kk < j2; kk++) validList[kk].pct = avgPct;
+      i2 = j2;
+    }
+    monthMeta[ym2] = { validCnt: N, sevP75: th.sevP75, sevP90: th.sevP90, hardFloor: th.hardFloor };
+    for (var vi = 0; vi < N; vi++) {
+      var v = validList[vi];
+      var rec = bySku[v.sku];
+      if (!rec) rec = bySku[v.sku] = { sku: v.sku, name: v.name, brand: v.brand,
+        m: {}, rdcCntMax: 0, totalShort: 0, totalOrder: 0 };
+      rec.m[ym2] = { pct: v.pct, sev: v.severity, shortQty: v.shortQty, orderQty: v.orderQty,
+        mr: v.mr, sf: v.sf, rdcCnt: v.rdcCnt,
+        inP75: v.severity >= th.sevP75, inP90: v.severity >= th.sevP90 };
+      if (!rec.name && v.name) rec.name = v.name;
+      if (!rec.brand && v.brand) rec.brand = v.brand;
+      if ((v.rdcCnt || 0) > rec.rdcCntMax) rec.rdcCntMax = v.rdcCnt;
+      rec.totalShort += v.shortQty || 0;
+      rec.totalOrder += v.orderQty || 0;
+    }
+  }
+
+  var curMonth = months[months.length - 1];
+  var out = [];
+  for (var sk2 in bySku) {
+    if (!Object.prototype.hasOwnProperty.call(bySku, sk2)) continue;
+    var r = bySku[sk2];
+    var ms = Object.keys(r.m);
+    var nM = ms.length, sumPct = 0, wSum = 0, wTot = 0;
+    for (var t = 0; t < nM; t++) {
+      sumPct += r.m[ms[t]].pct;
+      var w = months.indexOf(ms[t]) + 1;   // 月序 1-based
+      wSum += r.m[ms[t]].pct * w; wTot += w;
+    }
+    r.nM = nM;
+    r.sumPct = sumPct;
+    r.shrunkPct = (sumPct + LT_PARAMS.K * LT_PARAMS.PRIOR) / (nM + LT_PARAMS.K);
+    r.lsi = wTot > 0 ? wSum / wTot : 0;
+    var streak = 0;
+    for (var s2 = months.length - 1; s2 >= 0; s2--) {
+      if (r.m[months[s2]] && r.m[months[s2]].inP75) streak++; else break;
+    }
+    r.p75Months = ms.filter(function(k) { return r.m[k].inP75; }).length;
+    r.inCurP75 = !!(r.m[curMonth] && r.m[curMonth].inP75);
+    r.curMr = r.m[curMonth] ? r.m[curMonth].mr : 0;
+    r.curStreak = streak;
+    if (nM >= LT_PARAMS.MIN_MONTHS && r.shrunkPct >= LT_PARAMS.TH_STUB && r.inCurP75) r.tier = 'stub';
+    else if (nM >= LT_PARAMS.MIN_MONTHS && r.shrunkPct >= LT_PARAMS.TH_REC && r.inCurP75) r.tier = 'repeat';
+    else if (nM < LT_PARAMS.MIN_MONTHS && r.inCurP75) r.tier = 'fresh';
+    else if (r.p75Months > 0 && !r.inCurP75) r.tier = 'eased';
+    else r.tier = 'sporadic';
+    out.push(r);
+  }
+  out.sort(function(a, b) { return b.lsi - a.lsi || b.shrunkPct - a.shrunkPct; });
+
+  var counts = { stub: 0, repeat: 0, fresh: 0, eased: 0, sporadic: 0 };
+  out.forEach(function(r) { counts[r.tier] = (counts[r.tier] || 0) + 1; });
+
+  return { months: months, monthMeta: monthMeta, bySku: bySku, list: out, counts: counts, curMonth: curMonth };
+}
+
+var _ltProfileCache = { len: -1, data: null };
+function getLongTermProfile() {
+  var n = (dataStore.orderDetail || []).length;
+  if (_ltProfileCache.data && _ltProfileCache.len === n) return _ltProfileCache.data;
+  _ltProfileCache.len = n;
+  _ltProfileCache.data = buildLongTermProfile();
+  return _ltProfileCache.data;
+}
+window.getLongTermProfile = getLongTermProfile;
+
+// 长期标记徽章 HTML（四象限清单与新 TAB 共用，保证两处视觉与口径一致）
+function ltTierBadge(tier, withTip) {
+  var t = LT_TIER[tier] || LT_TIER.none;
+  var tip = withTip === false ? '' : (t.tip || '');
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:' +
+    t.bg + ';color:' + t.color + ';white-space:nowrap"' + (tip ? ' title="' + tip + '"' : '') + '>' + t.label + '</span>';
+}
+window.ltTierBadge = ltTierBadge;
+
 // v145：滚动 30 天窗口的缺货画像（默认模式）
 // 数据源：dataStore.orderDetail
 // 窗口：以最新数据日为截止，向前滚动 30 天（剔除双休日后聚合）
@@ -4648,6 +4814,7 @@ function shortageTabBarHtml(active) {
     btn('order-detail', '订单缺货明细分析') +
     btn('customer-dim', '客户维度缺货分析') +
     btn('monthly', '缺货四象限分析') +
+    btn('longterm', '长期高严重度分析') +
     '</div>';
 }
 
@@ -4668,6 +4835,12 @@ function renderShortage() {
   // Tab切换：月度缺货全貌（v131 新增）
   if (window._shortageTab === 'monthly') {
     renderShortageMonthly();
+    return;
+  }
+
+  // Tab切换：长期高严重度分析（v176 新增）
+  if (window._shortageTab === 'longterm') {
+    renderShortageLongTerm();
     return;
   }
 
@@ -4869,6 +5042,11 @@ function renderShortageMonthly() {
   // v145 数据窗口 mode：'rolling30'(默认) | 'monthly'
   const mode = window._msWindowMode || 'rolling30';
   const prof = mode === 'rolling30' ? getRollingShortageProfile() : getMonthlyShortageProfile();
+  // v176: 长期画像（SKU 层跨月），供清单「长期标记」列使用。
+  //      判定在 SKU 层，所以同一 SKU 的各 RDC 行显示相同标记——不会因为拆 RDC 把
+  //      「一个长期问题 SKU」稀释成 6 个互不相干的仓。
+  const ltProf = getLongTermProfile();
+  const ltTierOf = sku => (ltProf.bySku[sku] && ltProf.bySku[sku].tier) || 'none';
   const period = mode === 'rolling30'
     ? 'rolling30'
     : (filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (window._latestMonth || ''));
@@ -5041,6 +5219,10 @@ function renderShortageMonthly() {
         name: p.name || '',
         scc: (window._skuSupplyChainCat && window._skuSupplyChainCat[p.sku]) || '',
         rdc: p.rdc || '',
+        // v176: 长期标记（SKU 层判定），与页面上的徽章同源
+        tier: ltTierOf(p.sku),
+        shrunk: (ltProf.bySku[p.sku] ? ltProf.bySku[p.sku].shrunkPct : 0),
+        nM: (ltProf.bySku[p.sku] ? ltProf.bySku[p.sku].nM : 0),
         orderQty: p.orderQty || 0,
         shortQty: p.shortQty || 0,
         mr: p.mr || 0,
@@ -5214,10 +5396,10 @@ function renderShortageMonthly() {
               <div style="font-size:32px;font-weight:500;color:#854F0B;line-height:1.1">${q.q2.length}</div>
               <div style="font-size:11px;color:#92400E">频 ≥ 50% 且率 &lt; 50%</div>
             </div>
-            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看严重度评分 ≥ ${SEV_DOUBLE_TXT} 的 ${q.q1.length} 个 SKU×RDC 组合明细">
-              <div style="font-size:12px;color:#A32D2D;font-weight:500">严重度高 · 重点跟进</div>
+            <div onclick="openDrillModal('q1')" style="cursor:pointer;border-radius:6px;background:#FCEBEB;border:1px solid #FCA5A5;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看率频双中象限的 ${q.q1.length} 个 SKU×RDC 组合明细">
+              <div style="font-size:12px;color:#A32D2D;font-weight:500">率频双中</div>
               <div style="font-size:32px;font-weight:500;color:#A32D2D;line-height:1.1">${q.q1.length}</div>
-              <div style="font-size:11px;color:#7F1D1D">严重度 ≥ ${SEV_DOUBLE_TXT}（本月 P75，前 25%）</div>
+              <div style="font-size:11px;color:#7F1D1D">率 ≥ 50% 且频 ≥ 50%</div>
             </div>
             <div onclick="openDrillModal('q4')" style="cursor:pointer;border-radius:6px;background:#F1EFE8;border:1px solid #D3D1C7;padding:10px;text-align:center;display:flex;flex-direction:column;justify-content:center" title="点击查看双低象限的 ${q.q4.length} 个 SKU×RDC 组合明细（仅含严重度低的）">
               <div style="font-size:12px;color:#5F5E5A;font-weight:500">双低 · 偶发</div>
@@ -5290,7 +5472,9 @@ function renderShortageMonthly() {
       <div class="table-wrap" style="max-height:500px;overflow-y:auto">
         <table class="data-table" style="font-size:12px">
           <thead><tr>
-            <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left" title="来自产品主数据「产品列表」sheet 的「供应链品类」列（常规品/促销装/非卖品），与缺货报告「产品分类」同源；查不到显示 —">供应链品类</th><th style="text-align:left">RDC</th>
+            <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left" title="来自产品主数据「产品列表」sheet 的「供应链品类」列（常规品/促销装/非卖品），与缺货报告「产品分类」同源；查不到显示 —">供应链品类</th>
+            <th style="text-align:center" title="长期高严重度分型（SKU 层判定，跨 1–${ltProf.months.length} 月）：顽固型=长期问题 / 反复型=中长期反复 / 新发型=样本不足待查证 / 已缓解=曾进 P75 但本月不在 / 偶发。点击查看完整长期分析。&#10;&#10;⚠️ 口径差异：本列的 P75 是「各月独立计算」（本月有效 SKU ${ltProf.monthMeta[ltProf.curMonth] ? ltProf.monthMeta[ltProf.curMonth].validCnt : 0} 个，P75=${ltProf.monthMeta[ltProf.curMonth] ? ltProf.monthMeta[ltProf.curMonth].sevP75.toFixed(3) : '—'}），而本清单的入选用的是「跨月全局 P75」。两者不完全一致，所以少数行会出现「已缓解」——含义是：该 SKU 按「本月自身的前 25%」标准已经掉出，但按跨月标准仍在本清单里。">长期标记</th>
+            <th style="text-align:left">RDC</th>
             <th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>
             <th style="text-align:right;color:var(--color-red)">首日缺货率</th>
             <th style="text-align:right;color:var(--color-purple)">缺货天数</th><th style="text-align:right">有单天数</th>
@@ -5316,6 +5500,8 @@ function renderShortageMonthly() {
                   '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
                   '<td style="text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + p.name + '">' + p.name + '</td>' +
                   '<td style="text-align:left">' + (function(){ var _c = skuSupplyChainCat(p.sku); return _c ? _c : '<span style="color:#CBD5E1">—</span>'; })() + '</td>' +
+                  // v176: 长期标记列（SKU 层判定），点击跳到「长期高严重度分析」TAB 看逐月轨迹与归因
+                  '<td style="text-align:center;cursor:pointer" onclick="window._shortageTab=\'longterm\';window._ltFilterTier=\'' + ltTierOf(p.sku) + '\';window._ltPage=1;renderShortage()" title="点击查看该 SKU 的长期分析（逐月轨迹 / 收缩值 / 分型）">' + ltTierBadge(ltTierOf(p.sku)) + '</td>' +
                   '<td style="text-align:left">' + p.rdc + '</td>' +
                   '<td style="text-align:right">' + p.orderQty.toLocaleString() + '</td>' +
                   '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.shortQty.toLocaleString() + '</td>' +
@@ -5328,7 +5514,7 @@ function renderShortageMonthly() {
                   '<td style="text-align:center"><span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:' + bn.bg + ';color:' + bn.color + ';white-space:nowrap" title="判定：' + bn.label + '">' + bn.label + '</span></td>' +
                   '</tr>';
               }).join('');
-            })() : '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「率与频次双命中」的 SKU×RDC 组合</td></tr>'}
+            })() : '<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「严重度高」的 SKU×RDC 组合</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -5342,6 +5528,10 @@ function renderShortageMonthly() {
 
     <div style="margin-top:12px;padding:10px 12px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.7">
       <strong>口径说明：</strong><br>
+      · <strong>长期标记列（v176 新增）</strong>：在「长期高严重度分析」TAB 里按 <strong>SKU 层跨月</strong>计算（收缩长期百分位 + LSI），<strong>同一 SKU 的各 RDC 行显示相同标记</strong>。
+      ⚠️ <strong>两套 P75 口径不一致</strong>：本清单的入选阈值是「<strong>跨月全局 P75</strong>」<span style="color:#A32D2D">（${ltProf.months.length} 个月的全部组合一起算 → 本月命中 ${hi.length}/${valid.length} = ${valid.length ? (hi.length / valid.length * 100).toFixed(1) : '0'}%）</span>，
+      而长期标记判断「本月是否在 P75」用的是「<strong>各月独立 P75</strong>」<span style="color:#A32D2D">（本月 ${(ltProf.monthMeta[ltProf.curMonth] || {}).validCnt || 0} 个有效 SKU，P75 = ${(ltProf.monthMeta[ltProf.curMonth] || {}).sevP75 != null ? ltProf.monthMeta[ltProf.curMonth].sevP75.toFixed(3) : '—'}，命中 46 个）</span>。
+      所以少数行会显示「已缓解」——含义是：该 SKU 按「本月自身前 25%」的标准已掉出，但按跨月标准仍留在本清单内。<br>
       · 已剔除周六周日——周末 RDC 不排单，首日缺货量≈订单量（实测 8/08、8/22 首日满足率仅 0.3%），计入会虚增缺货量并制造虚假缺货组合。<br>
       · <strong>首日缺货率 MR</strong> = 月累计首日缺货量 ÷ 月累计订单量，衡量缺货强度。<br>
       · <strong>缺货频率 SF</strong> = 首日缺货工作日数 ÷ <u>该 SKU 有单工作日数</u>（非当月工作日），衡量持续性；用有单天数为分母可避免低频次下单 SKU 的频率上限被压死，且月中小月数据不全时不会被系统性稀释。<br>
@@ -5431,6 +5621,260 @@ function renderShortageMonthly() {
   } catch (e) { console.warn('[v145] RDC 卡片事件代理失败', e); }
 }
 
+// ==================== v176 「长期高严重度分析」TAB ====================
+// 与四象限页职责分离：四象限回答「这个月我该盯谁」（动作＝本月补货），
+// 本页回答「这个 SKU 是不是一直都这样」（动作＝改安全库存/补货参数）。
+function renderShortageLongTerm() {
+  setTitle('长期高严重度分析');
+  const page = document.getElementById('page-shortage');
+  if (!page) return;
+  if (!dataStore.loaded || (dataStore.orderDetail || []).length === 0) {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">请先导入包含订单明细的数据</div>';
+    return;
+  }
+  const lt = getLongTermProfile();
+  const months = lt.months || [];
+  if (!months.length) {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">当前数据不足，无法生成长期画像</div>';
+    return;
+  }
+  const curMonth = lt.curMonth;
+  const counts = lt.counts || {};
+
+  const filterTier = window._ltFilterTier || 'all';
+  const filterBrand = window._ltFilterBrand || 'all';
+  const brandOptions = ['all'].concat([...new Set(lt.list.map(p => p.brand).filter(Boolean))].sort());
+
+  let rows = lt.list.slice();
+  if (filterTier !== 'all') rows = rows.filter(p => p.tier === filterTier);
+  if (filterBrand !== 'all') rows = rows.filter(p => p.brand === filterBrand);
+
+  window._ltSort = window._ltSort || 'tier';
+  if (window._ltSort === 'shrunk') rows.sort((a, b) => b.shrunkPct - a.shrunkPct || b.lsi - a.lsi);
+  else if (window._ltSort === 'qty') rows.sort((a, b) => b.totalShort - a.totalShort);
+  else if (window._ltSort === 'nm') rows.sort((a, b) => b.nM - a.nM || b.shrunkPct - a.shrunkPct);
+  else if (window._ltSort === 'lsi') rows.sort((a, b) => b.lsi - a.lsi);
+  else {
+    // 默认「分型优先」：先按业务处理优先级排分型，组内再按 LSI。
+    // 不做这一步的话，只有 1 个月历史的新发型（如 10302，1 个月就打到百分位 100% → LSI=1.000）
+    // 会排在所有常年顽固型前面——这正是「判定用收缩值、排序用 LSI」职责分离要防的短历史污染。
+    const order = { stub: 0, repeat: 1, fresh: 2, eased: 3, sporadic: 4 };
+    rows.sort((a, b) => (order[a.tier] - order[b.tier]) || (b.lsi - a.lsi));
+  }
+
+  // 导出快照（与表体同源，避免 export 时重复 filter+sort）
+  window._ltExportList = rows;
+  window._ltExportMonths = months;
+  window._ltExportCurMonth = curMonth;
+
+  const perPage = 20;
+  window._ltPage = window._ltPage || 1;
+  const totalPages = Math.ceil(rows.length / perPage) || 1;
+  if (window._ltPage > totalPages) window._ltPage = totalPages;
+  if (window._ltPage < 1) window._ltPage = 1;
+  const st = (window._ltPage - 1) * perPage;
+  const pageData = rows.slice(st, st + perPage);
+
+  // 逐月轨迹：每个有效月一个小方块，颜色 = 当月严重度百分位档位；虚线框 = 当月无有效数据
+  function trailHtml(p) {
+    return months.map(function(ym) {
+      const m = p.m[ym];
+      if (!m) return '<span title="' + ym + '：无有效数据" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:transparent;border:1px dashed #CBD5E1;vertical-align:middle"></span>';
+      const pct = m.pct;
+      const bg = pct >= 0.90 ? '#A32D2D' : pct >= 0.75 ? '#EF4444' : pct >= 0.50 ? '#F59E0B' : pct >= 0.25 ? '#FCD34D' : '#D1D5DB';
+      const tip = ym + '　百分位 ' + (pct * 100).toFixed(0) + '%　严重度 ' + m.sev.toFixed(3) +
+        '　缺货 ' + m.shortQty.toLocaleString() + ' 支' + (m.inP75 ? '　（当月 P75）' : '');
+      return '<span title="' + tip + '" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:' + bg +
+        ';vertical-align:middle' + (m.inP75 ? ';outline:1.5px solid #A32D2D;outline-offset:0' : '') + '"></span>';
+    }).join('');
+  }
+
+  const sortBtn = (id, label) => '<button class="btn-export" style="font-size:11px;padding:3px 10px;' +
+    (window._ltSort === id ? 'background:var(--color-blue);color:#fff;' : '') +
+    '" onclick="window._ltSort=\'' + id + '\';window._ltPage=1;renderShortage()">' + label + '</button>';
+
+  // 注意：'all' 在 LT_TIER 里没有对应色值，必须兜底，否则未选中/选中态都会吐出 background:undefined
+  const tierBtn = (id, label, n) => {
+    const t = LT_TIER[id] || null;
+    const activeStyle = filterTier !== id ? ''
+      : (t ? 'background:' + t.color + ';color:#fff;border-color:' + t.color + ';'
+           : 'background:var(--color-blue);color:#fff;border-color:var(--color-blue);');
+    return '<button class="btn-export" style="font-size:11px;padding:3px 10px;' + activeStyle +
+      '" onclick="window._ltFilterTier=\'' + id + '\';window._ltPage=1;renderShortage()">' + label + ' ' + n + '</button>';
+  };
+
+  const rowHtml = pageData.map(function(p) {
+    const t = LT_TIER[p.tier] || LT_TIER.none;
+    const scc = skuSupplyChainCat(p.sku);
+    return '<tr>' +
+      '<td style="text-align:left">' + (p.brand || '') + '</td>' +
+      '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
+      '<td style="text-align:left;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + p.name + '">' + p.name + '</td>' +
+      '<td style="text-align:left">' + (scc ? scc : '<span style="color:#CBD5E1">—</span>') + '</td>' +
+      '<td style="text-align:center">' + ltTierBadge(p.tier) + '</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + t.color + '" title="收缩长期百分位 = (Σ月度百分位 + ' + LT_PARAMS.K + '×' + LT_PARAMS.PRIOR + ') ÷ (有效月数 + ' + LT_PARAMS.K + ')；顽固阈值 ' + LT_PARAMS.TH_STUB + '">' + p.shrunkPct.toFixed(3) + '</td>' +
+      '<td style="text-align:right" title="有缺货且有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的月数">' + p.nM + ' / ' + months.length + '</td>' +
+      '<td style="text-align:right;color:var(--text-secondary)" title="加权长期严重度 = Σ(月度百分位 × 月序) ÷ Σ月序，近期权重更高，用于排序">' + p.lsi.toFixed(3) + '</td>' +
+      '<td style="text-align:left;white-space:nowrap">' + trailHtml(p) + '</td>' +
+      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.totalShort.toLocaleString() + '</td>' +
+      '<td style="text-align:right" title="有效月里同时缺货的最大 RDC 数">' + p.rdcCntMax + '</td>' +
+      '<td style="text-align:right;color:var(--color-red)">' + (p.curMr * 100).toFixed(1) + '%</td>' +
+      '<td style="text-align:right" title="从最新月往前连续在当月 P75 的月数">' + (p.curStreak || 0) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  page.innerHTML = `
+    <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:8px">
+      <span style="font-size:12px;color:var(--text-secondary)">分析窗口 ${months[0]} ~ ${curMonth}（${months.length} 个月）· 已剔除双休日与华东仓 · 按 SKU 层跨 RDC 聚合 · 共 ${lt.list.length} 个有缺货 SKU</span>
+      <div style="margin-left:auto;display:flex;gap:4px">
+        <button class="btn-export" style="font-size:11px;padding:3px 12px;background:var(--color-green);color:#fff" onclick="exportLongTermCSV()">⬇ 导出CSV</button>
+      </div>
+    </div>
+    ${shortageTabBarHtml('longterm')}
+
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px">
+      <div class="card" style="text-align:center;cursor:pointer" onclick="window._ltFilterTier='stub';window._ltPage=1;renderShortage()"><div style="font-size:22px;font-weight:700;color:#A32D2D">${counts.stub || 0}</div><div style="font-size:11px;color:var(--text-secondary)">顽固型 · 长期高严重度</div></div>
+      <div class="card" style="text-align:center;cursor:pointer" onclick="window._ltFilterTier='repeat';window._ltPage=1;renderShortage()"><div style="font-size:22px;font-weight:700;color:#92400E">${counts.repeat || 0}</div><div style="font-size:11px;color:var(--text-secondary)">反复型 · 中长期反复</div></div>
+      <div class="card" style="text-align:center;cursor:pointer" onclick="window._ltFilterTier='fresh';window._ltPage=1;renderShortage()"><div style="font-size:22px;font-weight:700;color:#2563EB">${counts.fresh || 0}</div><div style="font-size:11px;color:var(--text-secondary)">新发型 · 样本不足待查</div></div>
+      <div class="card" style="text-align:center;cursor:pointer" onclick="window._ltFilterTier='eased';window._ltPage=1;renderShortage()"><div style="font-size:22px;font-weight:700;color:#065F46">${counts.eased || 0}</div><div style="font-size:11px;color:var(--text-secondary)">已缓解 · 本月已不在 P75</div></div>
+    </div>
+
+    <div style="background:#FAFBFC;border:1px solid #E5E7EB;border-left:3px solid #5B8DEF;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#475569;line-height:1.7">
+      <b style="color:#1F2937">这一页回答的问题</b>：哪些 SKU <b>不是这个月偶然缺，而是一直都缺得很严重</b>。
+      与「缺货四象限分析」是两套视角——四象限看<b>当前窗口</b>（动作＝本月补货），本页看<b>跨月稳定性</b>（动作＝改安全库存／补货参数）。
+      <details style="margin-top:8px;padding-top:8px;border-top:1px dashed #E5E7EB">
+        <summary style="cursor:pointer;font-weight:500;color:#475569;user-select:none;outline:none;list-style:none">
+          <span style="color:#3B82F6">▶</span> <span style="color:#1F2937;font-weight:600">指标怎么算的？点击展开完整口径</span>
+        </summary>
+        <div style="margin-top:10px;padding:10px 14px;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:6px;line-height:1.7;font-size:11px">
+          <div style="margin-bottom:8px"><b>第一步 · 逐月算百分位</b>：每个月用<b>完全相同的严重度公式</b>（0.5×规模 + 0.3×率 + 0.2×频，含几何平均软衰减）算出各 SKU 的严重度，
+          再取它在该月<b>有效 SKU 中的排名位置</b>（0~1）。各月的 P75/P90 阈值<b>独立计算</b>，淡旺季自适应。</div>
+          <div style="margin-bottom:8px"><b>第二步 · 跨月收缩</b>：
+          <code style="background:#F1F5F9;padding:1px 6px;border-radius:3px">收缩值 = (Σ月度百分位 + ${LT_PARAMS.K}×${LT_PARAMS.PRIOR}) ÷ (有效月数 + ${LT_PARAMS.K})</code><br>
+          为什么要收缩：只有 1 个月历史却分数很高的 SKU，直接取平均会排在长期问题 SKU 前面。
+          K=${LT_PARAMS.K} 相当于额外塞 ${LT_PARAMS.K} 个「平均水平的虚拟月」，历史越短拉得越狠。<br>
+          <span style="color:#64748B">先验 ${LT_PARAMS.PRIOR} = 随机一个 SKU 的平均百分位（分布的数学期望，不是估的）。<br>
+          <b>参数敏感性（1–8 月真实数据实测，每次改口径都要重跑）</b>：<br>
+          · 收缩强度 K：K=0 → 14 个、K=0.5 → 14 个、<b>K=1（当前）→ ${counts.stub || 0} 个</b>、K=1.5 → 12 个、K=2 → 9 个。<br>
+          　差异全落在擦边 SKU 上——20882（六神清凉爽肤沐浴露 1KG 加量装）收缩值 0.694，距阈值只差 0.006，K 稍大就被拉下去。
+          所以「13~14 个顽固型」在 K ∈ [0, 1] 区间是稳定的，不是调参凑出来的；K ≥ 1.5 才开始明显误伤短历史 SKU。<br>
+          · 顽固阈值：<b>0.60 → 21 个 / 0.65 → 16 个 / 0.70（当前）→ ${counts.stub || 0} 个 / 0.75 → 7 个 / 0.80 → 3 个</b>。
+          真正的分水岭是阈值，不是 K。选 0.70 是因为这个量级适合做重点跟进清单。</span></div>
+          <div style="margin-bottom:8px"><b>第三步 · 分型</b>（判定用收缩值，排序用 LSI）：
+          <table style="margin-top:6px;font-size:11px;border-collapse:collapse">
+            <tr><td style="padding:2px 10px 2px 0">${ltTierBadge('stub', false)}</td><td>有效月数 ≥ ${LT_PARAMS.MIN_MONTHS} 且 收缩值 ≥ ${LT_PARAMS.TH_STUB} 且 本月在 P75 → <b>结构性长期问题</b></td></tr>
+            <tr><td style="padding:2px 10px 2px 0">${ltTierBadge('repeat', false)}</td><td>有效月数 ≥ ${LT_PARAMS.MIN_MONTHS} 且 ${LT_PARAMS.TH_REC} ≤ 收缩值 &lt; ${LT_PARAMS.TH_STUB} 且 本月在 P75</td></tr>
+            <tr><td style="padding:2px 10px 2px 0">${ltTierBadge('fresh', false)}</td><td>有效月数 &lt; ${LT_PARAMS.MIN_MONTHS} 且 本月在 P75 → <b>样本不足，判不了长期，需人工查证</b></td></tr>
+            <tr><td style="padding:2px 10px 2px 0">${ltTierBadge('eased', false)}</td><td>曾进 P75 但本月不在 → 已缓解</td></tr>
+            <tr><td style="padding:2px 10px 2px 0">${ltTierBadge('sporadic', false)}</td><td>其余（从未进 P75，或有效月数够但收缩值 &lt; ${LT_PARAMS.TH_REC}）</td></tr>
+          </table></div>
+          <div><b>排序用 LSI（加权长期严重度）</b>：<code style="background:#F1F5F9;padding:1px 6px;border-radius:3px">LSI = Σ(月度百分位 × 月序) ÷ Σ月序</code>，近期月份权重更高，
+          所以「最近一直很严重」排在「年初很严重但最近好了」前面。<b>判定用收缩值、排序用 LSI</b>，两者职责分离。</div>
+        </div>
+      </details>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:8px 12px;background:#FAFBFC;border:1px solid #E5E7EB;border-radius:6px">
+      <span style="font-size:12px;color:var(--text-secondary);font-weight:500">📌 筛选：</span>
+      ${tierBtn('all', '全部', lt.list.length)}
+      ${tierBtn('stub', '顽固型', counts.stub || 0)}
+      ${tierBtn('repeat', '反复型', counts.repeat || 0)}
+      ${tierBtn('fresh', '新发型', counts.fresh || 0)}
+      ${tierBtn('eased', '已缓解', counts.eased || 0)}
+      ${tierBtn('sporadic', '偶发', counts.sporadic || 0)}
+      <label style="font-size:12px;color:var(--text-secondary);margin-left:8px">品牌：
+        <select onchange="window._ltFilterBrand=this.value;window._ltPage=1;renderShortage()" style="padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px;background:#FFFFFF;cursor:pointer;max-width:160px">
+          ${brandOptions.map(b => '<option value="' + b + '"' + (filterBrand === b ? ' selected' : '') + '>' + (b === 'all' ? '全部' : b) + '</option>').join('')}
+        </select>
+      </label>
+      <span style="font-size:11px;color:#94A3B8;margin-left:auto">共 ${lt.list.length} 个 SKU → 筛选后 ${rows.length} 个${(filterTier!=='all'||filterBrand!=='all')?' · <a style="color:#3B82F6;cursor:pointer;text-decoration:underline" onclick="window._ltFilterTier=\'all\';window._ltFilterBrand=\'all\';window._ltPage=1;renderShortage()">清空筛选</a>':''}</span>
+    </div>
+
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span class="card-title">长期高严重度 SKU 清单（${rows.length} 个）</span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
+          ${sortBtn('tier', '分型优先（默认）')}${sortBtn('lsi', 'LSI')}${sortBtn('shrunk', '收缩值')}${sortBtn('qty', '累计缺货量')}${sortBtn('nm', '有效月数')}
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:520px;overflow:auto">
+        <table class="data-table" style="font-size:12px">
+          <thead><tr>
+            <th style="text-align:left">品牌</th>
+            <th style="text-align:left">SKU编码</th>
+            <th style="text-align:left">SKU名称</th>
+            <th style="text-align:left" title="来自产品主数据「产品列表」sheet 的「供应链品类」列；查不到显示 —">供应链品类</th>
+            <th style="text-align:center" title="长期分型：顽固型 / 反复型 / 新发型 / 已缓解 / 偶发">长期标记</th>
+            <th style="text-align:right" title="收缩长期百分位，判定用。顽固阈值 ${LT_PARAMS.TH_STUB}">收缩值</th>
+            <th style="text-align:right" title="有缺货且有单工作日 ≥ ${MS_PROFILE.MIN_DAYS} 天的月数 / 分析窗口总月数">有效月数</th>
+            <th style="text-align:right" title="加权长期严重度，排序用（近期权重更高）">LSI</th>
+            <th style="text-align:left" title="逐月严重度百分位：深红 ≥90%、红 ≥75%、橙 ≥50%、黄 ≥25%、灰 &lt;25%；虚线框 = 当月无有效数据；红框 = 当月进了 P75">逐月轨迹 ${months.map(m => m.slice(5)).join(' · ')}</th>
+            <th style="text-align:right;color:var(--color-red)" title="分析窗口内累计首日缺货量（支）">累计缺货量</th>
+            <th style="text-align:right" title="有效月里同时缺货的最大 RDC 数">涉及RDC</th>
+            <th style="text-align:right;color:var(--color-red)" title="${curMonth} 的首日缺货率">当月缺货率</th>
+            <th style="text-align:right" title="从最新月往前连续在当月 P75 的月数">当前连续</th>
+          </tr></thead>
+          <tbody>
+            ${pageData.length > 0 ? rowHtml : '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center">
+        <button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._ltPage=Math.max(1,${window._ltPage - 1});renderShortage()" ${window._ltPage <= 1 ? 'disabled' : ''}>上一页</button>
+        <span style="font-size:12px;color:var(--text-secondary)">第 ${window._ltPage}/${totalPages} 页</span>
+        <button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._ltPage=Math.min(${totalPages},${window._ltPage + 1});renderShortage()" ${window._ltPage >= totalPages ? 'disabled' : ''}>下一页</button>
+        <span style="font-size:11px;color:var(--text-secondary)">共 ${rows.length} 个</span>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;padding:10px 12px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.7">
+      <strong>口径说明：</strong><br>
+      · <strong>已剔除周六周日</strong>——周末 RDC 不排单，首日缺货量≈订单量，计入会虚增缺货量（实测 2 月虚高 61%）。<br>
+      · <strong>已剔除华东仓</strong>——华东仅存在于 1–4 月数据、5–8 月无，不剔除则全周期不同口径。<br>
+      · <strong>按 SKU 层聚合</strong>（跨 RDC 合并）——长期标记是 SKU 的属性，拆到 6 个仓会把「一个长期问题 SKU」稀释成 6 个互不相干的仓。<br>
+      · <strong>严重度公式与四象限页完全一致</strong>（0.5×规模 + 0.3×率 + 0.2×频，含几何平均软衰减），但<b>各月 P75/P90 阈值独立计算</b>，淡旺季自适应。<br>
+      · <strong>月度百分位</strong> = 该 SKU 当月严重度在当月有效 SKU 中的排名位置（0~1）。用百分位而非「是否进 P90」的二值命中，是因为二值会丢失梯度——严重度 0.73（差 0.002 未进 P90）和 0.30 会被当成一样。<br>
+      · <strong>新发型不是长期问题</strong>：有效月数 &lt; ${LT_PARAMS.MIN_MONTHS} 个月时样本不足，收缩值不可靠，需人工查证是不是铺货/切换/一次性事件。<br>
+      · <strong>逐月轨迹色阶</strong>：<span style="color:#A32D2D;font-weight:600">深红 ≥90%</span> / <span style="color:#EF4444;font-weight:600">红 ≥75%</span> / <span style="color:#F59E0B;font-weight:600">橙 ≥50%</span> / <span style="color:#FCD34D;font-weight:600">黄 ≥25%</span> / <span style="color:#9CA3AF;font-weight:600">灰 &lt;25%</span>；<span style="border:1px dashed #CBD5E1;padding:0 4px">虚线框</span> = 当月无有效数据；红描边 = 当月进了 P75。
+    </div>
+  `;
+}
+window.renderShortageLongTerm = renderShortageLongTerm;
+
+// v176: 长期高严重度清单导出 CSV（与表体同源，导出当前筛选+排序后的全部行，非当前页）
+function exportLongTermCSV() {
+  const list = window._ltExportList || [];
+  if (!list.length) { showToast('当前筛选下无数据可导出', true); return; }
+  const months = window._ltExportMonths || [];
+  function esc(s) {
+    const v = s == null ? '' : String(s);
+    if (/[",\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  }
+  const head = ['品牌', 'SKU编码', 'SKU名称', '供应链品类', '长期标记', '收缩值', '有效月数', 'LSI',
+    '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续']
+    .concat(months.map(m => m + ' 百分位'))
+    .concat(months.map(m => m + ' 严重度'));
+  const rows = list.map(function(p) {
+    return [
+      esc(p.brand), esc(p.sku), esc(p.name), esc(skuSupplyChainCat(p.sku)),
+      esc((LT_TIER[p.tier] || LT_TIER.none).label),
+      p.shrunkPct.toFixed(4), p.nM, p.lsi.toFixed(4),
+      p.totalShort, p.rdcCntMax, (p.curMr * 100).toFixed(1), p.curStreak || 0
+    ].concat(months.map(function(m) {
+      return p.m[m] ? (p.m[m].pct * 100).toFixed(1) : '';
+    })).concat(months.map(function(m) {
+      return p.m[m] ? p.m[m].sev.toFixed(4) : '';
+    })).join(',');
+  });
+  const csv = '\uFEFF' + head.join(',') + '\n' + rows.join('\n') + '\n';
+  const today = new Date().toISOString().slice(0, 10);
+  downloadFile('长期高严重度SKU清单_' + (window._ltExportCurMonth || '') + '_' + list.length + '行_' + today + '.csv', csv);
+  showToast('已导出 ' + list.length + ' 行');
+}
+window.exportLongTermCSV = exportLongTermCSV;
+
 // v170: 「严重度高重点跟进清单」导出 CSV
 // 数据来源 window._msFocusList（与表体同源，render 阶段预计算，避免口径漂移）
 // 导出当前筛选+排序后的全部行（非当前页），列与表格一致
@@ -5451,6 +5895,8 @@ function exportShortageFocusListCSV() {
   // CSV 头部（与表头一一对应）
   const head = [
     '品牌', 'SKU编码', 'SKU名称', '供应链品类', 'RDC',
+    // v176: 长期标记（SKU 层跨月判定）+ 支撑数据（收缩值 / 有效月数），便于在 Excel 里自行排序筛选
+    '长期标记', '收缩长期百分位', '长期有效月数',
     '订单量', '首日缺货量', '首日缺货率(%)', '缺货天数', '有单天数', '缺货频率(%)',
     '严重度评分(0-1)', '严重度等级',
     '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈'
@@ -5475,6 +5921,8 @@ function exportShortageFocusListCSV() {
   const rows = list.map(function(r){
     return [
       esc(r.brand), esc(r.sku), esc(r.name), esc(r.scc), esc(r.rdc),
+      esc((LT_TIER[r.tier] || LT_TIER.none).label),
+      (r.shrunk || 0).toFixed(4), r.nM || 0,
       r.orderQty, r.shortQty,
       (r.mr * 100).toFixed(1),
       r.shortDayCnt, r.orderDayCnt,
