@@ -5496,6 +5496,12 @@ function renderShortageMonthly() {
     (hi.length ? '  ·  严重度高命中 ' + hi.length : '') +
     '  ·  点击散点可下钻</div>';
 
+  // v198: 高严重度归因分析（必须在排序和模板字面量之前计算，供两者引用）
+  var _attrFilter = window._attrFilter || 'all';
+  var attrData = buildHiAttribution(hi, period);
+  window._msFocusAttr = attrData; // 供 exportShortageFocusListCSV 使用
+  var hiAttrFiltered = _attrFilter === 'all' ? hi : attrData.results.filter(function(r){ return r.type === _attrFilter; }).map(function(r){ return hi[r.idx]; });
+
   window._msSort = window._msSort || 'sev'; // v147: 默认按严重度排序
   let sorted = hiAttrFiltered.slice(); // v198: 使用归因筛选后的列表（而非原始 hi）
   if (window._msSort === 'sev') sorted.sort((a, b) => (b.severity || 0) - (a.severity || 0) || b.shortQty - a.shortQty);
@@ -5561,12 +5567,6 @@ function renderShortageMonthly() {
       '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
       '</tr>';
   }).join('');
-
-  // v198: 高严重度归因分析（必须在模板字面量之前计算，供内部引用 + 导出使用）
-  var _attrFilter = window._attrFilter || 'all';
-  var attrData = buildHiAttribution(hi, period);
-  window._msFocusAttr = attrData; // 供 exportShortageFocusListCSV 使用
-  var hiAttrFiltered = _attrFilter === 'all' ? hi : attrData.results.filter(function(r){ return r.type === _attrFilter; }).map(function(r){ return hi[r.idx]; });
 
   page.innerHTML = `
     <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:8px">
