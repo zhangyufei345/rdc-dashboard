@@ -16362,6 +16362,28 @@ window.onPlanAdviceAck = onPlanAdviceAck;
 window.jumpToAdviceTarget = jumpToAdviceTarget;
 window.renderPlanAdvice = renderPlanAdvice;
 window.planTabBarHtml = planTabBarHtml;
+
+// 导出优化建议 CSV（v197：exportPlanAdvice 函数体）
+function exportPlanAdvice() {
+  const all = (typeof buildPlanOptimAdvice === 'function') ? buildPlanOptimAdvice() : [];
+  if (!all.length) { showToast('无优化建议数据', true); return; }
+  const fType = window._planAdviceType || 'all';
+  const fAck = window._planAdviceAck || 'all';
+  let list = all;
+  if (fType !== 'all') list = list.filter(function(r){ return r.adviceTypes && r.adviceTypes.indexOf(fType) !== -1; });
+  if (fAck === 'ack') list = list.filter(function(r){ return getPlanAdviceAck(r.sku, r.rdc, r.primaryType); });
+  if (fAck === 'unack') list = list.filter(function(r){ return !getPlanAdviceAck(r.sku, r.rdc, r.primaryType); });
+  let csv = '\uFEFFSKU,SKU名称,品牌,RDC,计划(支),出货(支),完成率(%),原因分类,原因标签,证据,优先级,采纳状态\n';
+  list.forEach(function(r){
+    csv += [
+      r.sku, (r.skuName||'').replace(/,/g,'，'), (r.brand||'').replace(/,/g,'，'), r.rdc,
+      r.plan||0, r.shipped||0, (r.comp*100).toFixed(1),
+      r.primaryType||'', (r.reasonTags||[]).join('|'), (r.evidence||[]).join('|'),
+      r.priority||0, getPlanAdviceAck(r.sku, r.rdc, r.primaryType) ? '已采纳/已知悉' : '未处理'
+    ].join(',') + '\n';
+  });
+  downloadFile('分仓计划优化建议_' + new Date().toISOString().slice(0,10) + '.csv', csv);
+}
 window.exportPlanAdvice = exportPlanAdvice;
 
 function exportPlanMonitor() {
