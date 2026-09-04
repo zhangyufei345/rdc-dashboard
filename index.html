@@ -4976,6 +4976,121 @@ function judgeBottleneck(p, dcs) {
 }
 window.judgeBottleneck = judgeBottleneck;
 
+// v198: 高严重度产品归因分析 —— 2×2 矩阵（总仓状态 × 分仓超销）+ 大单去噪
+// 对严重度高清单（hi）每个 SKU×RDC 归因到 A1/A2/C1/C2/D 六类，返回分类结果 + 概览统计
+// 数据源：dcSupply（总仓供应）、cov7（分仓计划量）、orderDetail（分仓出货量+日级别）
+function buildHiAttribution(hi, period) {
+  // ---- 1. 预计算：RDC 级完成率（plan vs shipped）----
+  var cov7 = (dataStore.inventory && dataStore.inventory.cov7) || [];
+  var orderDetail = dataStore.orderDetail || [];
+  var monthPrefix = period ? period.slice(0, 7) : ''; // '2026-09'
+
+  // plan lookup: rdc|sku → planQty（取当月 cov 字段）
+  var planMap = {};
+  var covFieldMap = { '2026-08':'cov08', '2026-09':'cov09', '2026-10':'cov10',
+                       '2026-11':'cov11', '2026-12':'cov12', '2027-01':'cov13' };
+  var cf = covFieldMap[period] || 'cov09';
+  cov7.forEach(function(d) {
+    if (d[cf] != null && d[cf] > 0) { planMap[(d.rdc||'') + '|' + (d.sku||'')] = d[cf]; }
+  });
+
+  // shipped lookup: rdc|sku → { shipped, dayMap{dateStr: qty}, maxLine }
+  var shipMap = {};
+  orderDetail.forEach(function(o) {
+    if (!o.skuCode || !o.warehouse || !o.dateStr) return;
+    if (monthPrefix && o.dateStr.indexOf(monthPrefix) !== 0) return;
+    var key = o.warehouse + '|' + o.skuCode;
+    if (!shipMap[key]) shipMap[key] = { shipped: 0, dayMap: {}, maxLine: 0 };
+    var s = shipMap[key];
+    var q = o.orderQty || 0;
+    s.shipped += q;
+    s.dayMap[o.dateStr] = (s.dayMap[o.dateStr] || 0) + q;
+    if (q > s.maxLine) s.maxLine = q;
+  });
+
+  // comp lookup: rdc|sku → { comp, plan, shipped, peakFactor, maxLineRatio }
+  var compMap = {};
+  Object.keys(shipMap).forEach(function(key) {
+    var s = shipMap[key];
+    var plan = planMap[key] || 0;
+    var comp = plan > 0 ? s.shipped / plan : 0;
+    // peakFactor: 日峰值 / 日中位数
+    var dayVals = Object.keys(s.dayMap).map(function(k){ return s.dayMap[k]; });
+    var sorted = dayVals.slice().sort(function(a,b){ return a - b; });
+    var maxDay = sorted.length ? sorted[sorted.length - 1] : 0;
+    var median = sorted.length
+      ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)
+      : 0;
+    var peakFactor = median > 0 ? maxDay / median : (maxDay > 0 ? 99 : 0);
+    var maxLineRatio = s.shipped > 0 ? s.maxLine / s.shipped : 0;
+    compMap[key] = { comp: comp, plan: plan, shipped: s.shipped, peakFactor: peakFactor, maxLineRatio: maxLineRatio };
+  });
+
+  // ---- 2. 总仓供应数据 ----
+  var dcsProf = getMonthlyDCSupplyProfile();
+
+  // ---- 3. 归因常量定义 ----
+  var ATTR_TYPES = {
+    A1: { label: '总仓完全卡死',   color: '#991B1B', bg: '#FEE2E2', desc: 'dcSupply含缺货/紧张 且 总仓异常天数≥缺货天数 → RDC侧无解，必须等/协调总仓', order: 1 },
+    A2: { label: '总仓部分紧张',   color: '#92400E', bg: '#FEF3C7', desc: 'dcSupply含缺货/紧张 但 总仓异常天数<缺货天数 → 协调总仓+RDC调拨并行',        order: 2 },
+    C1: { label: '结构性超销',     color: '#B45309', bg: '#FEF3C7', desc: '总仓正常 + 完成率>110% + 非临时大单(peakFactor<3) → 计划系统性偏低，下月上调',     order: 3 },
+    C2: { label: '偶发大单超销',   color: '#047857', bg: '#D1FAE5', desc: '总仓正常 + 完成率>110% + 临时大单驱动(peakFactor≥3) → 偶发事件，不调计划',       order: 4 },
+    D:  { label: '⚠️ 需重点排查',  color: '#374151', bg: '#F3F4F6', desc: '总仓正常 + 完成率≤110% → 两边都没明显异常，可能是运输/排单/库位问题',      order: 5 },
+    NA: { label: '数据不足',       color: '#94A3B8', bg: '#F1F5F9', desc: '缺少销售进度或dcSupply数据，无法归因',                                order: 9 }
+  };
+
+  // ---- 4. 逐条归类 ----
+  var results = []; // 每条 = { idx, sku, rdc, type, attr, compInfo, dcsInfo }
+  hi.forEach(function(p, idx) {
+    var rdcKey = (p.rdc || '') + '|' + p.sku;
+    var compInfo = compMap[rdcKey] || null;
+    var dcs = dcsProf.byKey ? (dcsProf.byKey[period + '|' + p.sku] || null) : null;
+
+    var dcAbnormal = dcs && dcs.dcShortDayCnt > 0 &&
+      (dcs.dcSupplyLatest && (dcs.dcSupplyLatest.indexOf('整体缺货') >= 0 || dcs.dcSupplyLatest.indexOf('供应紧张') >= 0));
+    var dcFullyDead = dcAbnormal && dcs && dcs.dcShortDayCnt >= p.shortDayCnt;
+
+    var comp = compInfo ? compInfo.comp : 0;
+    var isOversold = comp > 1.10; // 完成率>110%
+
+    var peakFactor = compInfo ? compInfo.peakFactor : 0;
+    var maxLineRatio = compInfo ? compInfo.maxLineRatio : 0;
+    var isStructuralOversold = isOversold && peakFactor < 3 && maxLineRatio < 0.25; // 非临时大单
+
+    var type; // A1 | A2 | C1 | C2 | D | NA
+    if (dcFullyDead)           { type = 'A1'; }
+    else if (dcAbnormal)       { type = 'A2'; }
+    else if (isStructuralOversold) { type = 'C1'; }
+    else if (isOversold)       { type = 'C2'; }
+    else if (compInfo && dcs)  { type = 'D'; }
+    else                       { type = 'NA'; }
+
+    results.push({
+      idx: idx,
+      sku: p.sku,
+      rdc: p.rdc,
+      type: type,
+      attr: ATTR_TYPES[type],
+      compInfo: compInfo,
+      dcsInfo: dcs,
+      severity: p.severity,
+      shortQty: p.shortQty
+    });
+  });
+
+  // ---- 5. 统计 ----
+  var cntBy = {};
+  results.forEach(function(r){ cntBy[r.type] = (cntBy[r.type]||0)+1; });
+
+  return {
+    results: results,         // 归类结果数组（与 hi 同序）
+    cntBy: cntBy,             // 各类计数 { A1:N, A2:N, ... }
+    ATTR_TYPES: ATTR_TYPES,   // 常量
+    total: hi.length
+  };
+}
+window.buildHiAttribution = buildHiAttribution;
+
 // 缺货分析页三个 Tab 的统一按钮栏（v131 新增 monthly）
 function shortageTabBarHtml(active) {
   function btn(id, label) {
@@ -5382,7 +5497,7 @@ function renderShortageMonthly() {
     '  ·  点击散点可下钻</div>';
 
   window._msSort = window._msSort || 'sev'; // v147: 默认按严重度排序
-  let sorted = hi.slice();
+  let sorted = hiAttrFiltered.slice(); // v198: 使用归因筛选后的列表（而非原始 hi）
   if (window._msSort === 'sev') sorted.sort((a, b) => (b.severity || 0) - (a.severity || 0) || b.shortQty - a.shortQty);
   else if (window._msSort === 'qty') sorted.sort((a, b) => b.shortQty - a.shortQty);
   else if (window._msSort === 'mr') sorted.sort((a, b) => b.mr - a.mr || b.shortQty - a.shortQty);
@@ -5446,6 +5561,12 @@ function renderShortageMonthly() {
       '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
       '</tr>';
   }).join('');
+
+  // v198: 高严重度归因分析（必须在模板字面量之前计算，供内部引用 + 导出使用）
+  var _attrFilter = window._attrFilter || 'all';
+  var attrData = buildHiAttribution(hi, period);
+  window._msFocusAttr = attrData; // 供 exportShortageFocusListCSV 使用
+  var hiAttrFiltered = _attrFilter === 'all' ? hi : attrData.results.filter(function(r){ return r.type === _attrFilter; }).map(function(r){ return hi[r.idx]; });
 
   page.innerHTML = `
     <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:8px">
@@ -5641,6 +5762,43 @@ function renderShortageMonthly() {
       </div>
     </div>
 
+    // v198: 高严重度产品归因分析概览（插入在清单之前）
+    // attrData / _attrFilter / hiAttrFiltered 已在模板字面量外定义（line 5566-5569）
+    var ATTR = attrData.ATTR_TYPES;
+    var attrOrder = ['A1','A2','C1','C2','D'];
+
+    html += '<div class="card" style="margin-bottom:14px">';
+    html += '<div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+    html += '<span class="card-title" style="font-size:14px">高严重度产品归因分析</span>';
+    html += '<span style="font-size:11px;color:var(--text-secondary)">基于总仓供应状态 × 分仓完成率交叉判定，区分根因与行动方向</span>';
+    html += '<div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    html += '<span style="font-size:11px;color:var(--text-secondary)">筛选：</span>';
+    html += '<select onchange="window._attrFilter=this.value;renderShortage()" style="padding:4px 6px;border:1px solid var(--border-card);border-radius:6px;font-size:11px"><option value="all"'+(_attrFilter==='all'?' selected':'')+'>全部 '+hi.length+' 个</option>';
+    attrOrder.forEach(function(k){
+      var m = ATTR[k];
+      if (!m) return;
+      var c = attrData.cntBy[k] || 0;
+      if (c > 0) html += '<option value="'+k+'"'+(_attrFilter===k?' selected':'')+'>'+k+' '+m.label+' ('+c+')</option>';
+    });
+    var naCnt = attrData.cntBy['NA'] || 0;
+    if (naCnt > 0) html += '<option value="NA"'+(_attrFilter==='NA'?' selected':'')+'>NA 数据不足 ('+naCnt+')</option>';
+    html += '</select></div></div>';
+
+    // 归因 KPI 卡片行
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">';
+    attrOrder.forEach(function(k){
+      var m = ATTR[k];
+      if (!m) return;
+      var c = attrData.cntBy[k] || 0;
+      var pct = hi.length > 0 ? (c / hi.length * 100).toFixed(0) : 0;
+      html += '<div style="background:'+m.bg+';border-left:4px solid '+m.color+';border-radius:8px;padding:10px 12px">';
+      html += '<div style="font-size:11px;color:'+m.color+';font-weight:600">'+k+' · '+m.label+'</div>';
+      html += '<div style="font-size:22px;font-weight:700;color:'+m.color+';margin:4px 0">'+c+'</div>';
+      html += '<div style="font-size:10px;color:'+m.color+';opacity:0.7">'+pct+'% 占比 · '+m.desc+'</div>';
+      html += '</div>';
+    });
+    html += '</div></div>';
+
     
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -5664,6 +5822,7 @@ function renderShortageMonthly() {
             <th style="text-align:left" title="缺货报告（shortage）最新一日的 dcSupply 字段——总仓是否正常供应">总仓供应</th>
             <th style="text-align:right" title="当月缺货报告里 dcSupply 含「整体缺货」或「供应紧张」的天数">总仓异常天数</th>
             <th style="text-align:center" title="总仓异常天数 vs SKU×RDC 缺货天数对比——判定是总仓卡死还是 RDC 内部问题">补货瓶颈</th>
+            <th style="text-align:center" title="v198 归因分析：总仓供应状态 × 分仓完成率交叉判定（A1总仓卡死 / A2部分紧张 / C1结构性超销 / C2偶发大单 / D需排查）。点击卡片行上方筛选按归因过滤">归因</th>
             <th style="text-align:left" title="销售进度（v185，目标月 ${window._planSkuAggMonth || '—'}）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;订单量 = 已放行 + 未放行（订单号去重）；计划量 = 库存覆盖表当月计划字段；完成率重新计算。&#10;状态按聚合后的完成率判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;显示「—」= 该 SKU 在目标月无计划量 / 已按促销装或新品期剔除。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
           </tr></thead>
           <tbody>
@@ -5710,10 +5869,16 @@ function renderShortageMonthly() {
                   '<td style="text-align:left">' + dcsTagHtml + '</td>' +
                   '<td style="text-align:right">' + dcsDaysHtml + '</td>' +
                   '<td style="text-align:center"><span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:' + bn.bg + ';color:' + bn.color + ';white-space:nowrap" title="判定：' + bn.label + '">' + bn.label + '</span></td>' +
+                  '<td style="text-align:center">' + (function(){
+                    var ar = attrData.results.find(function(r){ return r.sku === p.sku && r.rdc === p.rdc; });
+                    if (!ar) return '<span style="color:#CBD5E1">—</span>';
+                    var m = ar.attr;
+                    return '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:'+m.bg+';color:'+m.color+';white-space:nowrap;cursor:pointer" title="'+m.desc+'\n完成率:'+(ar.compInfo?(ar.compInfo.comp*100).toFixed(1):'?')+'%'+(ar.compInfo?' peakFactor:'+ar.compInfo.peakFactor.toFixed(1):'')+'" onclick="window._attrFilter=\''+ar.type+'\';renderShortage()">'+ar.type+' '+m.label+'</span>';
+                  })() + '</td>' +
                   '<td style="text-align:left;min-width:120px;line-height:1.4">' + spHtml + '</td>' +
                   '</tr>';
               }).join('');
-            })() : '<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「严重度高」的 SKU×RDC 组合</td></tr>'}
+            })() : '<tr><td colspan="16" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无「严重度高」的 SKU×RDC 组合</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -6133,6 +6298,8 @@ function exportShortageFocusListCSV() {
     '订单量', '首日缺货量', '首日缺货率(%)', '缺货天数', '有单天数', '缺货频率(%)',
     '严重度评分(0-1)', '严重度等级',
     '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈',
+    // v198: 归因分析（A1总仓卡死 / A2部分紧张 / C1结构性超销 / C2偶发大单 / D需排查）
+    '归因类型', '归因名称', '分仓完成率(%)',
     // v185: 销售进度（与表体同源同口径；目标月 window._planSkuAggMonth）
     '销售进度_目标月', '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态'
   ];
@@ -6168,6 +6335,15 @@ function exportShortageFocusListCSV() {
       Math.round((r.sf || 0) * 100),
       (r.severity * 100).toFixed(1), severityLevel(r.severity),
       esc(r.dcSupplyLatest), r.dcStockLatest || 0, r.dcShortDayCnt || 0, esc(r.bnLabel),
+      // v198: 归因列
+      (function(){
+        var attr = window._msFocusAttr;
+        if (!attr) return ['','',''];
+        var ar = attr.results.find(function(a){ return a.sku === r.sku && a.rdc === r.rdc; });
+        if (!ar) return ['','',''];
+        var ci = ar.compInfo;
+        return [ar.type, ar.attr ? ar.attr.label : '', ci ? (ci.comp * 100).toFixed(1) : ''];
+      })(),
       sp && sp.plan > 0 ? skuMonthExport : '',
       sp && sp.plan > 0 ? sp.shipped : '',
       sp && sp.plan > 0 ? sp.plan : '',

@@ -328,6 +328,28 @@ if (html.includes('PLAN_ADVICE_TYPES') && ['C1','C2','C3','C4a','C4b','C5','C6']
   log('err', 'R8e: 原因分类 PLAN_ADVICE_TYPES 不完整');
 }
 
+// R9: v198 高严重度归因分析（严重度高清单前的归因概览卡片）
+if (html.includes('buildHiAttribution')) {
+  log('ok', 'R9a: buildHiAttribution（高严重度归因分析函数）存在');
+} else {
+  log('err', 'R9a: buildHiAttribution 不存在 —— 归因分析模块缺失');
+}
+if (html.includes("window._msFocusAttr = attrData")) {
+  log('ok', 'R9b: 归因数据挂 window._msFocusAttr（供导出CSV使用）');
+} else {
+  log('err', 'R9b: _msFocusAttr 未挂载 —— 导出CSV无法获取归因数据');
+}
+if (html.includes("'A1'") && html.includes("'D'") && html.includes('ATTR_TYPES')) {
+  log('ok', 'R9c: 归因分类 A1/A2/C1/C2/D 定义齐全');
+} else {
+  log('err', 'R9c: 归因分类 ATTR_TYPES 不完整');
+}
+if (html.includes("_attrFilter") && html.includes('hiAttrFiltered')) {
+  log('ok', 'R9d: 归因筛选(_attrFilter)与筛选后列表(hiAttrFiltered)在位');
+} else {
+  log('err', 'R9d: 归因筛选机制缺失');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {
