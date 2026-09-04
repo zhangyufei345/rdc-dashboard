@@ -5502,6 +5502,42 @@ function renderShortageMonthly() {
   window._msFocusAttr = attrData; // 供 exportShortageFocusListCSV 使用
   var hiAttrFiltered = _attrFilter === 'all' ? hi : attrData.results.filter(function(r){ return r.type === _attrFilter; }).map(function(r){ return hi[r.idx]; });
 
+  // v198: 归因概览 HTML 预计算（必须在模板字面量外，模板内用 ${attrOverviewHtml} 引用）
+  var ATTR = attrData.ATTR_TYPES;
+  var attrOrder = ['A1','A2','C1','C2','D'];
+  var attrOverviewHtml = (function(){
+    var h = '';
+    h += '<div class="card" style="margin-bottom:14px">';
+    h += '<div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+    h += '<span class="card-title" style="font-size:14px">高严重度产品归因分析</span>';
+    h += '<span style="font-size:11px;color:var(--text-secondary)">基于总仓供应状态 × 分仓完成率交叉判定，区分根因与行动方向</span>';
+    h += '<div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h += '<span style="font-size:11px;color:var(--text-secondary)">筛选：</span>';
+    h += '<select onchange="window._attrFilter=this.value;renderShortage()" style="padding:4px 6px;border:1px solid var(--border-card);border-radius:6px;font-size:11px"><option value="all"'+(_attrFilter==='all'?' selected':'')+'>全部 '+hi.length+' 个</option>';
+    attrOrder.forEach(function(k){
+      var m = ATTR[k]; if (!m) return;
+      var c = attrData.cntBy[k] || 0;
+      if (c > 0) h += '<option value="'+k+'"'+(_attrFilter===k?' selected':'')+'>'+k+' '+m.label+' ('+c+')</option>';
+    });
+    var naCnt = attrData.cntBy['NA'] || 0;
+    if (naCnt > 0) h += '<option value="NA"'+(_attrFilter==='NA'?' selected':'')+'>NA 数据不足 ('+naCnt+')</option>';
+    h += '</select></div></div>';
+    // 归因 KPI 卡片行
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">';
+    attrOrder.forEach(function(k){
+      var m = ATTR[k]; if (!m) return;
+      var c = attrData.cntBy[k] || 0;
+      var pct = hi.length > 0 ? (c / hi.length * 100).toFixed(0) : 0;
+      h += '<div style="background:'+m.bg+';border-left:4px solid '+m.color+';border-radius:8px;padding:10px 12px">';
+      h += '<div style="font-size:11px;color:'+m.color+';font-weight:600">'+k+' · '+m.label+'</div>';
+      h += '<div style="font-size:22px;font-weight:700;color:'+m.color+';margin:4px 0">'+c+'</div>';
+      h += '<div style="font-size:10px;color:'+m.color+';opacity:0.7">'+pct+'% 占比 · '+m.desc+'</div>';
+      h += '</div>';
+    });
+    h += '</div></div>';
+    return h;
+  })();
+
   window._msSort = window._msSort || 'sev'; // v147: 默认按严重度排序
   let sorted = hiAttrFiltered.slice(); // v198: 使用归因筛选后的列表（而非原始 hi）
   if (window._msSort === 'sev') sorted.sort((a, b) => (b.severity || 0) - (a.severity || 0) || b.shortQty - a.shortQty);
@@ -5762,44 +5798,8 @@ function renderShortageMonthly() {
       </div>
     </div>
 
-    // v198: 高严重度产品归因分析概览（插入在清单之前）
-    // attrData / _attrFilter / hiAttrFiltered 已在模板字面量外定义（line 5566-5569）
-    var ATTR = attrData.ATTR_TYPES;
-    var attrOrder = ['A1','A2','C1','C2','D'];
+    ${attrOverviewHtml}
 
-    html += '<div class="card" style="margin-bottom:14px">';
-    html += '<div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
-    html += '<span class="card-title" style="font-size:14px">高严重度产品归因分析</span>';
-    html += '<span style="font-size:11px;color:var(--text-secondary)">基于总仓供应状态 × 分仓完成率交叉判定，区分根因与行动方向</span>';
-    html += '<div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
-    html += '<span style="font-size:11px;color:var(--text-secondary)">筛选：</span>';
-    html += '<select onchange="window._attrFilter=this.value;renderShortage()" style="padding:4px 6px;border:1px solid var(--border-card);border-radius:6px;font-size:11px"><option value="all"'+(_attrFilter==='all'?' selected':'')+'>全部 '+hi.length+' 个</option>';
-    attrOrder.forEach(function(k){
-      var m = ATTR[k];
-      if (!m) return;
-      var c = attrData.cntBy[k] || 0;
-      if (c > 0) html += '<option value="'+k+'"'+(_attrFilter===k?' selected':'')+'>'+k+' '+m.label+' ('+c+')</option>';
-    });
-    var naCnt = attrData.cntBy['NA'] || 0;
-    if (naCnt > 0) html += '<option value="NA"'+(_attrFilter==='NA'?' selected':'')+'>NA 数据不足 ('+naCnt+')</option>';
-    html += '</select></div></div>';
-
-    // 归因 KPI 卡片行
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">';
-    attrOrder.forEach(function(k){
-      var m = ATTR[k];
-      if (!m) return;
-      var c = attrData.cntBy[k] || 0;
-      var pct = hi.length > 0 ? (c / hi.length * 100).toFixed(0) : 0;
-      html += '<div style="background:'+m.bg+';border-left:4px solid '+m.color+';border-radius:8px;padding:10px 12px">';
-      html += '<div style="font-size:11px;color:'+m.color+';font-weight:600">'+k+' · '+m.label+'</div>';
-      html += '<div style="font-size:22px;font-weight:700;color:'+m.color+';margin:4px 0">'+c+'</div>';
-      html += '<div style="font-size:10px;color:'+m.color+';opacity:0.7">'+pct+'% 占比 · '+m.desc+'</div>';
-      html += '</div>';
-    });
-    html += '</div></div>';
-
-    
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <span class="card-title">严重度高重点跟进清单（${hi.length} 个 · 严重度评分 ≥ ${SEV_DOUBLE_TXT}（本月 P75，前 25%））</span>
