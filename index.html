@@ -4829,6 +4829,25 @@ window.getRollingShortageProfile = getRollingShortageProfile;
 function buildMonthlyDCSupplyProfile() {
   var byKey = {};  // '月|sku' -> { dcShortDays: Set, dcSupplyLatest, dcStockLatest, dcBadDays, totalDays }
   var src = dataStore.shortage || [];
+  // 先扫一遍取 maxDs（rolling30 索引要用）
+  var windowMax = '';
+  for (var i = 0; i < src.length; i++) {
+    var d0 = src[i];
+    if (d0 && d0.dateStr && d0.dateStr > windowMax) windowMax = d0.dateStr;
+  }
+  var windowMin = '';
+  if (windowMax) {
+    // 30 天窗口：windowMin = maxDs - 29 天（YYYY-MM-DD 字符串可直接减）
+    var y = parseInt(windowMax.slice(0, 4), 10);
+    var m = parseInt(windowMax.slice(5, 7), 10) - 1;
+    var day = parseInt(windowMax.slice(8, 10), 10);
+    var dt = new Date(y, m, day - 29);
+    windowMin = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+  }
+  // === v185 同时建 rolling30 索引：让 renderShortage 在「近 30 天」模式下也能查到 dcs ===
+  //   旧实现 dcsProf.byKey 永远只有 'YYYY-MM|sku' 这类键；period='rolling30' 时查不到 → 全显「—」。
+  //   修法：遍历 shortage 时如果日期落在 [windowMin, windowMax] 范围内，再聚合成 byKey['rolling30|sku']。
+  var rollByKey = {};
   for (var i = 0; i < src.length; i++) {
     var d = src[i];
     if (!d || !d.dateStr || !d.materialCode) continue;
@@ -4848,6 +4867,21 @@ function buildMonthlyDCSupplyProfile() {
       v.dcSupplyLatest = sup || '正常';
       v.dcStockLatest = d.dcStock || 0;
     }
+    // rolling30 窗口聚合（v185）
+    if (windowMin && d.dateStr >= windowMin && d.dateStr <= windowMax) {
+      var rk = 'rolling30|' + d.materialCode;
+      if (!rollByKey[rk]) rollByKey[rk] = { sku: d.materialCode, dcShortDays: new Set(), dcBadDays: new Set(), dcSupplyLatest: '', dcStockLatest: 0, lastDate: '' };
+      var rv = rollByKey[rk];
+      if (sup.indexOf('整体缺货') >= 0 || sup.indexOf('供应紧张') >= 0) {
+        rv.dcShortDays.add(d.dateStr);
+        rv.dcBadDays.add(d.dateStr);
+      }
+      if (!rv.lastDate || d.dateStr > rv.lastDate) {
+        rv.lastDate = d.dateStr;
+        rv.dcSupplyLatest = sup || '正常';
+        rv.dcStockLatest = d.dcStock || 0;
+      }
+    }
   }
   // 转 Set 为 cnt
   var byKey2 = {};
@@ -4857,6 +4891,12 @@ function buildMonthlyDCSupplyProfile() {
     q.dcShortDayCnt = q.dcShortDays.size;
     q.dcBadDayCnt = q.dcBadDays.size;
     byKey2[kk] = { month: q.month, sku: q.sku, dcShortDayCnt: q.dcShortDayCnt, dcBadDayCnt: q.dcBadDayCnt, dcSupplyLatest: q.dcSupplyLatest, dcStockLatest: q.dcStockLatest };
+  }
+  // rolling30 索引同样转 cnt（v185）
+  for (var rkk in rollByKey) {
+    if (!Object.prototype.hasOwnProperty.call(rollByKey, rkk)) continue;
+    var rq = rollByKey[rkk];
+    byKey2[rkk] = { sku: rq.sku, dcShortDayCnt: rq.dcShortDays.size, dcBadDayCnt: rq.dcBadDays.size, dcSupplyLatest: rq.dcSupplyLatest, dcStockLatest: rq.dcStockLatest };
   }
   return { byKey: byKey2 };
 }
@@ -5579,10 +5619,12 @@ function renderShortageMonthly() {
             <th style="text-align:left" title="缺货报告（shortage）最新一日的 dcSupply 字段——总仓是否正常供应">总仓供应</th>
             <th style="text-align:right" title="当月缺货报告里 dcSupply 含「整体缺货」或「供应紧张」的天数">总仓异常天数</th>
             <th style="text-align:center" title="总仓异常天数 vs SKU×RDC 缺货天数对比——判定是总仓卡死还是 RDC 内部问题">补货瓶颈</th>
+            <th style="text-align:left" title="销售进度（v185，目标月 ${window._planSkuAggMonth || '—'}）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;订单量 = 已放行 + 未放行（订单号去重）；计划量 = 库存覆盖表当月计划字段；完成率重新计算。&#10;状态按聚合后的完成率判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;显示「—」= 该 SKU 在目标月无计划量 / 已按促销装或新品期剔除。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
           </tr></thead>
           <tbody>
             ${pageData.length > 0 ? (function(){
               var dcsProf = getMonthlyDCSupplyProfile();
+              var skuAgg = buildPlanSkuAgg(); // v185: 销售进度（与长期清单同口径、顺序无关）
               return pageData.map(function(p){
                 var dcs = dcsProf.byKey[period + '|' + p.sku] || null;
                 var bn = judgeBottleneck(p, dcs);
@@ -5592,6 +5634,18 @@ function renderShortageMonthly() {
                 var dcsDaysHtml = !dcs ? '<span style="color:#CBD5E1">—</span>' :
                   '<span style="color:' + (dcs.dcShortDayCnt >= p.shortDayCnt ? 'var(--color-red)' : '#92400E') + ';font-weight:600">' + dcs.dcShortDayCnt + '</span>' +
                   '<span style="font-size:10px;color:var(--text-secondary)"> / ' + p.shortDayCnt + '</span>';
+                // v185: 销售进度单元格
+                var sp = skuAgg[p.sku];
+                var spHtml;
+                if (!sp || sp.plan <= 0) {
+                  spHtml = '<span style="color:#CBD5E1">—</span>';
+                } else {
+                  var stClr = sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706');
+                  var stBg = sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB');
+                  spHtml = '<div style="font-size:11px;color:var(--text-secondary)">订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() + '</div>' +
+                    '<div style="font-size:11px;color:' + stClr + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
+                    '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + stBg + ';color:' + stClr + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>';
+                }
                 return '<tr>' +
                   '<td style="text-align:left">' + p.brand + '</td>' +
                   '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
@@ -5609,9 +5663,10 @@ function renderShortageMonthly() {
                   '<td style="text-align:left">' + dcsTagHtml + '</td>' +
                   '<td style="text-align:right">' + dcsDaysHtml + '</td>' +
                   '<td style="text-align:center"><span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:' + bn.bg + ';color:' + bn.color + ';white-space:nowrap" title="判定：' + bn.label + '">' + bn.label + '</span></td>' +
+                  '<td style="text-align:left;min-width:120px;line-height:1.4">' + spHtml + '</td>' +
                   '</tr>';
               }).join('');
-            })() : '<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「严重度高」的 SKU×RDC 组合</td></tr>'}
+            })() : '<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「严重度高」的 SKU×RDC 组合</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -6032,7 +6087,9 @@ function exportShortageFocusListCSV() {
     '长期标记', '收缩长期百分位', '长期有效月数',
     '订单量', '首日缺货量', '首日缺货率(%)', '缺货天数', '有单天数', '缺货频率(%)',
     '严重度评分(0-1)', '严重度等级',
-    '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈'
+    '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈',
+    // v185: 销售进度（与表体同源同口径；目标月 window._planSkuAggMonth）
+    '销售进度_目标月', '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态'
   ];
 
   // 等级映射：与表内标签对齐（CSV 里同事无需再算）
@@ -6051,7 +6108,11 @@ function exportShortageFocusListCSV() {
     return v;
   }
 
+  // v185: 销售进度（与 buildPlanSkuAgg 同源；避免顶层函数引用 render 闭包的局部变量——v184 教训）
+  const skuAggExport = buildPlanSkuAgg();
+  const skuMonthExport = window._planSkuAggMonth || '';
   const rows = list.map(function(r){
+    const sp = skuAggExport[r.sku];
     return [
       esc(r.brand), esc(r.sku), esc(r.name), esc(r.scc), esc(r.rdc),
       esc((LT_TIER[r.tier] || LT_TIER.none).label),
@@ -6061,7 +6122,12 @@ function exportShortageFocusListCSV() {
       r.shortDayCnt, r.orderDayCnt,
       Math.round((r.sf || 0) * 100),
       (r.severity * 100).toFixed(1), severityLevel(r.severity),
-      esc(r.dcSupplyLatest), r.dcStockLatest || 0, r.dcShortDayCnt || 0, esc(r.bnLabel)
+      esc(r.dcSupplyLatest), r.dcStockLatest || 0, r.dcShortDayCnt || 0, esc(r.bnLabel),
+      sp && sp.plan > 0 ? skuMonthExport : '',
+      sp && sp.plan > 0 ? sp.shipped : '',
+      sp && sp.plan > 0 ? sp.plan : '',
+      sp && sp.plan > 0 ? (sp.comp * 100).toFixed(1) : '',
+      sp && sp.plan > 0 ? sp.status : ''
     ].join(',');
   });
 
