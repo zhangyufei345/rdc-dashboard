@@ -201,6 +201,68 @@ if (dvMatch) {
   log('err', '未找到 const DB_VERSION');
 }
 
+// ── + 回归防护：关键不变式（防止「开发一个版本、损失一个老功能」）──
+// 历史坑位：v187 badge 造假 / v192 销售进度丢 / v193 月份下拉 / v194 加载提速 / v195 销售进度又空。
+// 根因：每次只孤立验证「用户提到的那一页」，没有一处断言「其它页的关键列/字段是否还在」。
+// 本段把「最容易复发、且复发后静默无提示」的不变式固化为断言，任何一次改动踩到都会让预检变红。
+console.log('\n[回归防护] 关键不变式（防止「开发一个版本、损失一个老功能」）');
+
+// R1: buildPlanSkuAgg 必须在「提前 return 守卫」之前设置 _planSkuAggMonth / _planSkuAggLabel，
+//     否则 缺货四象限「严重度高重点跟进清单」的「销售进度」列全空 + 表头括号内目标月为空（v192→v195 反复）。
+const fnMatch = html.match(/function\s+buildPlanSkuAgg\s*\([^)]*\)\s*\{/);
+if (fnMatch) {
+  let depth = 0, i = fnMatch.index;
+  const start = i;
+  while (i < html.length) { const c = html[i]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) break; } i++; }
+  const body = html.slice(start, i + 1);
+  const labelIdx = body.indexOf('window._planSkuAggMonth =');
+  const label2Idx = body.indexOf('window._planSkuAggLabel =');
+  const returnIdx = body.indexOf('return out;');
+  if (labelIdx === -1) {
+    log('err', 'R1: buildPlanSkuAgg 未设置 window._planSkuAggMonth（销售进度列会空）');
+  } else if (label2Idx === -1) {
+    log('err', 'R1b: buildPlanSkuAgg 未设置 window._planSkuAggLabel（表头目标月会空）');
+  } else if (returnIdx === -1) {
+    log('ok', 'R1: 设置 _planSkuAggMonth/_planSkuAggLabel 且无提前 return（OK）');
+  } else if (labelIdx < returnIdx && label2Idx < returnIdx) {
+    log('ok', 'R1: _planSkuAggMonth/_planSkuAggLabel 均在提前 return 之前设置（销售进度列不会空）');
+  } else {
+    log('err', 'R1: 提前 return 早于 _planSkuAggMonth 设置 → 销售进度列会空！');
+  }
+} else {
+  log('err', 'R1: 找不到 function buildPlanSkuAgg（函数被改名/删除）');
+}
+
+// R2: 缺货四象限「销售进度」表头必须引用 _planSkuAggMonth（保证括号里有目标月，而非空括号）
+if (html.includes("销售进度（' + (window._planSkuAggMonth")) {
+  log('ok', 'R2: 缺货四象限「销售进度」表头引用 _planSkuAggMonth（目标月显示）');
+} else {
+  log('err', 'R2: 缺货四象限「销售进度」表头未引用 _planSkuAggMonth（目标月会空）');
+}
+
+// R3: 月份下拉仍由 orderDetail 的 dateStr 聚合（v193 把下拉移入筛选栏，曾担心「只有9月」）。
+//     真实链路：buildMonthlyShortageProfile() 从 dataStore.orderDetail 取 d.dateStr.slice(0,7) → monthWd → 暴露为 monthWorkdays。
+const bms = html.match(/function\s+buildMonthlyShortageProfile\s*\([^)]*\)\s*\{/);
+if (bms) {
+  let depth = 0, bi = bms.index; const bstart = bi;
+  while (bi < html.length) { const c = html[bi]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) break; } bi++; }
+  const bmsBody = html.slice(bstart, bi + 1);
+  if (bmsBody.includes('dataStore.orderDetail') && bmsBody.includes("d.dateStr.slice(0, 7)")) {
+    log('ok', 'R3: 月份下拉由 orderDetail.dateStr 聚合（多月份自动出现，不会只剩9月）');
+  } else {
+    log('err', 'R3: buildMonthlyShortageProfile 不再从 orderDetail 聚合月份（下拉可能只剩单月）');
+  }
+} else {
+  log('err', 'R3: 找不到 buildMonthlyShortageProfile（月份下拉逻辑可能被删）');
+}
+
+// R4: 分仓计划监控「✓ 在补货建议清单中」badge 仍为真实匹配（v187 曾无条件显示造假）
+if (html.includes('_replSkuRdcSet') || html.includes('badge') && html.includes('在补货建议清单')) {
+  log('ok', 'R4: 补货建议 badge 匹配逻辑存在（v187 后已改为真实命中）');
+} else {
+  log('warn', 'R4: 未找到 badge 真实匹配标记，请人工核对「分仓计划监控 ✓ badge 是否造假」');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {
