@@ -263,6 +263,41 @@ if (html.includes('_replSkuRdcSet') || html.includes('badge') && html.includes('
   log('warn', 'R4: 未找到 badge 真实匹配标记，请人工核对「分仓计划监控 ✓ badge 是否造假」');
 }
 
+// R5: inventory.json 不再含「库存状态分析」sheet（v196 已拆出为 inventory-status.json，首屏不再下载/解析 8.4MB）
+try {
+  const invRaw = fs.readFileSync(path.resolve(__dirname, '..', 'inventory.json'), 'utf8');
+  const invObj = JSON.parse(invRaw);
+  const invSheets = invObj.sheetNames || Object.keys(invObj.sheets || {});
+  const hasStatus = invSheets.some(n => /月库存状态分析$/.test(n));
+  if (!hasStatus) {
+    log('ok', 'R5: inventory.json 已移除状态分析 sheet（首屏不再解析 8.4MB/45669 行）');
+  } else {
+    log('err', 'R5: inventory.json 仍含「库存状态分析」sheet，首屏仍会下载/解析 8.4MB 死重');
+  }
+} catch (e) {
+  log('warn', 'R5: 无法读取 inventory.json 校验（' + e.message + '）');
+}
+
+// R6: transship.json 已移出首屏 manifest（v196 方案B，转储数据按需加载）
+try {
+  const mfRaw = fs.readFileSync(path.resolve(__dirname, '..', 'manifest.json'), 'utf8');
+  const mf = JSON.parse(mfRaw);
+  if (mf.files && !('transship.json' in mf.files)) {
+    log('ok', 'R6: transship.json 已移出首屏 manifest（5.5MB 按需加载）');
+  } else {
+    log('err', 'R6: transship.json 仍在首屏 manifest，首屏仍会下载 5.5MB');
+  }
+} catch (e) {
+  log('warn', 'R6: 无法读取 manifest.json 校验（' + e.message + '）');
+}
+
+// R7: 慢动诊断抽离 + 按需加载机制存在（防「拆出后忘记补算导致慢动诊断全空」回潮）
+if (html.includes('function computeStatusDerived') && html.includes('function ensureSlowDiag') && html.includes('function ensureTransship')) {
+  log('ok', 'R7: 慢动诊断抽离（computeStatusDerived）+ 按需加载（ensureSlowDiag/ensureTransship）机制在位');
+} else {
+  log('err', 'R7: 缺失 computeStatusDerived/ensureSlowDiag/ensureTransship，慢动诊断按需加载机制失效');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {
