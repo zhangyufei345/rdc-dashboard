@@ -1,490 +1,4 @@
-<!-- RDC运营数据看板 v3.1.6 (deploy-2026-08-12) 恢复"订单数据洞察"页"转储 vs 出货 SKU 差异明细"上方的"转储入库 vs 实际出货（按RDC）"双轴趋势图。v3.1.2 删除整个"⚡ 交叉洞察"卡片时一并移除了该图，现按用户要求仅恢复趋势图（不恢复卡片内 3 个首日满足率 KPI 与库存覆盖预警段）。 -->
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RDC运营数据看板 v22</title>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<script>
-(function v182diag() {
-  'use strict';
-  function setT(t) { try { document.title = String(t).slice(0, 180); } catch(_) {} }
-  setT('[v182] head-script @ ' + new Date().toISOString().slice(11,19));
-  window.__v182_t0 = Date.now();
-  window.addEventListener('error', function(e) {
-    var msg = (e && (e.message || (e.error && e.error.message) || e.error)) || 'unknown';
-    var src = (e && e.filename) ? String(e.filename).split('/').pop() : '?';
-    var ln = (e && e.lineno) || 0;
-    setT('[v182-ERR L' + ln + '] ' + String(msg).slice(0, 60) + ' (' + src + ')');
-    try { console.error('[v182-ERR]', e); } catch(_) {}
-  });
-  window.addEventListener('unhandledrejection', function(e) {
-    var r = (e && e.reason && (e.reason.message || e.reason)) || 'unknown';
-    setT('[v182-PROMISE] ' + String(r).slice(0, 80));
-    try { console.error('[v182-PROMISE]', e); } catch(_) {}
-  });
-  // 异步探针：检查 echarts/xlsx 是否真加载成功
-  setTimeout(function() {
-    var et = (typeof echarts).slice(0,5), xt = (typeof XLSX).slice(0,5);
-    setT('[v182] e=' + et + ' x=' + xt + ' @ +' + (Date.now() - window.__v182_t0) + 'ms');
-    try { console.log('[v182-debug] CDN 加载状态: echarts=' + et + ', XLSX=' + xt); } catch(_) {}
-  }, 800);
-})();
-</script>
-<script src="https://unpkg.com/echarts@5.5.0/dist/echarts.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js'"></script>
-<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'"></script>
-<style>
-:root {
-  --bg-primary: #F8FAFC; --bg-card: #FFFFFF; --bg-sidebar: #1E293B;
-  --text-primary: #1E293B; --text-secondary: #64748B; --text-sidebar: #CBD5E1;
-  --border-card: #E2E8F0; --border-light: #F1F5F9;
-  --color-blue: #2563EB; --color-green: #10B981; --color-red: #EF4444;
-  --color-orange: #F59E0B; --color-teal: #14B8A6; --color-purple: #8B5CF6;
-  --card-radius: 12px; --font-size-base: 13px; --font-size-lg: 15px;
-  --font-size-xl: 20px; --font-size-2xl: 28px;
-  --sidebar-width: 220px; --topbar-height: 56px;
-  --transition-speed: 0.2s;
-}
-body.mode-advanced {
-  --bg-primary: #0F172A; --bg-card: #1E293B; --bg-sidebar: #0A0F1A;
-  --text-primary: #E2E8F0; --text-secondary: #94A3B8; --text-sidebar: #94A3B8;
-  --border-card: #334155; --border-light: #1E293B;
-  --color-blue: #60A5FA;
-}
-body.mode-meeting {
-  --font-size-base: 16px; --font-size-lg: 20px;
-  --font-size-xl: 28px; --font-size-2xl: 40px;
-  --card-radius: 16px;
-}
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "PingFang SC", sans-serif; background: var(--bg-primary); color: var(--text-primary); font-size: var(--font-size-base); line-height: 1.5; transition: background var(--transition-speed), color var(--transition-speed); }
-a { color: var(--color-blue); text-decoration: none; }
-
-.page { display: none; }
-.page.active { display: block; }
-
-/* Login */
-.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(135deg, #1a3a5c 0%, #2563EB 40%, #7C3AED 100%); }
-.login-card { background: #fff; border-radius: 16px; padding: 48px 40px; width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
-.login-card h1 { font-size: 24px; font-weight: 600; text-align: center; margin-bottom: 8px; color: #1E293B; }
-.login-card .subtitle { text-align: center; color: #64748B; font-size: 14px; margin-bottom: 32px; }
-.login-card .form-group { margin-bottom: 20px; }
-.login-card label { display: block; font-size: 13px; color: #475569; margin-bottom: 6px; font-weight: 500; }
-.login-card input { width: 100%; padding: 10px 14px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .2s; }
-.login-card input:focus { border-color: var(--color-blue); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-.login-card .btn { width: 100%; padding: 12px; background: var(--color-blue); color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; margin-top: 8px; }
-.login-card .btn:hover { opacity: .9; }
-.login-card .error { color: #EF4444; font-size: 12px; text-align: center; margin-top: 12px; min-height: 18px; }
-
-/* App layout */
-.app-layout { display: none; min-height: 100vh; }
-.app-layout.active { display: flex; }
-
-/* Sidebar */
-.sidebar { width: var(--sidebar-width); background: var(--bg-sidebar); color: var(--text-sidebar); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; transition: transform var(--transition-speed); overflow-y: auto; }
-.sidebar-logo { padding: 20px; border-bottom: 1px solid rgba(255,255,255,.1); }
-.sidebar-logo h2 { font-size: 15px; font-weight: 600; color: #fff; }
-.sidebar-logo span { font-size: 11px; opacity: .6; display: block; margin-top: 2px; }
-.sidebar-menu { flex: 1; padding: 8px 0; }
-.sidebar-menu .menu-item { display: flex; align-items: center; padding: 10px 20px; cursor: pointer; font-size: 13px; color: var(--text-sidebar); transition: all .15s; border-left: 3px solid transparent; gap: 10px; }
-.sidebar-menu .menu-item:hover { background: rgba(255,255,255,.06); color: #fff; }
-.sidebar-menu .menu-item.active { background: rgba(37,99,235,.2); color: #fff; border-left-color: var(--color-blue); }
-.sidebar-menu .menu-item .icon { width: 20px; text-align: center; font-size: 15px; }
-.sidebar-menu .menu-section-title { padding: 14px 20px 8px; font-size: 10px; font-weight: 600; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: 1px; }
-/* 可折叠分组标题（订单及缺货分析 / 库存分析） */
-.sidebar-menu .menu-group-header { display: flex; align-items: center; padding: 12px 20px; cursor: pointer; user-select: none; font-size: 15px; font-weight: 700; color: #fff; gap: 8px; transition: background .15s; }
-.sidebar-menu .menu-group-header:hover { background: rgba(255,255,255,.06); }
-.sidebar-menu .menu-group-header .arrow { font-size: 10px; transition: transform .2s; flex-shrink: 0; width: 16px; }
-.sidebar-menu .menu-group-header.collapsed .arrow { transform: rotate(-90deg); }
-.sidebar-menu .menu-group-body { overflow: hidden; transition: max-height .25s ease-out; max-height: 2000px; }
-.sidebar-menu .menu-group-body.collapsed { max-height: 0; }
-.sidebar-footer { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,.1); font-size: 11px; opacity: .5; }
-
-/* Main */
-.main-area { flex: 1; margin-left: var(--sidebar-width); display: flex; flex-direction: column; min-height: 100vh; transition: margin-left var(--transition-speed); }
-
-/* Top bar */
-.topbar { height: var(--topbar-height); background: var(--bg-card); border-bottom: 1px solid var(--border-card); display: flex; align-items: center; padding: 0 24px; gap: 16px; position: sticky; top: 0; z-index: 50; }
-.topbar .page-title { font-size: var(--font-size-lg); font-weight: 600; flex: 1; }
-.topbar .mode-btns { display: flex; gap: 4px; }
-.topbar .mode-btns button { padding: 6px 12px; border: 1px solid var(--border-card); background: var(--bg-card); color: var(--text-secondary); border-radius: 6px; cursor: pointer; font-size: 12px; transition: all .15s; }
-.topbar .mode-btns button.active { background: var(--color-blue); color: #fff; border-color: var(--color-blue); }
-.topbar .mode-btns button:hover:not(.active) { background: var(--border-light); }
-.topbar .topbar-actions { display: flex; align-items: center; gap: 12px; }
-.topbar .btn-export { padding: 6px 16px; background: var(--color-green); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
-.topbar .btn-import { padding: 6px 16px; background: var(--color-blue); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
-.topbar .user-info { font-size: 13px; color: var(--text-secondary); cursor: pointer; }
-.topbar .user-info:hover { color: var(--text-primary); }
-
-/* Content */
-.content { flex: 1; padding: 20px 24px; overflow-y: auto; }
-
-/* Cards */
-.card { background: var(--bg-card); border-radius: var(--card-radius); border: 1px solid var(--border-card); padding: 20px; margin-bottom: 16px; transition: background var(--transition-speed), border-color var(--transition-speed); }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.card-title { font-size: var(--font-size-lg); font-weight: 600; }
-.card-subtitle { font-size: 12px; color: var(--text-secondary); }
-
-/* KPI Cards */
-.kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
-.kpi-card { background: var(--bg-card); border-radius: var(--card-radius); border: 1px solid var(--border-card); padding: 16px 20px; transition: all var(--transition-speed); }
-.kpi-card .kpi-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
-.kpi-card .kpi-value { font-size: var(--font-size-2xl); font-weight: 700; }
-.kpi-card .kpi-unit { font-size: 12px; color: var(--text-secondary); margin-left: 4px; }
-.kpi-card.blue .kpi-value { color: var(--color-blue); }
-.kpi-card.green .kpi-value { color: var(--color-green); }
-.kpi-card.red .kpi-value { color: var(--color-red); }
-.kpi-card.orange .kpi-value { color: var(--color-orange); }
-.kpi-card.teal .kpi-value { color: var(--color-teal); }
-.kpi-card.purple .kpi-value { color: var(--color-purple); }
-.kpi-card.gray .kpi-value { color: #475569; } /* v113: 正常 KPI 用中性灰色（之前缺失） */
-
-/* Chart container */
-.chart-container { width: 100%; height: 350px; }
-.chart-container-lg { width: 100%; height: 420px; }
-.chart-container-sm { width: 100%; height: 280px; }
-
-/* Two column layout */
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-.row-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
-
-/* ========== 总览页驾驶舱主题（v52：1:1 复刻 overview-preview.html，全部作用域 #page-overview） ========== */
-#page-overview {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background:
-    radial-gradient(ellipse 80% 50% at 20% 10%, rgba(59,130,246,0.18), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 80% 90%, rgba(168,85,247,0.18), transparent 60%),
-    linear-gradient(135deg, #0a0e27 0%, #131a3b 50%, #0a0e27 100%);
-  color: #e2e8f0;
-  padding: 16px;
-  border-radius: 14px;
-  min-height: calc(100vh - 120px);
-}
-
-/* 顶部 header */
-#page-overview .ov-header {
-  display: flex; align-items: center; justify-content: space-between;
-  background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.75));
-  border: 1px solid rgba(99,179,237,0.25);
-  border-radius: 14px;
-  padding: 14px 20px;
-  margin-bottom: 18px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
-  backdrop-filter: blur(12px);
-}
-#page-overview .ov-header h1 {
-  margin: 0; font-size: 20px; font-weight: 700;
-  background: linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  letter-spacing: 1px;
-}
-#page-overview .ov-header .ov-sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
-#page-overview .ov-header .ov-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #94a3b8; }
-#page-overview .ov-header .ov-meta select {
-  background: rgba(15,23,42,0.7); border: 1px solid rgba(99,179,237,0.25);
-  color: #e2e8f0; padding: 4px 8px; border-radius: 6px; font-size: 12px;
-}
-
-/* KPI 行 - 6 张发光卡 */
-#page-overview .kpi-row {
-  display: grid; grid-template-columns: repeat(6, 1fr);
-  gap: 14px; margin-bottom: 18px;
-}
-#page-overview .kpi-card {
-  position: relative; padding: 18px 16px;
-  background: linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
-  border: 1px solid rgba(99,179,237,0.2);
-  border-radius: 12px;
-  overflow: hidden;
-  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
-}
-#page-overview .kpi-card::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent, #60a5fa), transparent);
-  opacity: 0.6;
-}
-#page-overview .kpi-card:hover { transform: translateY(-3px); border-color: var(--accent, #60a5fa); box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px var(--accent-glow, rgba(96,165,250,0.3)); }
-#page-overview .kpi-card.blue { --accent: #60a5fa; --accent-glow: rgba(96,165,250,0.3); }
-#page-overview .kpi-card.green { --accent: #34d399; --accent-glow: rgba(52,211,153,0.3); }
-#page-overview .kpi-card.red { --accent: #ef4444; --accent-glow: rgba(239,68,68,0.3); }
-#page-overview .kpi-card.orange { --accent: #f97316; --accent-glow: rgba(249,115,22,0.3); }
-#page-overview .kpi-card.teal { --accent: #2dd4bf; --accent-glow: rgba(45,212,191,0.3); }
-#page-overview .kpi-card.purple { --accent: #c084fc; --accent-glow: rgba(192,132,252,0.3); }
-#page-overview .kpi-icon {
-  position: absolute; top: 14px; right: 14px;
-  width: 32px; height: 32px; border-radius: 50%;
-  background: rgba(255,255,255,0.06);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
-}
-#page-overview .kpi-label { font-size: 12px; color: #94a3b8; margin-bottom: 10px; letter-spacing: 0.5px; padding-right: 40px; }
-#page-overview .kpi-value { font-size: 30px; font-weight: 700; line-height: 1; color: var(--accent);
-  text-shadow: 0 0 20px var(--accent-glow);
-  font-family: 'Helvetica Neue', Arial, sans-serif;
-}
-#page-overview .kpi-unit { font-size: 16px; font-weight: 500; color: var(--accent); opacity: 0.85; margin-left: 2px; }
-#page-overview .kpi-trend { margin-top: 8px; font-size: 11px; display: flex; align-items: center; gap: 4px; }
-#page-overview .kpi-trend.up { color: #34d399; }
-#page-overview .kpi-trend.down { color: #f87171; }
-#page-overview .kpi-trend.flat { color: #94a3b8; }
-
-/* 思维导图核心区 3 列网格 */
-#page-overview .mindmap-grid {
-  display: grid;
-  grid-template-columns: 360px 1fr 360px;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-@media (max-width: 1400px) {
-  #page-overview .mindmap-grid { grid-template-columns: 1fr 1fr; }
-  #page-overview .mindmap-center-slot { grid-column: 1 / -1; order: -1; }
-}
-
-/* Card 玻璃质感 */
-#page-overview .card {
-  background: linear-gradient(135deg, rgba(15,23,42,0.65), rgba(30,41,59,0.45));
-  border: 1px solid rgba(99,179,237,0.18);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 16px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
-  backdrop-filter: blur(8px);
-}
-#page-overview .card-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px;
-  display: flex; align-items: center; gap: 8px;
-}
-#page-overview .card-title::before { content: ''; width: 3px; height: 14px;
-  background: linear-gradient(180deg, #60a5fa, #a78bfa); border-radius: 2px;
-}
-#page-overview .card-sub { font-size: 11px; color: #94a3b8; margin-left: auto; font-weight: 400; }
-
-/* 中央订单流核心（玻璃质感+蓝紫光晕） */
-#page-overview .mindmap-center {
-  position: relative; padding: 20px 14px 16px;
-  background:
-    radial-gradient(ellipse 60% 80% at 50% 50%, rgba(59,130,246,0.12), transparent 70%),
-    linear-gradient(135deg, rgba(15,23,42,0.7), rgba(30,41,59,0.5));
-  border: 1px solid rgba(99,179,237,0.25);
-  border-radius: 14px;
-  text-align: center;
-  box-shadow: 0 0 40px rgba(59,130,246,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
-}
-#page-overview .center-title { font-size: 13px; color: #94a3b8; letter-spacing: 2px; margin-bottom: 14px; }
-#page-overview .center-3col { display: grid; grid-template-columns: 186px 240px 186px; justify-content: space-between; gap: 18px; align-items: start; width: 100%; }
-#page-overview .center-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-#page-overview .center-side-title { font-size: 11px; color: #94a3b8; letter-spacing: 1px; margin-bottom: 2px; text-align: left; }
-#page-overview .center-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-#page-overview .center-stat { padding: 10px 6px; background: rgba(255,255,255,0.03); border: 1px solid transparent; border-radius: 8px; text-align: center; transition: background 0.2s; }
-#page-overview .center-stat:hover { background: rgba(99,179,237,0.06); }
-#page-overview .center-stat .v { font-size: 18px; font-weight: 700; line-height: 1; }
-#page-overview .center-stat .l { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: 0.5px; }
-#page-overview .center-rings { position: relative; width: 240px; height: 240px; margin: 0 auto; }
-/* 6 个 RDC 满足率标签（HTML 外置于环图四周，v54：左3右3对称环绕） */
-#page-overview .rdc-label {
-  position: absolute; font-size: 11px; font-weight: 700; line-height: 1;
-  white-space: nowrap; pointer-events: none;
-}
-#page-overview .rdc-label-tl { left: -8px; top: 8px; }
-#page-overview .rdc-label-ml { left: -56px; top: 50%; transform: translateY(-50%); }
-#page-overview .rdc-label-bl { left: -8px; bottom: 8px; }
-#page-overview .rdc-label-tr { right: -8px; top: 8px; }
-#page-overview .rdc-label-mr { right: -56px; top: 50%; transform: translateY(-50%); }
-#page-overview .rdc-label-br { right: -8px; bottom: 8px; }
-@media (max-width: 900px) {
-  #page-overview .center-3col { grid-template-columns: 1fr; }
-  #page-overview .center-rings { margin: 0 auto 12px; }
-}
-/* 环形图中央大数字 */
-#page-overview .center-metric {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  text-align: center; pointer-events: none;
-}
-#page-overview .center-metric .big {
-  font-size: 36px; font-weight: 800; line-height: 1; letter-spacing: -1px;
-  background: linear-gradient(135deg, #60a5fa, #a78bfa);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  text-shadow: 0 0 30px rgba(96,165,250,0.5);
-}
-#page-overview .center-metric .lbl {
-  font-size: 10px; color: #94a3b8; margin-top: 4px; letter-spacing: 1px;
-}
-
-/* 紧急预警条 */
-#page-overview .alert-strip {
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: linear-gradient(90deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05));
-  border-left: 3px solid #ef4444;
-  border-radius: 6px;
-  font-size: 12px;
-  display: flex; justify-content: space-between; align-items: center;
-}
-#page-overview .alert-strip .num { color: #ef4444; font-weight: 700; font-size: 16px; }
-#page-overview .alert-strip.green { background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(52,211,153,0.04)); border-left-color: #34d399; }
-#page-overview .alert-strip.green .num { color: #34d399; }
-
-/* v104: 给 tooltip 留出完整显示空间——确保 ECharts tooltip 不被任何祖先 overflow:hidden 截断 */
-#page-overview .chart-area,
-#page-overview .card,
-#page-overview .mindmap-grid,
-#page-overview,
-#page-overview .mindmap-center { overflow: visible !important; }
-#page-overview .chart-area { z-index: 1; }
-
-/* 底部 2 列网格 */
-#page-overview .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
-@media (max-width: 1100px) { #page-overview .bottom-grid { grid-template-columns: 1fr; } }
-
-/* 表格深色 */
-#page-overview table { width: 100%; border-collapse: collapse; font-size: 12px; }
-#page-overview th { text-align: left; padding: 10px 12px; font-weight: 500; color: #94a3b8;
-  border-bottom: 1px solid rgba(99,179,237,0.15); font-size: 11px; letter-spacing: 0.5px;
-}
-#page-overview td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #cbd5e1; }
-#page-overview tbody tr:hover { background: rgba(99,179,237,0.06); }
-#page-overview .num { text-align: right; font-variant-numeric: tabular-nums; }
-#page-overview .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
-#page-overview .pill.red { background: rgba(239,68,68,0.2); color: #fca5a5; }
-#page-overview .pill.orange { background: rgba(249,115,22,0.2); color: #fdba74; }
-#page-overview .pill.green { background: rgba(52,211,153,0.2); color: #6ee7b7; }
-#page-overview .pill.blue { background: rgba(96,165,250,0.2); color: #93c5fd; }
-
-/* Top 5 mini 表（v55：table-layout:fixed + 显式四列宽度，让商品名称显示） */
-#page-overview .top5-mini-table { table-layout: fixed; width: 100%; }
-#page-overview .top5-mini-table th:nth-child(1),
-#page-overview .top5-mini-table td:nth-child(1) { width: 50%; }
-#page-overview .top5-mini-table th:nth-child(2),
-#page-overview .top5-mini-table td:nth-child(2) { width: 18%; }
-#page-overview .top5-mini-table th:nth-child(3),
-#page-overview .top5-mini-table td:nth-child(3) { width: 22%; }
-#page-overview .top5-mini-table th:nth-child(4),
-#page-overview .top5-mini-table td:nth-child(4) { width: 10%; }
-#page-overview .top5-mini-table td:nth-child(1) > div { gap: 8px; }
-
-/* ECharts canvas 内文字兜底 */
-#page-overview canvas { display: block; }
-
-/* ========== /总览页驾驶舱主题 ========== */
-
-/* Table */
-.data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.data-table th { background: var(--bg-card); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border-card); color: var(--text-secondary); white-space: nowrap; position: sticky; top: 0; z-index: 2; }
-.data-table th:first-child, .data-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg-card); }
-.data-table th:first-child { z-index: 3; }
-.data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-light); }
-.data-table tr:hover td { background: var(--border-light); }
-.data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.data-table .rate-good { color: var(--color-green); font-weight: 600; }
-.data-table .rate-warn { color: var(--color-orange); font-weight: 600; }
-.data-table .rate-bad { color: var(--color-red); font-weight: 600; }
-
-/* v120: 回到"表格内 sticky"模式——th 粘在 .table-wrap 内的最上方（top:0）。
-   页面整体滚动时整张表格跟着滚走，表头不会被"卡"在某个位置盖住行内容；
-   表格内部滚动时表头始终在首行可见。v119 那种"th 用 top: var(--topbar-height) 粘到 topbar 下方"
-   是错的——效果见截图，th 跑到了行中间，盖住了滚过去的行。*/
-.table-wrap { max-height: 420px; overflow: auto; }
-.table-wrap > .data-table { border-collapse: separate; }
-.table-search { padding: 8px 12px; border: 1px solid var(--border-card); border-radius: 6px; font-size: 12px; width: 200px; outline: none; background: var(--bg-card); color: var(--text-primary); }
-
-/* 品牌×RDC 矩阵：单列屏显示 */
-.brand-rdc-matrix { table-layout: fixed; width: 100%; }
-.brand-rdc-matrix th, .brand-rdc-matrix td { padding: 4px 3px; font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand-rdc-matrix th:first-child, .brand-rdc-matrix td:first-child { width: 50px; text-align: left; }
-.brand-rdc-matrix th:nth-child(n+2):nth-child(-n+7), .brand-rdc-matrix td:nth-child(n+2):nth-child(-n+7) { width: calc((100% - 100px) / 6); }
-.brand-rdc-matrix th:last-child, .brand-rdc-matrix td:last-child { width: 50px; }
-
-/* Filters */
-.filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-.filter-bar select, .filter-bar input { padding: 6px 12px; border: 1px solid var(--border-card); border-radius: 6px; font-size: 12px; background: var(--bg-card); color: var(--text-primary); outline: none; }
-.filter-bar label { font-size: 12px; color: var(--text-secondary); }
-
-/* RDC checkbox chips */
-.rdc-checkboxes { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; padding-top: 4px; }
-.rdc-checkbox-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 14px; border: 1px solid var(--border-card); font-size: 11px; cursor: pointer; user-select: none; transition: all 0.15s; background: var(--bg-card); color: var(--text-secondary); }
-.rdc-checkbox-chip:hover { border-color: var(--color-blue); }
-.rdc-checkbox-chip input[type=checkbox] { width: 13px; height: 13px; margin: 0; cursor: pointer; accent-color: var(--color-blue); }
-.rdc-checkbox-chip.checked { border-width: 1.5px; font-weight: 500; }
-.rdc-checkbox-chip.checked-huanan { border-color: #2563EB; color: #1D4ED8; background: #EFF6FF; }
-.rdc-checkbox-chip.checked-huabei { border-color: #10B981; color: #065F46; background: #ECFDF5; }
-.rdc-checkbox-chip.checked-dongbei { border-color: #F59E0B; color: #92400E; background: #FFFBEB; }
-.rdc-checkbox-chip.checked-xibei { border-color: #EF4444; color: #991B1B; background: #FEF2F2; }
-.rdc-checkbox-chip.checked-huazhong { border-color: #8B5CF6; color: #5B21B6; background: #F5F3FF; }
-.rdc-checkbox-chip.checked-xinan { border-color: #14B8A6; color: #0F766E; background: #F0FDFA; }
-.rdc-checkboxes .btn-toggle-all { font-size: 11px; cursor: pointer; color: var(--color-blue); padding: 4px 8px; border: none; background: none; text-decoration: underline; }
-.rdc-checkboxes .btn-toggle-all:hover { color: var(--text-primary); }
-
-/* Badges */
-.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
-.badge-green { background: #D1FAE5; color: #065F46; }
-.badge-red { background: #FEE2E2; color: #991B1B; }
-.badge-orange { background: #FEF3C7; color: #92400E; }
-.badge-blue { background: #DBEAFE; color: #1E40AF; }
-
-/* Upload zone */
-.upload-zone { border: 2px dashed var(--border-card); border-radius: var(--card-radius); padding: 48px; text-align: center; cursor: pointer; transition: all .2s; background: var(--bg-card); }
-.upload-zone:hover { border-color: var(--color-blue); background: rgba(37,99,235,.03); }
-.upload-zone .upload-icon { font-size: 48px; margin-bottom: 12px; }
-.upload-zone .upload-text { font-size: var(--font-size-lg); color: var(--text-secondary); }
-.upload-zone .upload-hint { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
-
-/* Responsive */
-@media (max-width: 1200px) {
-  .kpi-row { grid-template-columns: repeat(3, 1fr); }
-  .row-2 { grid-template-columns: 1fr; }
-}
-@media (max-width: 768px) {
-  .sidebar { transform: translateX(-100%); }
-  .sidebar.open { transform: translateX(0); }
-  .main-area { margin-left: 0; }
-  .kpi-row { grid-template-columns: repeat(2, 1fr); }
-}
-
-/* Meeting mode overrides */
-body.mode-meeting .sidebar { display: none; }
-body.mode-meeting .main-area { margin-left: 0; }
-body.mode-meeting .chart-container { height: 500px; }
-body.mode-meeting .chart-container-sm { height: 400px; }
-body.mode-meeting .kpi-value { font-size: 48px; }
-
-/* Heatmap table */
-.heatmap-cell { text-align: center; padding: 4px 8px; font-size: 12px; font-weight: 500; border-radius: 4px; }
-
-/* Toast */
-.toast { position: fixed; top: 20px; right: 20px; background: var(--color-green); color: #fff; padding: 12px 24px; border-radius: 8px; font-size: 13px; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; }
-.toast.error { background: var(--color-red); }
-@keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-
-/* Pagination */
-.pagination { display: flex; gap: 6px; justify-content: center; align-items: center; margin-top: 12px; }
-.pagination button { padding: 4px 10px; border: 1px solid var(--border-card); background: var(--bg-card); color: var(--text-primary); border-radius: 4px; cursor: pointer; font-size: 12px; }
-.pagination button.active { background: var(--color-blue); color: #fff; border-color: var(--color-blue); }
-.pagination button:disabled { opacity: .4; cursor: default; }
-.pagination span { font-size: 12px; color: var(--text-secondary); }
-
-/* 通用表格分页器（每页 20 条 + 跳页）：任意 .table-wrap 内最后追加 */
-.table-pager { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; padding: 10px 6px; font-size: 12px; color: var(--text-secondary); }
-.table-pager .pg-btn { padding: 3px 8px; font-size: 12px; border: 1px solid var(--border-card); border-radius: 4px; background: var(--bg-card); color: var(--text-primary); cursor: pointer; transition: all .12s; }
-.table-pager .pg-btn:hover:not(:disabled):not(.pg-btn-active) { background: var(--color-blue); color: #fff; border-color: var(--color-blue); }
-.table-pager .pg-btn-active { background: var(--color-blue); color: #fff; border-color: var(--color-blue); font-weight: 600; }
-.table-pager .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
-.table-pager .pg-jump { width: 54px; padding: 3px 6px; border: 1px solid var(--border-card); border-radius: 4px; font-size: 12px; background: var(--bg-card); color: var(--text-primary); text-align: center; }
-.table-pager .pg-jump::-webkit-outer-spin-button,
-.table-pager .pg-jump::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.table-pager .pg-jump { -moz-appearance: textfield; }
-.table-pager .pg-info { margin-right: 6px; }
-</style>
-</head>
-<body>
-
-<div id="app"></div>
-
-<!-- v3 -->
-<script>
 const DEFAULT_USER = 'admin';
 const DEFAULT_PASS = 'admin123';
 
@@ -514,9 +28,6 @@ const dataStore = {
   // v173: 装运条件 → RDC 映射（来自同文件「装运条件定义」sheet：20=东北 50=华南 60=西北 70=华中 80=西南 90=华北）
   // 未放行订单没有「仓库名称」字段，只能靠装运条件反查 RDC
   shipCondRdcMap: {},
-  // v186: 补货调整记录（源：adjustments.json ← S盘《RDC补货调整记录.xlsx》）
-  // 只存原始记录；到货日/观察窗口/窗口缺货归因由 renderAdjustTrack 按运输周期+订单明细动态计算
-  adjustRecords: [],
   loaded: false,
   // Inventory structure data (from 库存分析模版.xlsx)
   inventory: null
@@ -712,7 +223,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const DB_VERSION = 192; // v192: 缺货四象限取消「近 30 天」窗口，完全按月筛选。理由（用户 9/4）：①每月销售特点不同，月底关账前有冲业绩动作，近 30 天滚动窗口可能横跨当月+下月两次关账订单 → 数据失真；②高严重跟进清单含「月度销售进度」列，与近 30 天口径无法匹配。改动：①renderShortageMonthly 硬编码 mode='monthly'，删除「近 30 天（最新）/按月」切换按钮，月份下拉常驻；②跟进清单 CSV 导出窗口标签固定月度；③补货建议页 _replMode 跟随逻辑固定为 monthly（此前默认 rolling30），两页「严重度高/紧急」继续同源同口径。getRollingShortageProfile 及 rolling30 索引保留为死代码未删（不影响运行，后续如确认不再需要可清理）。 // v191: 修 QUIC 挂死 + 半量快照固化——「打开慢」的收尾两刀。①实测 12 文件无限制并发 fetch 会触发 Cloudflare QUIC_NETWORK_IDLE_TIMEOUT（连接打挂、fetch 永久挂起 → bootLoad 卡死、页面空白，且无报错浮出）；改为每批 4 个分批并发 + Promise.allSettled：单文件失败不拖垮整批，失败文件哈希不标记 → 下次打开断点续传自动补，toast 明示。②saveToIDB 完成 await 再 return：此前 fire-and-forget，快速 reload 会拿到中途快照（实测 ord=114130/正常 238352）且哈希已标全量 → 下次「无变化」不补拉 → 残缺数据固化；另在「无变化」分支加数据量级防线（orderDetail<10万 强制全量重拉）拦底同类死状态。 // v188: 修复「每次打开都慢/首次登录空白」——①首次登录 handleLogin 改走 bootLoad（JSON 快速流程）：旧路径 autoLoadData 依赖 xlsx，线上 xlsx 全 404 → loaded 永远 false →「请先导入数据」空状态（v186 只补拉 adjustments.json 是打补丁没修根；bootLoad 自带 manifest 404→xlsx 回退，本地模式不受影响）；init 的加载函数定义移出 if(isAuthenticated)，bootLoad 挂 window 暴露。②版本部署标记 rdc_deploy_flag 从 sessionStorage 改 localStorage：sessionStorage 标签页会话级，每次重开浏览器/新 tab 都为空 → 无脑 clearIDB → 全量重拉（v74 时代 7MB 感知不明显，现在 25MB+ 用户每次打开都慢）；改 localStorage 后只有 manifest.generatedAt 真变（每日数据部署）才清一次缓存，其余打开 IDB 秒开。③新增 window._bootLoading：首拉期间页面占位显示「数据加载中…」而非误导性的「请先导入数据」。 // v187: 分仓计划监控明细「✓ 在补货建议清单中」badge 改为真实匹配。此前无条件显示（建议文案非慢动品就打标），用户在补货建议页找不到对应 SKU（v187 反馈：截图 5 个 SKU 里 4 个是假标记）。候选集与补货建议页 renderReplenishment Step1 同源同条件：最新缺货日中 SKU×RDC 缺货>0，且排除「总仓整体缺货且无在途」；不命中显示灰「—」（hover 有解释）。不复用 _shortageMap：advice 文案逻辑依赖它区分总仓缺货根因（即便无在途也提示「协调总仓」），两处口径故意不同。 // v186: 新增「补货调整跟踪」模块（预测补货优化组）。①新数据源 adjustments.json（源：S盘《RDC补货调整记录.xlsx》，generate_data_json.mjs 自动从 桌面「更新部署」/S盘 两处查找解析，只存原始 13 列，到货日/观察窗口由前端按运输周期动态计算）；②dataStore.adjustRecords 进入 IDB（saveToIDB/loadFromIDB 成对补齐，v179/v181 同款教训——只写不读或既不写不读都会在缓存路径下永远为空）；该字段**可能合法为空**（记录表未部署时），故不加健康检查、按长度判会误伤导致每次全量重拉；③到货日=补货日+运输周期（华中4/华南4/华北5/东北5/西北5/西南7），观察窗口=[到货日, 到货日+5)，窗口缺货量=订单明细首日缺货量(支)÷箱规(箱)；④四象限归因：调整类型「总仓缺货」→大仓紧张，其余类型→大仓充足 × 窗口内是否缺货 → 无奈之举/无谓损失/判断有效/规则无感；⑤DB_VERSION 181→186 触发缓存自愈。// v181: 修复「otherOrders / unreleasedOrders / shipCondRdcMap 既不存也不读」的 IDB 缺陷 + 清理装运条件表冗余。①IDB 字段对称（v179 同类问题的**另一面**）：saveToIDB 此前没存这三个字段、loadFromIDB 也没读，reload 走缓存路径后必为空，且 saveToIDB 随后把空值写回，与 v179 一样永远自愈不了。影响：otherOrders → 订单数据洞察页的免费单/特殊价格；unreleasedOrders → 分仓计划监控的未放行订单；shipCondRdcMap → 未放行订单的 RDC 反查（装运条件码→RDC，装运条件编码≠收货库位编码，华南是 50 不是 40）。修法：saveToIDB 加三字段 + loadFromIDB 加三行恢复 + bump DB_VERSION 触发 onupgradeneeded 清空旧缓存。**健康检查只加 shipCondRdcMap**（SAP 静态编码表恒 6 键，为空即残缺）；otherOrders/unreleasedOrders **可能合法为空**（如 9 月当月其他订单仅 18 行、某月可能没有未放行订单），按长度判会误伤，导致每次刷新都被迫全量加载 17~20s，故不加。②generate_data_json.mjs 的装运条件表匹配改为模糊匹配：此前精确匹配 '装运条件定义'，而 9 月源文件改叫「装运条件」（内容一致，都是 7 行），于是把「有数据但换了名字」误判成缺失、走回填分支，json 里同时出现「装运条件」(自带 7 行) 与「装运条件定义」(回填 7 行) 两份相同数据、sheetNames 变 9 个。改为与 HTML line 1490 一致的 indexOf('装运条件') 匹配，命中自带表即直接用、不回填；重跑后 data.json sheets=9→8，冗余清除。Playwright 实测（本地静态服务，DB_VERSION=181）三场景全 PASS：P1 首载 / **P2 reload（IDB 缓存路径，Bug 现场）** / P3 毒化三字段后 reload，otherOrders=6407、unreleasedOrders=486、shipCondRdcMap=6 键（20东北/50华南/60西北/70华中/80西南/90华北）在缓存路径下均保持不丢；P3 靠 shipCond 健康检查自愈（日志 `shipCond=0 → 自动清空回退`）。// v180: 数据源更新——9 月订单补入 09-03（当天新文件 9月RDC订单满足汇总.xlsx）。data.xlsx 订单明细日期覆盖 09-01~09-03（原止于 09-02）：09-01 704 行不变、09-02 1305→1300（−5 行）、09-03 新增 601 行；缺货汇总 122→191 行；未放行订单 157→461 行（切片日期 09-03→09-04，属存量快照增长）；其他订单 621→18 行（见下方警示）。1~8 月数据与 json 全部未动（manifest 里除 data.json 外 11 个文件哈希保持原值）。实测影响：orderDetail 237,756→238,352 行；shortage 8,261→8,330 行（+69，全部来自 9 月 120→189）；overviewDate 自动定位 2026-09-02→2026-09-03；总览最新日 KPI 缺货总金额 ¥179,048→¥256,332、缺货总箱数 3,079→4,552、在途总箱数 5,660→11,273、涉及 RDC 6 个不变（口径见下）。长期画像：9 月 validCnt 71→80、9 月 P75 0.381→0.426、P90 0.790→0.738；默认口径（判定「本月是否在 P75」用 9 月）顽固 15→16、反复 23→24、新发 5→7、已缓解 129→127、偶发 271→269（合计 443 不变）；强制回退到 8 月口径 13/21/8/139/262 → 14/20/8/139/262。A/B 方法同 v178（git show HEAD:data.json 导出旧 9 月 json，同一份代码跑两遍）。⚠️「涉及 RDC 数」口径提示（离线复核脚本极易算错）：页面算法在 line 1918-1921，是统计 6 大 RDC 各自的 Short 列（huananShort/huabeiShort/dongbeiShort/xibeiShort/huazhongShort/xinanShort）有多少列存在 >0 的行；**不是** `rdcCount` 字段（那是「该物料涉及几个 RDC」的计数值 0~6，对它去重得到的是"出现了几种计数值"，与页面口径无关）。v180 首次统计时误用 rdcCount 得到 5，实测应为 6（09-02：华南10/华北13/东北9/西北4/华中32/西南28；09-03：华南13/华北21/东北18/西北5/华中35/西南15）。⚠️ 两点已知、未擅自改动：①新源文件的 sheet 名为「装运条件」（旧为「装运条件定义」）——HTML 用 indexOf('装运条件') 模糊匹配故能命中，但 generate_data_json.mjs 是精确匹配 '装运条件定义'，会走「从历史月 json 回填」分支，导致 data.json 里同时存在「装运条件」(自带 7 行)与「装运条件定义」(回填 7 行)两个内容相同的 sheet，HTML 取前者，功能正确但有冗余；②9 月 validCnt 虽从 71 升到 80，仍远低于 8 月的 215，9 月 P75(0.426) 因此明显低于 8 月(0.558) —— 这是月初样本不足的固有现象（v177 的 MIN_VALID_CNT_MONTH=30 回退机制因 80>30 未触发），随 9 月数据累积会自然收敛，不建议为此调参。// v179: 修复「首次加载有数据、F5 刷新后主仪表盘全空」的 IDB 缓存 Bug。根因：saveToIDB 写了 shortage 字段，但 loadFromIDB 的恢复段漏了 dataStore.shortage（只恢复了 overall/dailyDetail/bizDemand/orderDetail/customerFulfill/transship/inventoryTurnover/inventory/history 九项）。后果：①全量加载后 shortage=8261 正常；②F5 走 IDB 缓存路径时 shortage 停在初始 [] → 概览 4 个 KPI（缺货总金额/缺货总箱数/在途总箱数/涉及RDC数）全 0、Top20 显示「暂无缺货数据」、dateLabel 退化成 'all'（ensureOverviewDate 因 getLatestShortageDate() 返回 null 而不更新 overviewDate）；③随后 saveToIDB 把 shortage=[] 写回 IDB，永久覆盖缓存里那 8261 行，此后每次刷新都好不了，只有等下次 manifest.generatedAt 变化触发 clearIDB 才恢复。修：①loadFromIDB 补 dataStore.shortage = req.result.shortage || [];；②IDB 健康检查新增 shMissing（shortage 非数组或长度为 0 即判残缺），让 v179 之前被写坏的存量缓存能自愈回退到全量重拉；③升 DB_VERSION 触发 onupgradeneeded 清空旧缓存，保证所有在线用户一次到位。Playwright 实测：修复前 reload 后 shortage 8261→0（且 IDB 被写成 0）；修复后 reload 后 shortage 稳定 8261、overviewDate 自动定位 2026-09-02、KPI 正常。// v178: 数据源更新——8 月订单补入 8/31（8/29 亦有补录与修订）。data-2026-08.xlsx 订单明细 23,384 → 24,114 行，日期覆盖 08-01~08-31（原止于 08-29）。9 月 data.json 未动（用户要求）。影响实测：orderDetail 237,026 → 237,756 行；8 月有效 SKU 214 → 215，8 月 P75 0.556 → 0.558、P90 0.689 → 0.683；长期画像默认口径 15/23/5/129/271 不变（「是否进入当月 P75」判的是 9 月，9 月数据未动）；强制回退到 8 月口径下 顽固 13→13、反复 21→21、新发 7 → 8、已缓解 140 → 139、偶发 262→262（合计 443 不变，1 个 SKU 因 8/31 新增缺货进入 8 月 P75，由已缓解转新发）。注：新文件不是纯追加——8/29 有 793 行发生修订（主要是「总履约排单支数」由 0 补登为实际数、「总履约缺口」相应清零），另有 9 个历史日合计 -61 行，属 SAP 月末重抽数，看板口径按首日缺货量计算，不受影响。// v177: 修复 v176 在「月初前几天」数据下长期画像全判成「已缓解」的问题。根因：buildLongTermProfile 用 MS_PROFILE.MIN_DAYS=4 过滤各月有效 SKU，月度清单要这个门槛防「下 1 次缺了就是 100%」的统计噪声；但长期画像只看相对分位，过严会让月初几天全月 SKU 不达标 → 该月 P75 为空 → r.inCurP75 全 false → 历史 P75 过的 SKU 全部误判成「已缓解」。9 月只有 1-2 天数据时 100% 触发（顽固/反复/新发 全 0，已缓解 174）。修：① LT_PARAMS.LT_MIN_DAYS=1（长期画像只看分位，放宽到 1 天即可，9 月实际拿到 71 个有效 SKU）；② LT_PARAMS.MIN_VALID_CNT_MONTH=30，「本月 P75」判定时如果 curMonth validCnt<30 自动回退到上一个样本充足的月份（防月初 P75 极低导致单 SKU 误进顽固）；③ 新增 effectiveCurMonth 字段返回给 UI，tooltip 和口径说明里如实标注「数据不足，已回退到 X 月」。实测（真实 9 月数据 2026-09-01~02）：默认 → 顽固 15/反复 23/新发 5/已缓解 129/偶发 271（之前是 0/0/0/174/179）；强制回退（MIN_VALID_CNT_MONTH=100 模拟更深月初）→ 顽固 13/反复 18/新发 7/已缓解 132/偶发 273——与 v176 上线时 1-8 月数据 13/15/14/128/183 一致，回退逻辑正确。⚠️ 注意：这组数字测于「1-4 月 json 重生成」之前；1-4 月重生成后同口径基线变为 13/21/7/140/262（见 v178），跨版本对比时别拿这两组数字直接相减。// v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
+const DB_VERSION = 180; // v180: 数据源更新——9 月订单补入 09-03（当天新文件 9月RDC订单满足汇总.xlsx）。data.xlsx 订单明细日期覆盖 09-01~09-03（原止于 09-02）：09-01 704 行不变、09-02 1305→1300（−5 行）、09-03 新增 601 行；缺货汇总 122→191 行；未放行订单 157→461 行（切片日期 09-03→09-04，属存量快照增长）；其他订单 621→18 行（见下方警示）。1~8 月数据与 json 全部未动（manifest 里除 data.json 外 11 个文件哈希保持原值）。实测影响：orderDetail 237,756→238,352 行；shortage 8,261→8,330 行（+69，全部来自 9 月 120→189）；overviewDate 自动定位 2026-09-02→2026-09-03；总览最新日 KPI 缺货总金额 ¥179,048→¥256,332、缺货总箱数 3,079→4,552、在途总箱数 5,660→11,273、涉及 RDC 5 个不变。长期画像：9 月 validCnt 71→80、9 月 P75 0.381→0.426、P90 0.790→0.738；默认口径（判定「本月是否在 P75」用 9 月）顽固 15→16、反复 23→24、新发 5→7、已缓解 129→127、偶发 271→269（合计 443 不变）；强制回退到 8 月口径 13/21/8/139/262 → 14/20/8/139/262。A/B 方法同 v178（git show HEAD:data.json 导出旧 9 月 json，同一份代码跑两遍）。⚠️ 两点已知、未擅自改动：①新源文件的 sheet 名为「装运条件」（旧为「装运条件定义」）——HTML 用 indexOf('装运条件') 模糊匹配故能命中，但 generate_data_json.mjs 是精确匹配 '装运条件定义'，会走「从历史月 json 回填」分支，导致 data.json 里同时存在「装运条件」(自带 7 行)与「装运条件定义」(回填 7 行)两个内容相同的 sheet，HTML 取前者，功能正确但有冗余；②9 月 validCnt 虽从 71 升到 80，仍远低于 8 月的 215，9 月 P75(0.426) 因此明显低于 8 月(0.558) —— 这是月初样本不足的固有现象（v177 的 MIN_VALID_CNT_MONTH=30 回退机制因 80>30 未触发），随 9 月数据累积会自然收敛，不建议为此调参。// v179: 修复「首次加载有数据、F5 刷新后主仪表盘全空」的 IDB 缓存 Bug。根因：saveToIDB 写了 shortage 字段，但 loadFromIDB 的恢复段漏了 dataStore.shortage（只恢复了 overall/dailyDetail/bizDemand/orderDetail/customerFulfill/transship/inventoryTurnover/inventory/history 九项）。后果：①全量加载后 shortage=8261 正常；②F5 走 IDB 缓存路径时 shortage 停在初始 [] → 概览 4 个 KPI（缺货总金额/缺货总箱数/在途总箱数/涉及RDC数）全 0、Top20 显示「暂无缺货数据」、dateLabel 退化成 'all'（ensureOverviewDate 因 getLatestShortageDate() 返回 null 而不更新 overviewDate）；③随后 saveToIDB 把 shortage=[] 写回 IDB，永久覆盖缓存里那 8261 行，此后每次刷新都好不了，只有等下次 manifest.generatedAt 变化触发 clearIDB 才恢复。修：①loadFromIDB 补 dataStore.shortage = req.result.shortage || [];；②IDB 健康检查新增 shMissing（shortage 非数组或长度为 0 即判残缺），让 v179 之前被写坏的存量缓存能自愈回退到全量重拉；③升 DB_VERSION 触发 onupgradeneeded 清空旧缓存，保证所有在线用户一次到位。Playwright 实测：修复前 reload 后 shortage 8261→0（且 IDB 被写成 0）；修复后 reload 后 shortage 稳定 8261、overviewDate 自动定位 2026-09-02、KPI 正常。// v178: 数据源更新——8 月订单补入 8/31（8/29 亦有补录与修订）。data-2026-08.xlsx 订单明细 23,384 → 24,114 行，日期覆盖 08-01~08-31（原止于 08-29）。9 月 data.json 未动（用户要求）。影响实测：orderDetail 237,026 → 237,756 行；8 月有效 SKU 214 → 215，8 月 P75 0.556 → 0.558、P90 0.689 → 0.683；长期画像默认口径 15/23/5/129/271 不变（「是否进入当月 P75」判的是 9 月，9 月数据未动）；强制回退到 8 月口径下 顽固 13→13、反复 21→21、新发 7 → 8、已缓解 140 → 139、偶发 262→262（合计 443 不变，1 个 SKU 因 8/31 新增缺货进入 8 月 P75，由已缓解转新发）。注：新文件不是纯追加——8/29 有 793 行发生修订（主要是「总履约排单支数」由 0 补登为实际数、「总履约缺口」相应清零），另有 9 个历史日合计 -61 行，属 SAP 月末重抽数，看板口径按首日缺货量计算，不受影响。// v177: 修复 v176 在「月初前几天」数据下长期画像全判成「已缓解」的问题。根因：buildLongTermProfile 用 MS_PROFILE.MIN_DAYS=4 过滤各月有效 SKU，月度清单要这个门槛防「下 1 次缺了就是 100%」的统计噪声；但长期画像只看相对分位，过严会让月初几天全月 SKU 不达标 → 该月 P75 为空 → r.inCurP75 全 false → 历史 P75 过的 SKU 全部误判成「已缓解」。9 月只有 1-2 天数据时 100% 触发（顽固/反复/新发 全 0，已缓解 174）。修：① LT_PARAMS.LT_MIN_DAYS=1（长期画像只看分位，放宽到 1 天即可，9 月实际拿到 71 个有效 SKU）；② LT_PARAMS.MIN_VALID_CNT_MONTH=30，「本月 P75」判定时如果 curMonth validCnt<30 自动回退到上一个样本充足的月份（防月初 P75 极低导致单 SKU 误进顽固）；③ 新增 effectiveCurMonth 字段返回给 UI，tooltip 和口径说明里如实标注「数据不足，已回退到 X 月」。实测（真实 9 月数据 2026-09-01~02）：默认 → 顽固 15/反复 23/新发 5/已缓解 129/偶发 271（之前是 0/0/0/174/179）；强制回退（MIN_VALID_CNT_MONTH=100 模拟更深月初）→ 顽固 13/反复 18/新发 7/已缓解 132/偶发 273——与 v176 上线时 1-8 月数据 13/15/14/128/183 一致，回退逻辑正确。⚠️ 注意：这组数字测于「1-4 月 json 重生成」之前；1-4 月重生成后同口径基线变为 13/21/7/140/262（见 v178），跨版本对比时别拿这两组数字直接相减。// v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
   //   → 用户反馈「华中 缺 360 支率 100% 频 53%」等小 SKU 直接入选（截图 P75=0.61 但 sev=0.33~0.59 全部 < 0.61）
@@ -867,19 +378,6 @@ async function saveToIDB() {
       shortageReasons: window._shortageReasons || {},
       replStatus: window._replStatus || {},
       boxSpecMap: window._boxSpec || {},
-      // v181: 补 otherOrders / unreleasedOrders / shipCondRdcMap。
-      //   与 v179 的 shortage 是同一类 Bug 的另一面——v179 是「写了不读」，这三个是
-      //   「既不写也不读」，所以 reload 走 IDB 缓存路径后必为空，且永远自愈不了。
-      //   影响面（均在缓存命中路径下表现出来）：
-      //     otherOrders      → 订单数据洞察页的 免费单 / 特殊价格（renderOrderInsight）
-      //     unreleasedOrders → 分仓计划监控的 未放行订单（renderPlanMonitor）
-      //     shipCondRdcMap   → 未放行订单的 RDC 反查（装运条件码 → RDC）
-      otherOrders: dataStore.otherOrders || [],
-      unreleasedOrders: dataStore.unreleasedOrders || [],
-      shipCondRdcMap: dataStore.shipCondRdcMap || {},
-      // v186: 补货调整记录进 IDB（与 v181 三个字段同款对称要求：只写不读=缓存路径下恒空）。
-      //   可能合法为空（记录表未部署/尚未生成 adjustments.json），故健康检查**不**校验它。
-      adjustRecords: dataStore.adjustRecords || [],
       // v111.2: 写入 DB_VERSION，让 loadFromIDB 能识别缓存与代码不一致（之前没存导致任何升级都吃 IDB 旧数据 → "暂无数据"）
       dbVersion: DB_VERSION,
       updatedAt: new Date().toISOString()
@@ -927,31 +425,15 @@ async function loadFromIDB() {
           //       只加恢复行救不了存量坏缓存，必须让健康检查把它判为残缺、回退到全量重拉。
           const shCache = req.result.shortage || [];
           const shMissing = !Array.isArray(shCache) || shCache.length === 0;
-          // v181: shipCondRdcMap 是 SAP 静态编码表（20东北/50华南/60西北/70华中/80西南/90华北），
-          //   恒有 6 个键，为空即缓存残缺（v181 之前的缓存压根没存这个字段）→ 回退全量重拉。
-          //   ⚠️ 只对这个静态表加判据：otherOrders / unreleasedOrders **可能合法为空**
-          //   （某些月份确实没有免费单/未放行订单，如 9 月当月其他订单仅 18 行），
-          //   按长度判会误伤，导致每次刷新都被迫全量加载（17~20s）。
-          const scCache = req.result.shipCondRdcMap || {};
-          const scMissing = (typeof scCache !== 'object') || scCache === null || Object.keys(scCache).length === 0;
-          if (invMissing || ordMissing || shMissing || scMissing) {
-            // v190: 区分「断点中间态」与「写坏缓存」。v189.1 断点续传下，data.json 先落（shortage/
-            //   orderDetail/shipCond 都已就位）、inventory.json 最后到——中途关页面会留下 cov7 缺、
-            //   其余齐全的部分缓存。这正是要续传的中间态：放行 → 后台 refreshFromManifest 按哈希
-            //   比对只补缺的文件；判残缺清空 = 断点续传失效（每次打开都全量重拉的死循环）。
-            //   写坏缓存（v179/v181 场景：shortage=[] 或 shipCond={} 被 bug 覆写）仍保持清空自愈。
-            const partialResume = !shMissing && !scMissing && !ordMissing; // 主数据都在，仅缺库存 = 中断中间态
-            if (!partialResume) {
-              console.warn('[loadFromIDB] IDB 缓存关键字段缺失 (cov7=' + (inv && inv.cov7 ? inv.cov7.length : 0) + ', orderDetail=' + ord.length + ', shortage=' + shCache.length + ', shipCond=' + Object.keys(scCache).length + ')，自动清空回退');
-              try {
-                const tx2 = db.transaction(STORE_NAME, 'readwrite');
-                tx2.objectStore(STORE_NAME).delete('current_data');
-              } catch(e) {}
-              try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
-              resolve(false);
-              return;
-            }
-            console.warn('[loadFromIDB] 部分缓存（断点中间态 cov7 缺失），放行恢复，后台自动补拉缺失文件');
+          if (invMissing || ordMissing || shMissing) {
+            console.warn('[loadFromIDB] IDB 缓存关键字段缺失 (cov7=' + (inv && inv.cov7 ? inv.cov7.length : 0) + ', orderDetail=' + ord.length + ', shortage=' + shCache.length + ')，自动清空回退');
+            try {
+              const tx2 = db.transaction(STORE_NAME, 'readwrite');
+              tx2.objectStore(STORE_NAME).delete('current_data');
+            } catch(e) {}
+            try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
+            resolve(false);
+            return;
           }
           // v179 修复：缺货汇总（dataStore.shortage）此前「只写不读」——saveToIDB 存了，loadFromIDB 漏了。
           // 后果链：首次加载（manifest 变化触发全量拉 json）shortage=8261 → 一切正常；
@@ -969,14 +451,6 @@ async function loadFromIDB() {
           dataStore.inventoryTurnover = req.result.inventoryTurnover || null;
           dataStore.inventory = req.result.inventory || null;
           dataStore.history = req.result.history || null;
-          // v181: 恢复 otherOrders / unreleasedOrders / shipCondRdcMap（与上方 saveToIDB 成对）。
-          //   缺了这三行，缓存命中路径下订单洞察页的免费单/特殊价格、分仓计划监控的未放行订单
-          //   会一直是空的，且因为 saveToIDB 随后又把空值写回，永远自愈不了。
-          dataStore.otherOrders = req.result.otherOrders || [];
-          dataStore.unreleasedOrders = req.result.unreleasedOrders || [];
-          dataStore.shipCondRdcMap = req.result.shipCondRdcMap || {};
-          // v186: 恢复补货调整记录（与上方 saveToIDB 成对；可能合法为空）
-          dataStore.adjustRecords = req.result.adjustRecords || [];
           window._shortageReasons = req.result.shortageReasons || {};
           // 尝试从localStorage恢复缺货原因（作为IndexedDB的补充备份）
           if (Object.keys(window._shortageReasons).length === 0) {
@@ -1776,33 +1250,10 @@ function handleLogin() {
     localStorage.setItem(AUTH_KEY, 'true');
     document.getElementById('login-page').style.display = 'none';
     document.getElementById('app-layout').classList.add('active');
-    // v188: 首次登录改走 bootLoad（manifest JSON 快速流程，xlsx 全 404 的线上唯一可用路径；
-    // 本地无 manifest 时 bootLoad 内部自动回退 autoLoadData，行为与旧版一致）。
-    // 旧写法直接 autoLoadData：线上 xlsx 全 404 → loaded 永远 false →「请先导入数据」空状态
-    // （用户 2026-09-04 22:12 反馈）。下方 adjustments.json 补拉保留但去重（bootLoad 的
-    // applyPreparsed 已含 adjustments.json，这里只在 bootLoad 不可用时兜底）。
-    if (typeof window._bootLoad === 'function') {
-      window._bootLoad().then(function(loaded) {
-        window._bootLoading = false;
-        navigateTo('overview');
-        renderAll();
-      });
-    } else {
-      autoLoadData().then(loaded => {
-        navigateTo('overview');
-        renderAll();
-      });
-    }
-    // v186: 首次登录路径补加载补货调整记录。init 里的 bootLoad（manifest JSON 快速流程，含
-    // adjustments.json）整体包在 if (isAuthenticated) 里，只有带登录态刷新才会走；首次登录走
-    // 上面的 autoLoadData（纯 xlsx），不会碰 adjustments.json → 补货调整跟踪页会一直空。
-    // 这里异步补拉小文件（~90KB），不阻塞登录；失败静默（页面本身有空态引导）。
-    fetch('./adjustments.json', { cache: 'no-cache' }).then(function(r) { return r.ok ? r.json() : null; }).then(function(j) {
-      if (j && j.adjust && j.adjust.length) {
-        dataStore.adjustRecords = j.adjust;
-        if (currentPage === 'adjust-track') renderAdjustTrack();
-      }
-    }).catch(function() {});
+    autoLoadData().then(loaded => {
+      navigateTo('overview');
+      renderAll();
+    });
   } else {
     errEl.textContent = '用户名或密码错误';
     errEl.style.color = '#EF4444';
@@ -1829,11 +1280,6 @@ function initChart(id) {
 
 function renderPage(page) {
   if (!dataStore.loaded && page !== 'data') {
-    // v188: 区分「首拉加载中」与「真的没数据」——bootLoad 全量拉取 17~25s 期间别让用户误以为要手工导 Excel
-    if (window._bootLoading) {
-      document.getElementById('page-' + page).innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite">⏳</div><div style="font-size:var(--font-size-lg)">数据加载中…</div><div style="font-size:12px;margin-top:8px">首次打开 / 新版本部署后需全量拉取（约 20 秒），之后自动走本地缓存秒开</div></div>';
-      return;
-    }
     document.getElementById('page-' + page).innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📊</div><div style="font-size:var(--font-size-lg)">请先导入数据</div><div style="font-size:12px;margin-top:8px">前往 <a href="javascript:navigateTo(\'data\')" style="color:var(--color-blue)">数据管理</a> 页面导入Excel文件</div></div>';
     return;
   }
@@ -1856,7 +1302,6 @@ function renderPage(page) {
       case 'slow-moving-logic': renderSlowMovingLogic(); break;
       case 'biz-demand': renderBizDemandCombined(); break;
       case 'plan-monitor': renderPlanMonitor(); break;
-      case 'adjust-track': renderAdjustTrack(); break;
       case 'biz-demand-detail': renderBizDemandDetail(); break;
       case 'biz-demand-dacr': renderBizDemandDACR(); break;
       case 'data': renderDataPage(); break;
@@ -4875,25 +4320,6 @@ window.getRollingShortageProfile = getRollingShortageProfile;
 function buildMonthlyDCSupplyProfile() {
   var byKey = {};  // '月|sku' -> { dcShortDays: Set, dcSupplyLatest, dcStockLatest, dcBadDays, totalDays }
   var src = dataStore.shortage || [];
-  // 先扫一遍取 maxDs（rolling30 索引要用）
-  var windowMax = '';
-  for (var i = 0; i < src.length; i++) {
-    var d0 = src[i];
-    if (d0 && d0.dateStr && d0.dateStr > windowMax) windowMax = d0.dateStr;
-  }
-  var windowMin = '';
-  if (windowMax) {
-    // 30 天窗口：windowMin = maxDs - 29 天（YYYY-MM-DD 字符串可直接减）
-    var y = parseInt(windowMax.slice(0, 4), 10);
-    var m = parseInt(windowMax.slice(5, 7), 10) - 1;
-    var day = parseInt(windowMax.slice(8, 10), 10);
-    var dt = new Date(y, m, day - 29);
-    windowMin = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
-  }
-  // === v185 同时建 rolling30 索引：让 renderShortage 在「近 30 天」模式下也能查到 dcs ===
-  //   旧实现 dcsProf.byKey 永远只有 'YYYY-MM|sku' 这类键；period='rolling30' 时查不到 → 全显「—」。
-  //   修法：遍历 shortage 时如果日期落在 [windowMin, windowMax] 范围内，再聚合成 byKey['rolling30|sku']。
-  var rollByKey = {};
   for (var i = 0; i < src.length; i++) {
     var d = src[i];
     if (!d || !d.dateStr || !d.materialCode) continue;
@@ -4913,21 +4339,6 @@ function buildMonthlyDCSupplyProfile() {
       v.dcSupplyLatest = sup || '正常';
       v.dcStockLatest = d.dcStock || 0;
     }
-    // rolling30 窗口聚合（v185）
-    if (windowMin && d.dateStr >= windowMin && d.dateStr <= windowMax) {
-      var rk = 'rolling30|' + d.materialCode;
-      if (!rollByKey[rk]) rollByKey[rk] = { sku: d.materialCode, dcShortDays: new Set(), dcBadDays: new Set(), dcSupplyLatest: '', dcStockLatest: 0, lastDate: '' };
-      var rv = rollByKey[rk];
-      if (sup.indexOf('整体缺货') >= 0 || sup.indexOf('供应紧张') >= 0) {
-        rv.dcShortDays.add(d.dateStr);
-        rv.dcBadDays.add(d.dateStr);
-      }
-      if (!rv.lastDate || d.dateStr > rv.lastDate) {
-        rv.lastDate = d.dateStr;
-        rv.dcSupplyLatest = sup || '正常';
-        rv.dcStockLatest = d.dcStock || 0;
-      }
-    }
   }
   // 转 Set 为 cnt
   var byKey2 = {};
@@ -4937,12 +4348,6 @@ function buildMonthlyDCSupplyProfile() {
     q.dcShortDayCnt = q.dcShortDays.size;
     q.dcBadDayCnt = q.dcBadDays.size;
     byKey2[kk] = { month: q.month, sku: q.sku, dcShortDayCnt: q.dcShortDayCnt, dcBadDayCnt: q.dcBadDayCnt, dcSupplyLatest: q.dcSupplyLatest, dcStockLatest: q.dcStockLatest };
-  }
-  // rolling30 索引同样转 cnt（v185）
-  for (var rkk in rollByKey) {
-    if (!Object.prototype.hasOwnProperty.call(rollByKey, rkk)) continue;
-    var rq = rollByKey[rkk];
-    byKey2[rkk] = { sku: rq.sku, dcShortDayCnt: rq.dcShortDays.size, dcBadDayCnt: rq.dcBadDays.size, dcSupplyLatest: rq.dcSupplyLatest, dcStockLatest: rq.dcStockLatest };
   }
   return { byKey: byKey2 };
 }
@@ -5212,25 +4617,17 @@ function renderShortageMonthly() {
     return;
   }
 
-  // v192: 取消「近 30 天」窗口模式，完全按月筛选（用户 9/4）——
-  //   ① 每月销售特点不同，月底关账前有冲业绩动作，近 30 天滚动窗口可能跨两次关账 → 数据失真；
-  //   ② 高严重跟进清单含「月度销售进度」列，与近 30 天口径无法匹配。
-  const mode = 'monthly';
-  const prof = getMonthlyShortageProfile();
+  // v145 数据窗口 mode：'rolling30'(默认) | 'monthly'
+  const mode = window._msWindowMode || 'rolling30';
+  const prof = mode === 'rolling30' ? getRollingShortageProfile() : getMonthlyShortageProfile();
   // v176: 长期画像（SKU 层跨月），供清单「长期标记」列使用。
   //      判定在 SKU 层，所以同一 SKU 的各 RDC 行显示相同标记——不会因为拆 RDC 把
   //      「一个长期问题 SKU」稀释成 6 个互不相干的仓。
   const ltProf = getLongTermProfile();
   const ltTierOf = sku => (ltProf.bySku[sku] && ltProf.bySku[sku].tier) || 'none';
-  // v183: 月份筛选（按月模式下，local 不影响全局 filters.dataMonth）
-  //      默认 'auto' = 跟随 _latestMonth，可手动下拉切换到任一有数据的月份
-  const msMonthAvail = Object.keys(prof.monthWorkdays || {}).sort().reverse(); // YYYY-MM 降序
-  if (!window._msMonth) window._msMonth = 'auto';
-  if (window._msMonth !== 'auto' && msMonthAvail.indexOf(window._msMonth) === -1) window._msMonth = 'auto';
-  const _msMonth = window._msMonth;
   const period = mode === 'rolling30'
     ? 'rolling30'
-    : (_msMonth !== 'auto' ? _msMonth : (window._latestMonth || ''));
+    : (filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (window._latestMonth || ''));
   const all = prof.list.filter(p => !period || p.period === period || p.month === period);
   const wd = (mode === 'rolling30')
     ? (prof.periodWorkdays && prof.periodWorkdays.rolling30) || 0
@@ -5449,13 +4846,10 @@ function renderShortageMonthly() {
 
   page.innerHTML = `
     <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:8px">
-      <span style="font-size:12px;color:var(--text-secondary)">${period || '全部月份'} · 已剔除双休日${wd ? '（有效工作日 ' + wd + ' 天）' : ''} · 基于订单明细按 SKU×RDC 聚合</span>
-      <div style="margin-left:auto;display:flex;gap:4px;align-items:center;flex-wrap:wrap">
-        <label style="font-size:11px;color:var(--text-secondary);margin-left:4px">月份：
-          <select onchange="window._msMonth=this.value;renderShortage()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:11px;background:#fff;cursor:pointer;min-width:96px">
-            ${msMonthAvail.map(function(m){ return '<option value="'+m+'"'+(_msMonth===m?' selected':'')+'>'+m+'</option>'; }).join('')}
-          </select>
-        </label>
+      <span style="font-size:12px;color:var(--text-secondary)">${mode === 'rolling30' ? '近 30 天（滚动窗口 ' + (prof.maxDs || '') + ' 向后 30 天）' : (period || '全部月份')} · 已剔除双休日${wd ? '（有效工作日 ' + wd + ' 天）' : ''} · 基于订单明细按 SKU×RDC 聚合</span>
+      <div style="margin-left:auto;display:flex;gap:4px">
+        <button class="btn-export" style="font-size:11px;padding:3px 12px;${mode==='rolling30'?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':''}" onclick="window._msWindowMode='rolling30';renderShortage()">📅 近 30 天（最新）</button>
+        <button class="btn-export" style="font-size:11px;padding:3px 12px;${mode==='monthly'?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':''}" onclick="window._msWindowMode='monthly';renderShortage()">📊 按月</button>
       </div>
     </div>
     ${shortageTabBarHtml('monthly')}
@@ -5487,7 +4881,7 @@ function renderShortageMonthly() {
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--text-primary)">${wd || '—'}</div><div style="font-size:11px;color:var(--text-secondary)">有效工作日</div></div>
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-orange)">${formatNum(withShort.length)}</div><div style="font-size:11px;color:var(--text-secondary)">有首日缺货的 SKU×RDC</div></div>
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-red)">${formatNum(hi.length)}</div><div style="font-size:11px;color:var(--text-secondary)">严重度高 · 重点跟进</div></div>
-      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-blue)">${(monthMr * 100).toFixed(1)}%</div><div style="font-size:11px;color:var(--text-secondary)">月度首日缺货率（整体）</div></div>
+      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-blue)">${(monthMr * 100).toFixed(1)}%</div><div style="font-size:11px;color:var(--text-secondary)">${mode === 'rolling30' ? '30 天' : '月度'}首日缺货率（整体）</div></div>
     </div>
 
     <!-- v144-1：四象限「率」「频」含义文字解释段（红框位置：KPI 卡与 row-2 之间） -->
@@ -5666,12 +5060,10 @@ function renderShortageMonthly() {
             <th style="text-align:left" title="缺货报告（shortage）最新一日的 dcSupply 字段——总仓是否正常供应">总仓供应</th>
             <th style="text-align:right" title="当月缺货报告里 dcSupply 含「整体缺货」或「供应紧张」的天数">总仓异常天数</th>
             <th style="text-align:center" title="总仓异常天数 vs SKU×RDC 缺货天数对比——判定是总仓卡死还是 RDC 内部问题">补货瓶颈</th>
-            <th style="text-align:left" title="销售进度（v185，目标月 ${window._planSkuAggMonth || '—'}）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;订单量 = 已放行 + 未放行（订单号去重）；计划量 = 库存覆盖表当月计划字段；完成率重新计算。&#10;状态按聚合后的完成率判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;显示「—」= 该 SKU 在目标月无计划量 / 已按促销装或新品期剔除。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
           </tr></thead>
           <tbody>
             ${pageData.length > 0 ? (function(){
               var dcsProf = getMonthlyDCSupplyProfile();
-              var skuAgg = buildPlanSkuAgg(); // v185: 销售进度（与长期清单同口径、顺序无关）
               return pageData.map(function(p){
                 var dcs = dcsProf.byKey[period + '|' + p.sku] || null;
                 var bn = judgeBottleneck(p, dcs);
@@ -5681,18 +5073,6 @@ function renderShortageMonthly() {
                 var dcsDaysHtml = !dcs ? '<span style="color:#CBD5E1">—</span>' :
                   '<span style="color:' + (dcs.dcShortDayCnt >= p.shortDayCnt ? 'var(--color-red)' : '#92400E') + ';font-weight:600">' + dcs.dcShortDayCnt + '</span>' +
                   '<span style="font-size:10px;color:var(--text-secondary)"> / ' + p.shortDayCnt + '</span>';
-                // v185: 销售进度单元格
-                var sp = skuAgg[p.sku];
-                var spHtml;
-                if (!sp || sp.plan <= 0) {
-                  spHtml = '<span style="color:#CBD5E1">—</span>';
-                } else {
-                  var stClr = sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706');
-                  var stBg = sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB');
-                  spHtml = '<div style="font-size:11px;color:var(--text-secondary)">订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() + '</div>' +
-                    '<div style="font-size:11px;color:' + stClr + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
-                    '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + stBg + ';color:' + stClr + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>';
-                }
                 return '<tr>' +
                   '<td style="text-align:left">' + p.brand + '</td>' +
                   '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
@@ -5710,10 +5090,9 @@ function renderShortageMonthly() {
                   '<td style="text-align:left">' + dcsTagHtml + '</td>' +
                   '<td style="text-align:right">' + dcsDaysHtml + '</td>' +
                   '<td style="text-align:center"><span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:' + bn.bg + ';color:' + bn.color + ';white-space:nowrap" title="判定：' + bn.label + '">' + bn.label + '</span></td>' +
-                  '<td style="text-align:left;min-width:120px;line-height:1.4">' + spHtml + '</td>' +
                   '</tr>';
               }).join('');
-            })() : '<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「严重度高」的 SKU×RDC 组合</td></tr>'}
+            })() : '<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--text-secondary)">当前月份无「严重度高」的 SKU×RDC 组合</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -5840,11 +5219,6 @@ function renderShortageLongTerm() {
   const curMonth = lt.curMonth;
   const counts = lt.counts || {};
 
-  // v184: 改为调用 buildPlanSkuAgg() 自建（v183 读 window._planMonitorRows 会因
-  //   未先访问分仓计划监控而为空 → 整列显示「—」；且旧逻辑按逐 RDC 计数取最严重判状态，
-  //   会出现「223.8% 却标滞后」的自相矛盾）。现在与分仓计划监控口径一致且顺序无关。
-  const _skuAgg = buildPlanSkuAgg();
-
   const filterTier = window._ltFilterTier || 'all';
   const filterBrand = window._ltFilterBrand || 'all';
   const brandOptions = ['all'].concat([...new Set(lt.list.map(p => p.brand).filter(Boolean))].sort());
@@ -5910,25 +5284,6 @@ function renderShortageLongTerm() {
   const rowHtml = pageData.map(function(p) {
     const t = LT_TIER[p.tier] || LT_TIER.none;
     const scc = skuSupplyChainCat(p.sku);
-    // v184: 销售进度（buildPlanSkuAgg 自建，与分仓计划监控同口径、顺序无关；无计划数据显示 —）
-    const sp = _skuAgg[p.sku];
-    const spHas = !!(sp && sp.plan > 0);
-    const statColor = !spHas ? '#CBD5E1' : (sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706'));
-    const statBg = !spHas ? 'transparent' : (sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB'));
-    const spTip = !spHas
-      ? ('销售进度：该 SKU 在库存覆盖表（' + (window._planSkuAggMonth || '') + '）中当月计划量为 0，' +
-         '或已被按「促销装/新品期」剔除，故无销售进度。可在「分仓计划监控」切换目标月后回看。')
-      : ('销售进度（' + (window._planSkuAggMonth || '') + '）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;' +
-         '订单量 = 已放行订单 + 未放行订单（订单号去重），仅统计目标月；&#10;' +
-         '计划量 = 库存覆盖表的当月计划字段；&#10;' +
-         '完成率 = 订单量 ÷ 计划量（按聚合值重算，不是逐 RDC 均值）；&#10;' +
-         '状态按【聚合后的完成率】判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;' +
-         '聚合自 ' + (sp.rdcCnt || 0) + ' 个有计划量的 RDC。');
-    const spCell = !spHas
-      ? '<span style="color:#CBD5E1">—</span>'
-      : ('订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() +
-         '<div style="font-size:11px;color:' + statColor + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
-         '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + statBg + ';color:' + statColor + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>');
     return '<tr>' +
       '<td style="text-align:left">' + (p.brand || '') + '</td>' +
       '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
@@ -5943,7 +5298,6 @@ function renderShortageLongTerm() {
       '<td style="text-align:right" title="有效月里同时缺货的最大 RDC 数">' + p.rdcCntMax + '</td>' +
       '<td style="text-align:right;color:var(--color-red)">' + (p.curMr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right" title="从最新月往前连续在当月 P75 的月数">' + (p.curStreak || 0) + '</td>' +
-      '<td style="text-align:left;min-width:120px;line-height:1.4" title="' + spTip + '">' + spCell + '</td>' +
       '</tr>';
   }).join('');
 
@@ -6038,10 +5392,9 @@ function renderShortageLongTerm() {
             <th style="text-align:right" title="有效月里同时缺货的最大 RDC 数">涉及RDC</th>
             <th style="text-align:right;color:var(--color-red)" title="${curMonth} 的首日缺货率">当月缺货率</th>
             <th style="text-align:right" title="从最新月往前连续在当月 P75 的月数">当前连续</th>
-            <th style="text-align:left" title="销售进度（目标月 ${window._planSkuAggMonth || '—'}，随「分仓计划监控」的目标月联动）：&#10;同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致——订单量＝已放行＋未放行（订单号去重），计划量＝库存覆盖表当月计划字段。&#10;状态按聚合后的完成率判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;显示「—」＝该 SKU 在目标月无计划量，或已按促销装/新品期剔除（可在分仓计划监控切换目标月后再看）。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
           </tr></thead>
           <tbody>
-            ${pageData.length > 0 ? rowHtml : '<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
+            ${pageData.length > 0 ? rowHtml : '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -6078,25 +5431,15 @@ function exportLongTermCSV() {
     return v;
   }
   const head = ['品牌', 'SKU编码', 'SKU名称', '供应链品类', '长期标记', '收缩值', '有效月数', 'LSI',
-    '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续',
-    // v184: 销售进度（自建聚合，与表体同源同口径）；列头带目标月，避免读者不知道这是哪个月的进度
-    '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态', '销售进度_目标月']
+    '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续']
     .concat(months.map(m => m + ' 百分位'))
     .concat(months.map(m => m + ' 严重度'));
-  // 🔴 v184 修：_skuAgg 曾是 renderLongTerm 的局部 const，本函数（顶层）访问不到 →
-  //    ReferenceError: _skuAgg is not defined（与 v175 的 SEV_HIGH 是同一类坑）。
-  //    改为本函数内自建，与表体口径一致且不依赖调用顺序。
-  const _skuAgg = buildPlanSkuAgg();
   const rows = list.map(function(p) {
-    // v184: 销售进度取值（保持与表体同源；无计划量时空字符串，避免误导）
-    const sp = _skuAgg && _skuAgg[p.sku] && _skuAgg[p.sku].plan > 0 ? _skuAgg[p.sku] : null;
     return [
       esc(p.brand), esc(p.sku), esc(p.name), esc(skuSupplyChainCat(p.sku)),
       esc((LT_TIER[p.tier] || LT_TIER.none).label),
       p.shrunkPct.toFixed(4), p.nM, p.lsi.toFixed(4),
-      p.totalShort, p.rdcCntMax, (p.curMr * 100).toFixed(1), p.curStreak || 0,
-      sp ? sp.shipped : '', sp ? sp.plan : '', sp ? (sp.comp * 100).toFixed(1) : '', sp ? sp.status : '',
-      sp ? (window._planSkuAggMonth || '') : ''
+      p.totalShort, p.rdcCntMax, (p.curMr * 100).toFixed(1), p.curStreak || 0
     ].concat(months.map(function(m) {
       return p.m[m] ? (p.m[m].pct * 100).toFixed(1) : '';
     })).concat(months.map(function(m) {
@@ -6121,9 +5464,11 @@ function exportShortageFocusListCSV() {
     showToast('当前筛选下无数据可导出', true);
     return;
   }
-  // v192: 取消近 30 天模式，清单完全按月——与「月度销售进度」列口径对齐
-  const period = window._msFocusPeriod || (window._latestMonth || '');
-  const periodLabel = period || '全部月份';
+  const mode = window._msFocusWindowMode || window._msWindowMode || 'rolling30';
+  const period = window._msFocusPeriod || (mode === 'rolling30' ? 'rolling30' : (window._latestMonth || ''));
+  const periodLabel = mode === 'rolling30'
+    ? '近30天'
+    : (period || '全部月份');
 
   // CSV 头部（与表头一一对应）
   const head = [
@@ -6132,9 +5477,7 @@ function exportShortageFocusListCSV() {
     '长期标记', '收缩长期百分位', '长期有效月数',
     '订单量', '首日缺货量', '首日缺货率(%)', '缺货天数', '有单天数', '缺货频率(%)',
     '严重度评分(0-1)', '严重度等级',
-    '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈',
-    // v185: 销售进度（与表体同源同口径；目标月 window._planSkuAggMonth）
-    '销售进度_目标月', '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态'
+    '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈'
   ];
 
   // 等级映射：与表内标签对齐（CSV 里同事无需再算）
@@ -6153,11 +5496,7 @@ function exportShortageFocusListCSV() {
     return v;
   }
 
-  // v185: 销售进度（与 buildPlanSkuAgg 同源；避免顶层函数引用 render 闭包的局部变量——v184 教训）
-  const skuAggExport = buildPlanSkuAgg();
-  const skuMonthExport = window._planSkuAggMonth || '';
   const rows = list.map(function(r){
-    const sp = skuAggExport[r.sku];
     return [
       esc(r.brand), esc(r.sku), esc(r.name), esc(r.scc), esc(r.rdc),
       esc((LT_TIER[r.tier] || LT_TIER.none).label),
@@ -6167,12 +5506,7 @@ function exportShortageFocusListCSV() {
       r.shortDayCnt, r.orderDayCnt,
       Math.round((r.sf || 0) * 100),
       (r.severity * 100).toFixed(1), severityLevel(r.severity),
-      esc(r.dcSupplyLatest), r.dcStockLatest || 0, r.dcShortDayCnt || 0, esc(r.bnLabel),
-      sp && sp.plan > 0 ? skuMonthExport : '',
-      sp && sp.plan > 0 ? sp.shipped : '',
-      sp && sp.plan > 0 ? sp.plan : '',
-      sp && sp.plan > 0 ? (sp.comp * 100).toFixed(1) : '',
-      sp && sp.plan > 0 ? sp.status : ''
+      esc(r.dcSupplyLatest), r.dcStockLatest || 0, r.dcShortDayCnt || 0, esc(r.bnLabel)
     ].join(',');
   });
 
@@ -6356,10 +5690,7 @@ function renderShortageOrderDetail() {
   }
 
   const data = dataStore.orderDetail;
-  // 月份筛选：local（仅本页）—— 不影响全局 filters.dataMonth，避免切到订单明细页时其他页跟着变
-  window._odMonth = window._odMonth || 'all';
-  const odMonth = window._odMonth;
-  const monthFilter = odMonth && odMonth !== 'all';
+  const monthFilter = filters.dataMonth && filters.dataMonth !== 'all';
 
   // ---- Filters ----
   window._odRdc = window._odRdc || 'all';
@@ -6375,12 +5706,10 @@ function renderShortageOrderDetail() {
 
   // Get all RDCs from orderDetail
   const allRdcs = [...new Set(data.map(d => d.warehouse).filter(Boolean))].sort();
-  // Get all months (YYYY-MM) from orderDetail.dateStr，筛选框选项按降序
-  const allMonths = [...new Set(data.map(d => d.dateStr && d.dateStr.slice(0, 7)).filter(Boolean))].sort().reverse();
 
   // Apply month+RDC+channel filters
   let filtered = data;
-  if (monthFilter) filtered = filtered.filter(d => d.dateStr && d.dateStr.startsWith(odMonth));
+  if (monthFilter) filtered = filtered.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth));
   if (odRdc !== 'all') filtered = filtered.filter(d => d.warehouse === odRdc);
   if (activeChannels.length > 0 && activeChannels.length < 2) {
     filtered = filtered.filter(d => activeChannels.includes(d.channel));
@@ -6473,35 +5802,34 @@ function renderShortageOrderDetail() {
   const startSku = (window._shortageSkuPage - 1) * perPage;
   const skuPageData = skuList.slice(startSku, startSku + perPage);
 
-  const monthLabel = monthFilter ? odMonth : '全部月份';
+  const monthLabel = monthFilter ? filters.dataMonth : '全部月份';
 
-  // 月份下拉样式：与 RDC/渠道保持一致，并明确 padding/border/fontSize 避免被裁掉
-  const selStyle = 'padding:4px 10px;border:1px solid var(--border-card);border-radius:4px;font-size:13px;background:#fff;color:var(--text-primary);min-width:120px;cursor:pointer';
-  const lblStyle = 'font-size:13px;color:var(--text-primary);font-weight:500;margin-right:2px';
-  const rdcFilterHtml = `<label>${'\u00a0'}</label>
-    <select onchange="window._odRdc=this.value;window._shortageSkuPage=1;renderShortage()" style="${selStyle}">
+  const rdcFilterHtml = `<label>RDC：</label>
+    <select onchange="window._odRdc=this.value;window._shortageSkuPage=1;renderShortage()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
       <option value="all" ${odRdc==='all'?'selected':''}>全部RDC</option>
       ${allRdcs.map(r => '<option value="'+r+'"'+(odRdc===r?' selected':'')+'>'+r+'</option>').join('')}
     </select>`;
-  const channelFilterHtml = `<label style="${lblStyle}">渠道：</label>
-    <label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:13px;cursor:pointer">
+  const channelFilterHtml = `<label>渠道：</label>
+    <label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:12px;cursor:pointer">
       <input type="checkbox" ${showKa?'checked':''} onchange="window._odChKa=this.checked;window._shortageSkuPage=1;renderShortage()"> KA
     </label>
-    <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;cursor:pointer">
+    <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;cursor:pointer">
       <input type="checkbox" ${showDealer?'checked':''} onchange="window._odChDealer=this.checked;window._shortageSkuPage=1;renderShortage()"> 经销商
     </label>`;
 
-  // v182 新增：月份下拉（local，置于汇总统计标题右侧最前位）
-  const monthFilterHtml = `<label style="${lblStyle}">月份：</label>
-    <select onchange="window._odMonth=this.value;window._shortageSkuPage=1;renderShortage()" style="${selStyle}">
-      <option value="all" ${odMonth==='all'?'selected':''}>全部月份</option>
-      ${allMonths.map(m => '<option value="'+m+'"'+(odMonth===m?' selected':'')+'>'+m+'</option>').join('')}
-    </select>`;
-
-  const summaryFilterHtml = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-      ${monthFilterHtml}
-      ${rdcFilterHtml}
-      ${channelFilterHtml}
+  const summaryFilterHtml = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-left:auto">
+      <label style="font-size:12px">RDC：</label>
+      <select onchange="window._odRdc=this.value;window._shortageSkuPage=1;renderShortage()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
+        <option value="all" ${odRdc==='all'?'selected':''}>全部RDC</option>
+        ${allRdcs.map(r => '<option value="'+r+'"'+(odRdc===r?' selected':'')+'>'+r+'</option>').join('')}
+      </select>
+      <label style="font-size:12px">渠道：</label>
+      <label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:12px;cursor:pointer">
+        <input type="checkbox" ${showKa?'checked':''} onchange="window._odChKa=this.checked;window._shortageSkuPage=1;renderShortage()"> KA
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;cursor:pointer">
+        <input type="checkbox" ${showDealer?'checked':''} onchange="window._odChDealer=this.checked;window._shortageSkuPage=1;renderShortage()"> 经销商
+      </label>
     </div>`;
 
   page.innerHTML = `
@@ -6515,7 +5843,7 @@ function renderShortageOrderDetail() {
 
     <!-- 表1: 汇总统计 + 图表 -->
     <div class="card" style="margin-bottom:12px">
-      <div class="card-header" style="display:flex;align-items:center;justify-content:flex-start;gap:14px;flex-wrap:wrap">
+      <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="card-title">汇总统计</span>
         ${summaryFilterHtml}
       </div>
@@ -9268,14 +8596,14 @@ function renderReplenishment() {
 
   // ==== DAILY SUGGESTIONS ====
   // v136: 月度缺货画像提到顶部供「每日建议紧急度升级/中期分仓置顶/安全库存SS系数」三处共享
-  // v164: 跟随「缺货四象限」页的窗口模式
+  // v164: 跟随「缺货四象限」页的窗口模式（window._msWindowMode，默认 rolling30）
   //   之前写死 getMonthlyShortageProfile()（月度），导致补货建议页的 P75/P90 阈值
-  //   与四象限页不同源 → 两页"严重度高/紧急"数字对不上（用户反复困惑的根源）
-  // v192: 四象限页已取消近 30 天模式（月底关账冲量致滚动窗口失真 + 与月度销售进度口径冲突），
-  //   本页随之固定为月度口径，两页继续同源
-  var _replMode = 'monthly';
-  var msProf = getMonthlyShortageProfile();
-  var msPeriod = (filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || '');
+  //   与四象限页(rolling30)不同源 → 两页"严重度高/紧急"数字对不上（用户反复困惑的根源）
+  var _replMode = window._msWindowMode || 'rolling30';
+  var msProf = _replMode === 'rolling30' ? getRollingShortageProfile() : getMonthlyShortageProfile();
+  var msPeriod = _replMode === 'rolling30'
+    ? 'rolling30'
+    : ((filters.dataMonth && filters.dataMonth !== 'all') ? filters.dataMonth : (window._latestMonth || ''));
   function msPersistent(sku, rdc) { var ms = msProf.byKey[msPeriod + '|' + sku + '|' + rdc]; return !!(ms && ms.isHighSeverity); }
   // Step 1: Candidate SKU x RDC combos from latest shortage
   var rdcKeyMap = { '华南RDC':'huananShort','华北RDC':'huabeiShort','东北RDC':'dongbeiShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort' };
@@ -11321,7 +10649,6 @@ function init() {
           <div class="menu-item" data-page="shortage-compare" onclick="navigateTo('shortage-compare')"><span class="icon">⚖</span>缺货差异维护</div>
           <div class="menu-item" data-page="plan-monitor" onclick="navigateTo('plan-monitor')"><span class="icon">📊</span>分仓计划监控</div>
           <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>业务需求可信度</div>
-          <div class="menu-item" data-page="adjust-track" onclick="navigateTo('adjust-track')"><span class="icon">🔁</span>补货调整跟踪</div>
           </div>
           <div class="menu-group-header collapsed" onclick="toggleMenuGroup(this)"><span class="arrow">▼</span>📋 库存分析</div>
           <div class="menu-group-body collapsed" data-group="inventory">
@@ -11367,7 +10694,6 @@ function init() {
           <div class="page" id="page-slow-moving-logic"></div>
           <div class="page" id="page-biz-demand"></div>
           <div class="page" id="page-plan-monitor"></div>
-          <div class="page" id="page-adjust-track"></div>
           <div class="page" id="page-biz-demand-detail"></div>
           <div class="page" id="page-biz-demand-dacr"></div>
         </main>
@@ -11394,12 +10720,9 @@ function init() {
 
   window.addEventListener('hashchange', handleHash);
 
-  // ===== 快速加载：manifest 变更检测 + IndexedDB 缓存 + JSON 优先 + xlsx 回退 =====
-  // v188: 函数定义无条件执行（不再包在 if(isAuthenticated) 里），bootLoad 挂 window 暴露给
-  //   handleLogin——首次登录此前走 autoLoadData(纯 xlsx)，而线上 xlsx 全 404 → 必然「请先导入数据」
-  //   空状态（v186 只补拉了 adjustments.json 是打补丁没修根）。bootLoad 自带 manifest 404 →
-  //   autoLoadData 回退，本地无部署场景行为不变；登录态刷新场景走原 if 亦不受影响。
-  function getStoredHashes() {
+  if (isAuthenticated) {
+    // ===== 快速加载：manifest 变更检测 + IndexedDB 缓存 + JSON 优先 + xlsx 回退 =====
+    function getStoredHashes() {
       try { return JSON.parse(localStorage.getItem('rdc_manifest_hashes') || 'null'); } catch (e) { return null; }
     }
     function setStoredHashes(h) {
@@ -11438,11 +10761,8 @@ function init() {
       }
       else if (filename.indexOf('data-') === 0) parseExcel(wb, 'append', { skipTransship: true });
       else if (filename === 'history.json') { dataStore.history = j; }
-      // v186: 补货调整记录（原始 13 列，窗口归由前端动态计算）
-      else if (filename === 'adjustments.json') { dataStore.adjustRecords = (j && j.adjust) || []; }
     }
     async function bootLoad() {
-      window._bootLoading = true; // v188: 首拉期间 renderPage 占位显示「数据加载中」而非「请先导入数据」
       // 1) 先获取 manifest，以部署时间戳为版本锚点
       let manifest = null;
       try {
@@ -11451,16 +10771,11 @@ function init() {
       } catch (e) { manifest = null; }
 
       // 自动检测新版本：清除本地旧缓存，避免新旧数据源混合导致"转储有数但出货为0"等异常
-      // v188: flag 从 sessionStorage 改为 localStorage。sessionStorage 是标签页会话级——用户每次
-      //   重开浏览器/新开标签页 flag 都为空 → 无脑 clearIDB → 25MB+ 全量重拉 17~25s（数据文件已从
-      //   7 个涨到 12 个，v74 时代 7MB 感知不明显，现在用户每次打开都"非常慢"）。localStorage 持久后
-      //   只有 manifest.generatedAt 真正变化（每日数据部署）才清一次缓存，其余打开全部 IDB 秒开。
       try {
         if (manifest && manifest.generatedAt) {
-          const flag = localStorage.getItem('rdc_deploy_flag');
+          const flag = sessionStorage.getItem('rdc_deploy_flag');
           if (flag !== manifest.generatedAt) {
             sessionStorage.setItem('rdc_deploy_flag', manifest.generatedAt);
-            try { localStorage.setItem('rdc_deploy_flag', manifest.generatedAt); } catch (e) {}
             try { localStorage.removeItem('rdc_manifest_hashes'); } catch (e) {}
             await clearIDB();
             console.log('[bootLoad] 新版本部署，已清除本地旧缓存:', manifest.generatedAt);
@@ -11519,13 +10834,7 @@ function init() {
             const _invCache = dataStore.inventory;
             const _cov7Empty = !_invCache || !_invCache.cov7 || _invCache.cov7.length < 100;
             const _ordEmpty = !(dataStore.orderDetail && dataStore.orderDetail.length >= 100);
-            // v191: 追加数据量级防线——单靠 len>=100 拦不住「半量快照+全量哈希」死状态
-            //   （实测 saveToIDB fire-and-forget 时 reload 恢复 ord=114130/正常 238352，且无文件可补）。
-            //   当前全量 ord≈23.8 万，只到 1/2；阈值取 10 万：约为全量的 42%，且远高于
-            //   「只有 9 月 data.json」的 2605 行。数据量自然增长翻 3 倍内无需调参，超过后此防线
-            //   会误触发一次全量重拉（自愈，无数据损失）。
-            const _ordTooSmall = !(dataStore.orderDetail && dataStore.orderDetail.length >= 100000);
-            if (_cov7Empty || _ordEmpty || _ordTooSmall) {
+            if (_cov7Empty || _ordEmpty) {
               console.warn('[refreshFromManifest] 缓存关键字段残缺（cov7=' + (_invCache && _invCache.cov7 ? _invCache.cov7.length : 0) + ', orderDetail=' + (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '），强制全量重拉');
               // 触发全量重拉：清掉 stored hashes 让 changed.length > 0
               try { localStorage.removeItem('rdc_manifest_hashes'); } catch(e) {}
@@ -11542,71 +10851,18 @@ function init() {
           }
           const ordered = changed.slice().sort((a, b) => fileOrderKey(a) - fileOrderKey(b));
           try {
-            // v189: 并行拉取。串行 12 文件 57MB 实测首拉 >150s；data.json 必须单独先落（replace 模式
-            //   清空全量数据，后续 data-* append 依赖空底表）；其余文件互不依赖，并行 fetch。
-            // v189.1: 断点续传——原实现只在「全部完成」后 setStoredHashes+saveToIDB，首拉全程 2~4 分钟，
-            //   用户中途关页面 = 进度全丢 = 下次打开又全量重拉（「每次打开都慢」的死循环根源）。
-            //   改为每完成一个文件就标记该文件哈希 + 存一次 IDB：下次打开 loadFromIDB 恢复已有部分
-            //   秒开渲染，refreshFromManifest 比对哈希只补缺的文件。部分缓存时 changed>0，不会误入
-            //   「无变化」分支的健康检查（该检查只在 changed===0 时触发），逻辑自洽。
-            const _done = {};
-            const _markDone = function(f) {
-              _done[f] = manifest.files[f];
-              try { setStoredHashes(Object.assign(getStoredHashes() || {}, _done)); } catch (e) {}
-              saveToIDB().catch(() => {});
-            };
-            const _fetchJson = async function(f) {
-              const r = await fetch('./' + f, { cache: 'no-cache' });
-              if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + f);
-              return r.json();
-            };
-            const first = ordered.filter(f => f === 'data.json');
-            const rest = ordered.filter(f => f !== 'data.json');
-            const failed = [];
-            for (const f of first) {
-              const j = await _fetchJson(f);   // data.json 失败会 throw → 走下方 catch → 回退 Excel
+            for (const f of ordered) {
+              const j = await (await fetch('./' + f, { cache: 'no-cache' })).json();
               applyPreparsed(f, j);
-              _markDone(f);
-            }
-            // v191: 分批并发（每批 4 个）+ allSettled。实测 12 文件无限制并发会触发 Cloudflare
-            //   QUIC_NETWORK_IDLE_TIMEOUT（连接被打挂，fetch 永久挂起 → bootLoad 卡死、页面空）。
-            //   单个文件失败不再拖垮整批：失败的哈希不标记 → 本次少一块数据（toast 明示），
-            //   下次打开 refreshFromManifest 按哈希比对自动只补失败文件（断点续传兜底）。
-            const BATCH = 4;
-            for (let i = 0; i < rest.length; i += BATCH) {
-              const batch = rest.slice(i, i + BATCH);
-              const settled = await Promise.allSettled(batch.map(async f => {
-                const j = await _fetchJson(f);
-                applyPreparsed(f, j);
-                _markDone(f);
-              }));
-              settled.forEach(function(res, k) {
-                if (res.status === 'rejected') {
-                  failed.push(batch[k]);
-                  console.warn('[refreshFromManifest] 文件加载失败（下次打开自动续传）:', batch[k], res.reason && res.reason.message);
-                }
-              });
             }
             if (dataStore.shortage.length === 0 && dataStore.orderDetail.length === 0 && !dataStore.inventory) {
               throw new Error('JSON 解析结果为空');
             }
-            if (failed.length === 0) {
-              setStoredHashes(manifest.files);
-            } else {
-              // 部分失败：只标记成功文件，失败的下轮续传（此时 _markDone 已逐个标过，这里保持现状即可）
-              try { setStoredHashes(Object.assign(getStoredHashes() || {}, _done)); } catch (e) {}
-            }
+            setStoredHashes(manifest.files);
             detectAllMonths();
             if (window._latestMonth && filters.dataMonth === 'all') filters.dataMonth = window._latestMonth;
-            // v191: await 落盘——此前 fire-and-forget，quick reload 会拿到「中途快照」（实测 ord 只有一半）
-            //   且哈希已标全量 → 下次「无变化」不补拉 → 残缺数据固化。await 后最后快照必为完成态；
-            //   残存风险（写入中途断电等）由下方 bootLoad 无缓存路径的兜底健康检查阈值拦底。
-            try { await saveToIDB(); } catch (e) { console.warn('[refreshFromManifest] saveToIDB 失败:', e && e.message); }
-            if (failed.length > 0) {
-              showToast(failed.length + ' 个数据文件加载失败，已保存进度，刷新页面将自动续传', true);
-            } else {
-              showToast('已更新 ' + ordered.length + ' 个数据文件（JSON 快速加载）');
-            }
+            saveToIDB().catch(() => {});
+            showToast('已更新 ' + ordered.length + ' 个数据文件（JSON 快速加载）');
             renderAll();
             return;
           } catch (e) {
@@ -11636,15 +10892,11 @@ function init() {
       return refreshFromManifest();
     }
 
-    window._bootLoad = bootLoad; // v188: 暴露给 handleLogin（首次登录也走 JSON 快速流程）
-
-    if (isAuthenticated) {
-      bootLoad().then(loaded => {
-        window._bootLoading = false;
-        if (window.location.hash) handleHash();
-        else navigateTo((loaded || dataStore.loaded) ? 'overview' : 'data');
-      });
-    }
+    bootLoad().then(loaded => {
+      if (window.location.hash) handleHash();
+      else navigateTo((loaded || dataStore.loaded) ? 'overview' : 'data');
+    });
+  }
 }
 
 // 全局月份选择器
@@ -14981,429 +14233,6 @@ function releasedOrderNoSet() {
   return s;
 }
 
-// v184: SKU 层销售进度聚合（供「长期高严重度分析」清单的「销售进度」列使用）
-//   为什么独立成函数：v183 直接读 window._planMonitorRows（renderPlanMonitor 末尾赋值），
-//   导致用户**没先访问分仓计划监控页就进长期分析页时**，该变量是空数组 → 整列全是「—」，
-//   看起来像功能没实现（2026-09-04 用户反馈「3 没实现」，实测 1144 行数据其实都有，只是没渲染）。
-//   修法：本函数自己重建 cov7 + shipMap，与 renderPlanMonitor 口径完全一致，不依赖调用顺序。
-//   口径对齐 renderPlanMonitor：
-//     · 计划量 = cov7 行的 targetField（可切换月份，默认 window._planMonthIdx=0）
-//     · 订单量 = orderDetail 按 SKU×RDC 聚合【仅已放行】+ unreleasedOrders【未放行，订单号去重】
-//     · 剔除促销装/新品期（覆盖周数分类）；海南开关与 RDC 筛选一律取全部（清单是全库视角）
-//     · 状态阈值与分仓计划监控一致：完成率 <0.7 滞后 / >1.1 超额 / 其余正常
-//   🔴 状态必须按【聚合后的 comp】判定，不能用「逐 RDC 计数取最严重」——
-//      v183 那样做会出现「订单 13,212 / 计划 5,904 → 223.8% 却显示『滞后』」的自相矛盾
-//      （某个 RDC 滞后，但 SKU 整体早已超额）。
-function buildPlanSkuAgg() {
-  const out = {}; // sku -> { plan, shipped, comp, status, rdcCnt }
-  const inv = dataStore.inventory || {};
-  const covSource = inv.cov7 ? 'cov7' : (inv.cov6 ? 'cov6' : 'cov5');
-  const cov7 = inv[covSource] || [];
-  const orders = dataStore.orderDetail || [];
-  if (!cov7.length || !orders.length) return out;
-
-  const cfg = getCovMonthConfig(covSource);
-  const idx = Math.min(Math.max(0, parseInt(window._planMonthIdx, 10) || 0), cfg.fields.length - 1);
-  const targetField = cfg.fields[idx];
-  const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
-  const targetMonth = COV_TO_YM[targetField] || '2026-08';
-  // 供 UI 列头显示（如「销售进度（8月）」），避免用户不知道这是哪个月的进度
-  window._planSkuAggMonth = targetMonth;
-  window._planSkuAggLabel = cfg.labels[idx] || targetMonth;
-
-  // 促销装/新品期剔除表（与 renderPlanMonitor 同源）
-  const excluded = {};
-  cov7.forEach(function(d){ if (d && d.sku && (d.coverageLevel === '促销装' || d.coverageLevel === '新品期')) excluded[d.sku] = true; });
-
-  const shipMap = {};
-  function accumulate(sku, rdc, q) { shipMap[sku + '|' + rdc] = (shipMap[sku + '|' + rdc] || 0) + (q || 0); }
-  orders.forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    if (excluded[d.skuCode]) return;
-    const rdc = normalizeRdcName(d.warehouse);
-    if (!rdc) return;
-    accumulate(d.skuCode || '', rdc, d.orderQty || 0);
-  });
-  // 未放行订单（订单号已在已放行侧出现 → 整单剔除，避免一笔单算两次）
-  const relNoSet = releasedOrderNoSet();
-  (dataStore.unreleasedOrders || []).forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    if (d.orderNo && relNoSet.has(String(d.orderNo))) return;
-    if (excluded[d.skuCode]) return;
-    const rdc = normalizeRdcName(d.warehouse);
-    if (!rdc) return;
-    accumulate(d.skuCode || '', rdc, d.orderQty || 0);
-  });
-
-  cov7.forEach(function(d) {
-    const plan = d[targetField] || 0;
-    if (plan <= 0) return;
-    if (excluded[d.sku]) return;
-    const rdc = d.rdc;
-    const sku = d.sku || '';
-    if (!sku) return;
-    const shipped = shipMap[sku + '|' + rdc] || 0;
-    if (!out[sku]) out[sku] = { plan: 0, shipped: 0, rdcCnt: 0 };
-    out[sku].plan += plan;
-    out[sku].shipped += shipped;
-    out[sku].rdcCnt += 1;
-  });
-  Object.keys(out).forEach(function(k) {
-    const v = out[k];
-    v.comp = v.plan > 0 ? v.shipped / v.plan : 0;
-    // 🔴 按聚合后的完成率判定，与同格显示的数字保持一致
-    v.status = v.comp < 0.7 ? '滞后' : (v.comp > 1.1 ? '超额' : '正常');
-  });
-  return out;
-}
-
-// ================= v186: 补货调整跟踪 =================
-// 数据源：adjustments.json（S盘《RDC补货调整记录.xlsx》预解析，原始 13 列）
-// 归因口径：到货日 = 补货日 + 运输周期（华中4/华南4/华北5/东北5/西北5/西南7，2026-08-29 张宇飞确认）；
-//   观察窗口 = [到货日, 到货日+5)；窗口缺货量 = 订单明细「首日缺货量」(支) ÷ 箱规 = 箱，按天聚合。
-//   ⚠️ 缺货汇总 sheet 的「缺货箱数」不是首日缺货口径（差 24~57 倍），严禁用于本页归因。
-const ADJ_TRANSPORT = { '华中': 4, '华南': 4, '华北': 5, '东北': 5, '西北': 5, '西南': 7, '华东': 1 };
-const ADJ_WINDOW_DAYS = 5;
-const ADJ_RDC_FULL = { '华中': '华中RDC', '华南': '华南RDC', '华北': '华北RDC', '东北': '东北RDC', '西北': '西北RDC', '西南': '西南RDC' };
-const ADJ_TYPES = ['超大仓10%', '补货后超大仓20%', '总仓缺货', '计划员调整', '其他'];
-// 四象限（2026-09-01 方案设计定稿）：扣减时大仓状态 × 窗口内 RDC 是否缺货
-const ADJ_QUADRANTS = {
-  A: { key: 'A', label: '无奈之举', desc: '缺货主因是大仓总量不足，放开 10% 也补不出来', cls: 'qa' },
-  B: { key: 'B', label: '无谓损失', desc: '有货却被规则砍下，砍 10% 一刀切的最强证据', cls: 'qb' },
-  C: { key: 'C', label: '判断有效', desc: '少补也没缺，人工判断准，计划员环节应当保留', cls: 'qc' },
-  D: { key: 'D', label: '规则无感', desc: '少补无影响，放了不痛，适合做规则松绑试点', cls: 'qd' }
-};
-window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all' };
-
-function _adjDateAdd(iso, n) {
-  const d = new Date(iso + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-function _adjFmtNum(v) { return Math.round(v || 0).toLocaleString('zh-CN'); }
-function _adjBoxSpec(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : null; }
-function _adjIsH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); }
-
-// 窗口归因计算（带缓存：数据规模或箱规表变化时重算）
-function buildAdjComputed() {
-  const recs = dataStore.adjustRecords || [];
-  if (!recs.length) return null;
-  const sig = (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '|' + recs.length + '|' + (window._boxSpec ? Object.keys(window._boxSpec).length : 0);
-  if (window._adjCache && window._adjCache.sig === sig) return window._adjCache;
-  const shortMap = {};
-  let maxOrd = '';
-  (dataStore.orderDetail || []).forEach(function(d) {
-    if (!d.dateStr) return;
-    if (d.dateStr > maxOrd) maxOrd = d.dateStr;
-    if (!d.firstDayShort) return;
-    const k = d.dateStr + '|' + d.skuCode + '|' + d.warehouse;
-    shortMap[k] = (shortMap[k] || 0) + d.firstDayShort;
-  });
-  const list = recs.map(function(r, idx) {
-    const full = ADJ_RDC_FULL[r.rdc] || ((r.rdc || '') + 'RDC');
-    const t = ADJ_TRANSPORT[r.rdc];
-    const arrival = (t != null && r.date) ? _adjDateAdd(r.date, t) : null;
-    const winStart = arrival;
-    const winEnd = arrival ? _adjDateAdd(arrival, ADJ_WINDOW_DAYS - 1) : null;
-    const cut = Math.round(((r.planQty || 0) - (r.adjQty || 0)) * 100) / 100;
-    const spec = _adjBoxSpec(r.sku);
-    let status = '未开始', coveredDays = 0, shortBoxes = 0, dailyShort = [];
-    if (winStart && winStart <= maxOrd) {
-      const sp = spec || 1;
-      for (let i = 0; i < ADJ_WINDOW_DAYS; i++) {
-        const day = _adjDateAdd(winStart, i);
-        if (day > maxOrd) break;
-        coveredDays++;
-        const boxes = (shortMap[day + '|' + r.sku + '|' + full] || 0) / sp;
-        shortBoxes += boxes;
-        dailyShort.push({ day: day, boxes: Math.round(boxes * 10) / 10 });
-      }
-      shortBoxes = Math.round(shortBoxes * 10) / 10;
-      status = coveredDays >= ADJ_WINDOW_DAYS ? '已完成' : '进行中 ' + coveredDays + '/' + ADJ_WINDOW_DAYS;
-    }
-    // 象限：只对「扣减且窗口已走完」的记录判定；大仓紧张 = 调整类型为总仓缺货（砍量原因是供给不足），其余 = 大仓有货
-    let quadrant = null;
-    if (cut > 0 && status === '已完成') {
-      const dcTight = r.adjType === '总仓缺货';
-      quadrant = shortBoxes > 0 ? (dcTight ? 'A' : 'B') : (dcTight ? 'D' : 'C');
-    }
-    const explain = (cut > 0 && shortBoxes > 0) ? Math.min(100, Math.round(cut / (cut + shortBoxes) * 100)) : null;
-    return Object.assign({}, r, {
-      idx: idx, rdcFull: full, arrival: arrival, winStart: winStart, winEnd: winEnd,
-      cut: cut, direction: cut > 0 ? '扣减' : (cut < 0 ? '加量' : '未调'),
-      spec: spec, status: status, coveredDays: coveredDays,
-      shortBoxes: shortBoxes, dailyShort: dailyShort, quadrant: quadrant, explain: explain
-    });
-  });
-  window._adjCache = { sig: sig, maxOrd: maxOrd, list: list };
-  return window._adjCache;
-}
-
-function _adjFiltered(computed) {
-  const st = window._adjState;
-  return computed.list.filter(function(r) {
-    if (st.batch !== 'all' && r.date !== st.batch) return false;
-    if (st.rdc !== 'all' && r.rdc !== st.rdc) return false;
-    if (st.type !== 'all' && r.adjType !== st.type) return false;
-    if (st.hainan === 'yes' && !_adjIsH(r.sku)) return false;
-    if (st.hainan === 'no' && _adjIsH(r.sku)) return false;
-    if (st.quadrant !== 'all' && r.quadrant !== st.quadrant) return false;
-    return true;
-  });
-}
-
-function renderAdjustTrack() {
-  setTitle('补货调整跟踪');
-  const page = document.getElementById('page-adjust-track');
-  const recs = dataStore.adjustRecords || [];
-  if (!recs.length) {
-    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔁</div><div style="font-size:var(--font-size-lg)">暂无补货调整记录</div><div style="font-size:12px;margin-top:8px;line-height:2">数据源：《RDC补货调整记录.xlsx》（计划员手工维护）<br>更新方式：把最新记录表放到桌面「更新部署」文件夹 → 通知 WorkBuddy「更新补货调整记录」→ 自动解析部署</div></div>';
-    return;
-  }
-  const computed = buildAdjComputed();
-  const st = window._adjState;
-  const filtered = _adjFiltered(computed);
-  const maxOrd = computed.maxOrd;
-
-  // ---- 汇总统计（口径：扣减 = 应补量 > 调整后补货量）----
-  const cuts = computed.list.filter(function(r) { return r.cut > 0; });
-  const adds = computed.list.filter(function(r) { return r.cut < 0; });
-  const cutBoxes = cuts.reduce(function(s, r) { return s + r.cut; }, 0);
-  const entered = cuts.filter(function(r) { return r.status !== '未开始'; });
-  const doneCuts = cuts.filter(function(r) { return r.status === '已完成'; });
-  const doneShort = doneCuts.filter(function(r) { return r.shortBoxes > 0; });
-  const doneShortBoxes = doneShort.reduce(function(s, r) { return s + r.shortBoxes; }, 0);
-  const quad = { A: [], B: [], C: [], D: [] };
-  doneCuts.forEach(function(r) { if (r.quadrant && quad[r.quadrant]) quad[r.quadrant].push(r); });
-  const batches = [...new Set(computed.list.map(function(r) { return r.date; }))].sort().reverse();
-  const rdcList = ['华中', '华南', '华北', '东北', '西北', '西南'];
-
-  const selStyle = 'padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card)';
-  let html = '';
-
-  // 顶部说明 + 数据覆盖提示
-  html += '<div class="card" style="margin-bottom:12px;padding:12px 16px">';
-  html += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">🔁 补货调整跟踪 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 每一笔因规则/大仓触发的补货调整，与到货后 5 天观察窗口内的真实缺货做因果对账</span></div>';
-  html += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9">';
-  html += '口径：到货日 = 补货日 + 运输周期（华中+4/华南+4/华北+5/东北+5/西北+5/西南+7）；观察窗口 = 到货日起 5 天；窗口缺货量 = <b>订单明细首日缺货量(支)÷箱规</b>，与扣减量同单位（箱）直接对比。<br>';
-  html += '缺货数据已覆盖至 <b>' + (maxOrd || '-') + '</b>；最早观察窗口 ' + (computed.list.length ? computed.list.reduce(function(m, r) { return r.winStart && r.winStart < m ? r.winStart : m; }, '9999-99-99') : '-') + ' 开始';
-  if (maxOrd && entered.length < cuts.length) html += ' —— <span style="color:#B45309">有 ' + (cuts.length - entered.length) + ' 条记录的窗口尚未进入数据覆盖范围，归因指标将随缺货数据日更自动点亮</span>';
-  html += '</div></div>';
-
-  // 筛选条
-  html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
-  html += '<select onchange="window._adjState.batch=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部批次</option>' + batches.map(function(b) { return '<option value="' + b + '"' + (st.batch === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select>';
-  html += '<select onchange="window._adjState.rdc=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部 RDC</option>' + rdcList.map(function(x) { return '<option value="' + x + '"' + (st.rdc === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
-  html += '<select onchange="window._adjState.type=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部调整类型</option>' + ADJ_TYPES.map(function(x) { return '<option value="' + x + '"' + (st.type === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
-  html += '<select onchange="window._adjState.hainan=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all"' + (st.hainan === 'all' ? ' selected' : '') + '>海南花露水：默认</option><option value="yes"' + (st.hainan === 'yes' ? ' selected' : '') + '>仅看花露水</option><option value="no"' + (st.hainan === 'no' ? ' selected' : '') + '>不含花露水</option></select>';
-  if (st.quadrant !== 'all') html += '<span class="badge" style="background:#FEF2F2;color:#B91C1C;cursor:pointer" onclick="window._adjState.quadrant=\'all\';renderAdjustTrack()">象限筛选：' + ADJ_QUADRANTS[st.quadrant].label + ' ✕</span>';
-  html += '<span style="font-size:12px;color:var(--text-secondary)">筛选后 ' + filtered.length + ' / ' + computed.list.length + ' 条</span>';
-  html += '</div>';
-
-  // KPI 卡
-  html += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px">';
-  html += '<div class="kpi-card"><div class="kpi-label">调整记录</div><div class="kpi-value">' + computed.list.length + '<span class="kpi-unit">条</span></div><div style="font-size:11px;color:var(--text-secondary)">扣减 ' + cuts.length + ' · 加量 ' + adds.length + '</div></div>';
-  html += '<div class="kpi-card"><div class="kpi-label">累计扣减量</div><div class="kpi-value" style="color:#DC2626">' + _adjFmtNum(cutBoxes) + '<span class="kpi-unit">箱</span></div><div style="font-size:11px;color:var(--text-secondary)">按 应补量−调整后 计</div></div>';
-  html += '<div class="kpi-card"><div class="kpi-label">已进观察窗口</div><div class="kpi-value">' + entered.length + '<span class="kpi-unit">条</span></div><div style="font-size:11px;color:var(--text-secondary)">窗口走完 ' + doneCuts.length + ' 条</div></div>';
-  html += '<div class="kpi-card"><div class="kpi-label">窗口内缺货</div><div class="kpi-value" style="color:' + (doneShort.length ? '#DC2626' : 'var(--text-primary)') + '">' + doneShort.length + '<span class="kpi-unit">条</span></div><div style="font-size:11px;color:var(--text-secondary)">窗口累计缺货 ' + _adjFmtNum(doneShortBoxes) + ' 箱</div></div>';
-  const bBoxes = quad.B.reduce(function(s, r) { return s + r.cut; }, 0);
-  html += '<div class="kpi-card"><div class="kpi-label">B 象限·无谓损失</div><div class="kpi-value" style="color:#B91C1C">' + _adjFmtNum(bBoxes) + '<span class="kpi-unit">箱</span></div><div style="font-size:11px;color:var(--text-secondary)">大仓有货仍被砍且缺了</div></div>';
-  html += '</div>';
-
-  // 四象限（图2 样式：可点击下钻）
-  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">四象限归因：扣减时大仓状态 × 窗口内是否缺货</span><span style="font-size:11px;color:var(--text-secondary)">仅统计「扣减且窗口已走完」的 ' + doneCuts.length + ' 条，点击象限可筛选明细</span></div>';
-  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:4px 14px 14px">';
-  [['A', 'RDC 缺货 · 大仓紧张'], ['B', 'RDC 缺货 · 大仓有货'], ['D', 'RDC 未缺货 · 大仓紧张'], ['C', 'RDC 未缺货 · 大仓有货']].forEach(function(pair) {
-    const q = ADJ_QUADRANTS[pair[0]];
-    const items = quad[pair[0]];
-    const boxes = items.reduce(function(s, r) { return s + r.cut; }, 0);
-    const pct = doneCuts.length ? Math.round(items.length / doneCuts.length * 100) : 0;
-    const active = st.quadrant === pair[0];
-    html += '<div onclick="window._adjState.quadrant=window._adjState.quadrant===\'' + pair[0] + '\'?\'all\':\'' + pair[0] + '\';renderAdjustTrack()" style="cursor:pointer;border:2px solid ' + (active ? '#2563EB' : 'var(--border-card)') + ';border-radius:10px;padding:12px 14px;background:' + (pair[0] === 'B' ? '#FEF2F2' : (pair[0] === 'A' ? '#FFF7ED' : '#F0FDF4')) + '">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:13px;font-weight:700;color:' + (pair[0] === 'B' ? '#B91C1C' : (pair[0] === 'A' ? '#C2410C' : '#15803D')) + '">' + pair[0] + ' · ' + q.label + '</span><span style="font-size:11px;color:var(--text-secondary)">' + pair[1] + '</span></div>';
-    html += '<div style="margin-top:6px;font-size:22px;font-weight:700">' + items.length + '<span style="font-size:12px;font-weight:400;color:var(--text-secondary)"> 条（' + pct + '%）· 扣减 ' + _adjFmtNum(boxes) + ' 箱</span></div>';
-    html += '<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + q.desc + '</div>';
-    html += '</div>';
-  });
-  html += '</div>';
-  html += '<div style="padding:0 14px 12px;font-size:11px;color:var(--text-secondary)">只有 B（无谓损失）才是规则本身的代价；A 类是总量问题，放开规则也救不了。进行中窗口 ' + entered.filter(function(r) { return r.status !== '已完成'; }).length + ' 条暂不入象限。</div></div>';
-
-  // 图表区
-  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">';
-  html += '<div class="card"><div class="card-header"><span class="card-title">按调整类型：扣减量与记录数</span></div><div id="adj-chart-type" style="height:260px"></div></div>';
-  html += '<div class="card"><div class="card-header"><span class="card-title">按 RDC：扣减量（按调整类型堆叠）</span></div><div id="adj-chart-rdc" style="height:260px"></div></div>';
-  html += '</div>';
-  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">按补货批次：扣减量 vs 窗口缺货量</span><span style="font-size:11px;color:var(--text-secondary)">窗口缺货只含已进窗口的批次，随缺货数据日更补全</span></div><div id="adj-chart-batch" style="height:260px"></div></div>';
-
-  // 明细表
-  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">调整明细（点击行查看扣减 vs 缺货因果图）</span></div>';
-  html += '<div class="table-wrap" style="max-height:520px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' +
-    ['补货日期', 'RDC', 'SKU编码', 'SKU名称', '调整类型', '应补(箱)', '调整后(箱)', '扣减量(箱)', '到货日', '观察窗口', '状态', '窗口缺货(箱)', '因果解释度'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
-  const rows = filtered.slice().sort(function(a, b) { return a.date === b.date ? (b.cut - a.cut) : (a.date < b.date ? 1 : -1); });
-  rows.forEach(function(r) {
-    const stColor = r.status === '已完成' ? '#15803D' : (r.status.indexOf('进行中') === 0 ? '#B45309' : 'var(--text-secondary)');
-    const quadLabel = r.quadrant ? ('<span class="badge" style="background:' + (r.quadrant === 'B' ? '#FEF2F2;color:#B91C1C' : (r.quadrant === 'A' ? '#FFF7ED;color:#C2410C' : '#F0FDF4;color:#15803D')) + '">' + r.quadrant + ' ' + ADJ_QUADRANTS[r.quadrant].label + '</span>') : '<span style="color:var(--text-secondary)">—</span>';
-    html += '<tr onclick="window._openAdjModal(' + r.idx + ')" style="cursor:pointer">' +
-      '<td style="text-align:left">' + r.date + '</td>' +
-      '<td style="text-align:left">' + r.rdc + '</td>' +
-      '<td style="text-align:left">' + r.sku + '</td>' +
-      '<td style="text-align:left">' + (r.skuName || '') + (r.spec ? ' <span style="color:var(--text-secondary);font-size:11px">(' + r.spec + '支/箱)</span>' : '') + '</td>' +
-      '<td style="text-align:left">' + (r.adjType || '') + '</td>' +
-      '<td style="text-align:left">' + _adjFmtNum(r.planQty) + '</td>' +
-      '<td style="text-align:left">' + _adjFmtNum(r.adjQty) + '</td>' +
-      '<td style="text-align:left;color:' + (r.cut > 0 ? '#DC2626' : (r.cut < 0 ? '#16A34A' : 'inherit')) + '">' + (r.cut > 0 ? '−' + _adjFmtNum(r.cut) : (r.cut < 0 ? '+' + _adjFmtNum(-r.cut) + '（加量）' : '0')) + '</td>' +
-      '<td style="text-align:left">' + (r.arrival || '-') + '</td>' +
-      '<td style="text-align:left">' + (r.winStart ? r.winStart + ' ~ ' + r.winEnd : '-') + '</td>' +
-      '<td style="text-align:left;color:' + stColor + '">' + r.status + '</td>' +
-      '<td style="text-align:left;font-weight:' + (r.shortBoxes > 0 ? '700' : '400') + ';color:' + (r.shortBoxes > 0 ? '#DC2626' : 'inherit') + '">' + (r.status !== '未开始' ? _adjFmtNum(r.shortBoxes) : '—') + '</td>' +
-      '<td style="text-align:left">' + (r.explain != null ? r.explain + '%' : '—') + '</td>' +
-      '</tr>';
-  });
-  if (!rows.length) html += '<tr><td colspan="13" style="text-align:left;color:var(--text-secondary);padding:24px">当前筛选条件下无记录</td></tr>';
-  html += '</tbody></table></div></div>';
-
-  // 功能2：少补未缺货 → 库存冗余检验（占位，诚实标注数据未到位）
-  const noShort = doneCuts.filter(function(r) { return r.shortBoxes <= 0; });
-  html += '<details style="margin-bottom:12px;border:1px solid var(--border-card);border-radius:10px;background:var(--bg-card)"><summary style="cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600">✂ 少补未缺货的记录（' + noShort.length + ' 条）—— 对库存控制是否真的起了正向作用？</summary><div style="padding:0 16px 14px;font-size:12px;color:var(--text-secondary);line-height:2">';
-  html += '判定逻辑（数据到位后自动点亮）：窗口走完且未缺货 → 说明少补本身没造成损失（C 判断有效 / D 规则无感）。但「正向作用」还要看第二步：<b>月底库存覆盖数据里，这些 SKU×RDC 的库存是否本来就有冗余</b>——若月底覆盖月数仍在合理区间，说明砍得对；若月底出现缺货回补或覆盖被击穿，说明砍多了。<br>';
-  html += '⚠️ 9 月底库存覆盖数据预计 10 月初更新，届时本区自动给出「省对了 / 砍多了」判定，当前不预填结论。';
-  if (noShort.length) {
-    html += '<div class="table-wrap" style="max-height:260px;margin-top:8px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' + ['补货日期', 'RDC', 'SKU编码', 'SKU名称', '调整类型', '扣减量(箱)', '窗口'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
-    noShort.forEach(function(r) {
-      html += '<tr><td style="text-align:left">' + r.date + '</td><td style="text-align:left">' + r.rdc + '</td><td style="text-align:left">' + r.sku + '</td><td style="text-align:left">' + (r.skuName || '') + '</td><td style="text-align:left">' + (r.adjType || '') + '</td><td style="text-align:left">' + _adjFmtNum(r.cut) + '</td><td style="text-align:left">' + r.winStart + ' ~ ' + r.winEnd + '</td></tr>';
-    });
-    html += '</tbody></table></div>';
-  }
-  html += '</div></details>';
-
-  // 偏仓口径说明（图3 样式，折叠面板）
-  html += '<details style="margin-bottom:12px;border:1px solid var(--border-card);border-radius:10px;background:var(--bg-card)"><summary style="cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600">📐 为什么「补货后 ≤ 大仓 20%」的判定分母有问题？</summary><div style="padding:4px 16px 16px">';
-  html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">全网库存分布示意（共 4,000 箱）：大仓会被 RDC 逐步分掉，RDC 越补越多、大仓越来越少 → 分母持续变小、比值被动升高 → <b>规则恰好在大仓最吃紧的时候收得最紧</b>。</div>';
-  html += '<div style="display:flex;gap:6px;margin-bottom:10px">';
-  html += '<div style="flex:1.6;background:#DBEAFE;border:1px solid #BFDBFE;border-radius:8px;padding:10px;text-align:center"><div style="font-size:15px;font-weight:700">大仓 1,000</div><div style="font-size:11px;color:var(--text-secondary)">随补货递减 ↓</div></div>';
-  for (let i = 1; i <= 6; i++) html += '<div style="flex:1;background:' + (i === 1 ? '#FEE2E2;border-color:#FECACA' : '#F3F4F6') + ';border:1px solid var(--border-card);border-radius:8px;padding:10px;text-align:center"><div style="font-size:13px;font-weight:600">RDC' + i + ' 500</div><div style="font-size:11px;color:var(--text-secondary)">随补货递增 ↑</div></div>';
-  html += '</div>';
-  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
-  html += '<div style="border:1px solid #FECACA;background:#FEF2F2;border-radius:8px;padding:10px 12px;font-size:12px"><b style="color:#B91C1C">现行口径：RDC1 ÷ 大仓库存</b><br>500 ÷ 1,000 = <b>50%</b><br>判定严重偏仓 → 触发扣减</div>';
-  html += '<div style="border:1px solid #BBF7D0;background:#F0FDF4;border-radius:8px;padding:10px 12px;font-size:12px"><b style="color:#15803D">建议口径：RDC1 ÷ 全网总库存</b><br>500 ÷ 4,000 = <b>12.5%</b><br>六仓均分 → 完全正常</div>';
-  html += '</div></div></details>';
-
-  page.innerHTML = html;
-
-  // ---- ECharts ----
-  const cutOf = function(r) { return r.cut > 0 ? r.cut : 0; };
-  // 1) 按调整类型
-  const typeData = ADJ_TYPES.map(function(tp) {
-    const items = computed.list.filter(function(r) { return r.adjType === tp; });
-    return { type: tp, cnt: items.length, boxes: items.reduce(function(s, r) { return s + cutOf(r); }, 0) };
-  });
-  const ch1 = initChart('adj-chart-type');
-  if (ch1) ch1.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['扣减量(箱)', '记录数'], top: 0 },
-    grid: { left: 60, right: 50, top: 34, bottom: 24 },
-    xAxis: { type: 'category', data: typeData.map(function(d) { return d.type; }), axisLabel: { fontSize: 10 } },
-    yAxis: [{ type: 'value', name: '箱' }, { type: 'value', name: '条' }],
-    series: [
-      { name: '扣减量(箱)', type: 'bar', data: typeData.map(function(d) { return Math.round(d.boxes); }), itemStyle: { color: '#DC2626' }, barMaxWidth: 34 },
-      { name: '记录数', type: 'line', yAxisIndex: 1, data: typeData.map(function(d) { return d.cnt; }), itemStyle: { color: '#2563EB' }, lineStyle: { width: 2 } }
-    ]
-  });
-  // 2) 按RDC堆叠
-  const colors = { '超大仓10%': '#F59E0B', '补货后超大仓20%': '#EF4444', '总仓缺货': '#94A3B8', '计划员调整': '#2563EB', '其他': '#A78BFA' };
-  const ch2 = initChart('adj-chart-rdc');
-  if (ch2) ch2.setOption({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 10 } },
-    grid: { left: 70, right: 24, top: 34, bottom: 24 },
-    xAxis: { type: 'value', name: '箱' },
-    yAxis: { type: 'category', data: rdcList, axisLabel: { fontSize: 11 } },
-    series: ADJ_TYPES.map(function(tp) {
-      return { name: tp, type: 'bar', stack: 'total', barMaxWidth: 22, itemStyle: { color: colors[tp] },
-        data: rdcList.map(function(rd) { return Math.round(computed.list.filter(function(r) { return r.rdc === rd && r.adjType === tp; }).reduce(function(s, r) { return s + cutOf(r); }, 0)); }) };
-    })
-  });
-  // 3) 按批次：扣减 vs 窗口缺货
-  const batchAsc = batches.slice().reverse();
-  const ch3 = initChart('adj-chart-batch');
-  if (ch3) ch3.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['扣减量(箱)', '窗口缺货(箱)'], top: 0 },
-    grid: { left: 60, right: 30, top: 34, bottom: 24 },
-    xAxis: { type: 'category', data: batchAsc },
-    yAxis: { type: 'value', name: '箱' },
-    series: [
-      { name: '扣减量(箱)', type: 'bar', barMaxWidth: 40, itemStyle: { color: '#FCA5A5' }, data: batchAsc.map(function(b) { return Math.round(computed.list.filter(function(r) { return r.date === b; }).reduce(function(s, r) { return s + cutOf(r); }, 0)); }) },
-      { name: '窗口缺货(箱)', type: 'bar', barMaxWidth: 40, itemStyle: { color: '#DC2626' }, data: batchAsc.map(function(b) { return Math.round(cuts.filter(function(r) { return r.date === b && r.status !== '未开始'; }).reduce(function(s, r) { return s + r.shortBoxes; }, 0)); }) }
-    ]
-  });
-}
-
-// 明细弹窗：单条记录的 扣减 vs 窗口缺货 因果图（对齐设计稿：时间轴 + 每日缺货柱 + 扣减/缺口对比）
-window._openAdjModal = function(idx) {
-  const computed = buildAdjComputed();
-  const r = computed.list[idx];
-  if (!r) return;
-  const old = document.getElementById('adj-modal'); if (old) old.remove();
-  const overlay = document.createElement('div');
-  overlay.id = 'adj-modal';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px';
-  overlay.onclick = function(ev) { if (ev.target === overlay) overlay.remove(); };
-  const transport = ADJ_TRANSPORT[r.rdc];
-  const q = r.quadrant ? ADJ_QUADRANTS[r.quadrant] : null;
-  let inner = '<div style="background:var(--bg-card,#fff);border-radius:12px;max-width:760px;width:100%;max-height:88vh;overflow:auto;padding:20px 22px" onclick="event.stopPropagation()">';
-  inner += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px"><div><div style="font-size:16px;font-weight:700">' + r.sku + ' ' + (r.skuName || '') + '</div>';
-  inner += '<div style="font-size:12px;color:var(--text-secondary);margin-top:4px">' + r.date + ' · ' + r.rdc + ' · ' + (r.adjType || '') + (r.adjReason ? ' · 依据：' + r.adjReason : '') + ' · 大仓库存 ' + _adjFmtNum(r.dcStock) + ' 箱' + (r.spec ? ' · 箱规 ' + r.spec + '支/箱' : ' · <span style="color:#B45309">箱规缺失，按1支/箱计</span>') + '</div></div>';
-  inner += '<button onclick="document.getElementById(\'adj-modal\').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary)">✕</button></div>';
-  // 结论条
-  if (r.status === '未开始') {
-    inner += '<div style="background:#F3F4F6;border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text-secondary);margin-bottom:12px">观察窗口 ' + (r.winStart || '-') + ' 起，缺货数据尚未覆盖到窗口期 —— 归因结论待数据日更后自动生成。</div>';
-  } else if (r.cut <= 0) {
-    inner += '<div style="background:#EFF6FF;border-radius:8px;padding:10px 14px;font-size:12px;color:#1D4ED8;margin-bottom:12px">本条为<b>加量</b>记录（+' + _adjFmtNum(-r.cut) + ' 箱），不参与扣减归因。窗口内已覆盖 ' + r.coveredDays + ' 天，缺货 ' + _adjFmtNum(r.shortBoxes) + ' 箱。</div>';
-  } else if (r.shortBoxes <= 0) {
-    inner += '<div style="background:#F0FDF4;border-radius:8px;padding:10px 14px;font-size:12px;color:#15803D;margin-bottom:12px">扣减 ' + _adjFmtNum(r.cut) + ' 箱后，窗口' + (r.status === '已完成' ? '内' : '至今') + '<b>未发生缺货</b> → ' + (r.quadrant === 'C' ? 'C 判断有效：人工判断准' : 'D 规则无感：少补无影响') + '。' + (r.status === '已完成' ? '是否真正省对了，待月底库存覆盖数据检验冗余。' : '') + '</div>';
-  } else {
-    inner += '<div style="background:#FEF2F2;border-radius:8px;padding:10px 14px;font-size:12px;color:#B91C1C;margin-bottom:12px">扣减 <b>' + _adjFmtNum(r.cut) + ' 箱</b>后仍缺 <b>' + _adjFmtNum(r.shortBoxes) + ' 箱</b>（已覆盖 ' + r.coveredDays + '/5 天' + (r.status !== '已完成' ? '，窗口未走完，数字还会涨' : '') + '）。扣减量最多解释总缺口（' + _adjFmtNum(r.cut + r.shortBoxes) + ' 箱）的 <b>' + r.explain + '%</b>' + (r.quadrant === 'A' ? '，且当时大仓本身缺货 —— 属 A 无奈之举，放开规则也补不出来' : '，且当时<b>大仓有货</b> —— 属 B 无谓损失，是 10% 一刀切规则本身的代价') + '。</div>';
-  }
-  // 时间轴
-  if (r.winStart) {
-    inner += '<div style="margin:6px 0 4px;font-size:13px;font-weight:600">补货调整影响观察窗口</div>';
-    inner += '<div style="display:flex;align-items:center;gap:0;margin:10px 0 14px">';
-    inner += '<div style="flex:1;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">' + r.date + ' 补货日</div><div style="height:10px;width:10px;border-radius:50%;background:#2563EB;margin:6px auto"></div></div>';
-    inner += '<div style="flex:2;border-top:3px dashed #FCD34D;position:relative;top:-4px"><div style="text-align:center;font-size:11px;color:#B45309;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:2px 8px;width:fit-content;margin:-12px auto 0">运输周期 ' + transport + ' 天（在途）</div></div>';
-    inner += '<div style="flex:1;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">' + r.arrival + ' 到货日</div><div style="height:10px;width:10px;border-radius:50%;background:#16A34A;margin:6px auto"></div></div>';
-    inner += '<div style="flex:2;border-top:3px solid #A7F3D0;position:relative;top:-4px"><div style="text-align:center;font-size:11px;color:#047857;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:6px;padding:2px 8px;width:fit-content;margin:-12px auto 0">观察窗口 = 本批责任期（5天）</div></div>';
-    inner += '<div style="flex:1;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">' + r.winEnd + '</div><div style="height:10px;width:10px;border-radius:50%;background:#94A3B8;margin:6px auto"></div></div>';
-    inner += '</div>';
-  }
-  // 每日缺货柱状图
-  if (r.dailyShort && r.dailyShort.length) {
-    inner += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">窗口内每日首日缺货量（箱）</div>';
-    inner += '<div id="adj-modal-chart" style="height:240px"></div>';
-  }
-  // 扣减 vs 缺货对比
-  if (r.cut > 0 && r.status !== '未开始') {
-    inner += '<div style="display:flex;gap:16px;margin-top:10px;font-size:12px">';
-    inner += '<div style="flex:1;border:1px solid #FDE68A;background:#FFFBEB;border-radius:8px;padding:8px 12px"><span style="color:#B45309">本次扣减量</span><div style="font-size:20px;font-weight:700">' + _adjFmtNum(r.cut) + ' 箱</div></div>';
-    inner += '<div style="flex:1;border:1px solid #FECACA;background:#FEF2F2;border-radius:8px;padding:8px 12px"><span style="color:#B91C1C">窗口累计缺货' + (r.status !== '已完成' ? '（截至 ' + computed.maxOrd + '）' : '') + '</span><div style="font-size:20px;font-weight:700">' + _adjFmtNum(r.shortBoxes) + ' 箱</div></div>';
-    inner += '</div>';
-  }
-  inner += '</div>';
-  overlay.innerHTML = inner;
-  document.body.appendChild(overlay);
-  if (r.dailyShort && r.dailyShort.length) {
-    const ch = initChart('adj-modal-chart');
-    if (ch) ch.setOption({
-      tooltip: { trigger: 'axis' },
-      grid: { left: 50, right: 20, top: 26, bottom: 24 },
-      xAxis: { type: 'category', data: r.dailyShort.map(function(d) { return d.day.slice(5); }) },
-      yAxis: { type: 'value', name: '箱' },
-      series: [{ type: 'bar', data: r.dailyShort.map(function(d) { return d.boxes; }), itemStyle: { color: '#EF4444' }, barMaxWidth: 36, label: { show: true, position: 'top', fontSize: 10 } }]
-    });
-  }
-};
-
-
 function renderPlanMonitor() {
   setTitle('分仓计划监控');
   const page = document.getElementById('page-plan-monitor');
@@ -15631,20 +14460,8 @@ function renderPlanMonitor() {
       cumByDayByRdc[rdc].push(acc);
     }
   });
-  // v183: SKU 分仓偏差明细——排序 + 状态筛选（用户要求：可按订单量、完成率排序；按状态筛）
-  // 默认保持 v180 的「完成率升序」（滞后在最前），其余三档显式按钮 + 一个状态下拉
-  window._pmSkuSort = window._pmSkuSort || 'comp-asc';
-  window._pmSkuStatus = window._pmSkuStatus || 'all';
-  const _pmSortKey = window._pmSkuSort;
-  const _pmStatus = window._pmSkuStatus;
-  // 状态筛选
-  const _pmRowsFiltered = _pmStatus === 'all' ? rows.slice() : rows.filter(function(r){ return r.status === _pmStatus; });
-  // 排序
-  if (_pmSortKey === 'comp-asc') _pmRowsFiltered.sort(function(a, b){ return a.comp - b.comp; });
-  else if (_pmSortKey === 'comp-desc') _pmRowsFiltered.sort(function(a, b){ return b.comp - a.comp; });
-  else if (_pmSortKey === 'qty-desc') _pmRowsFiltered.sort(function(a, b){ return b.shipped - a.shipped; });
-  else if (_pmSortKey === 'qty-asc') _pmRowsFiltered.sort(function(a, b){ return a.shipped - b.shipped; });
-  window._planMonitorRows = _pmRowsFiltered;
+  rows.sort(function(a, b) { return a.comp - b.comp; });
+  window._planMonitorRows = rows;
 
   // KPI
   const totalPlan = rows.reduce(function(s, r) { return s + r.plan; }, 0);
@@ -15765,54 +14582,17 @@ function renderPlanMonitor() {
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">横轴：'+targetMonth+' 第 1 ~ '+dayOfMonth+' 日 ｜ 每条线 = 一个 RDC 的 MTD 累计完成率%</span>';
   html += '</div><div id="pm-rdc-trend" style="height:340px"></div></div>';
 
-  // v183: SKU 分仓偏差明细 card-header —— 排序按钮 + 状态下拉（与 KPI 等其它区域完全独立的 local 状态）
-  const _pmSortBtn = function(id, label){
-    return '<button class="btn-export" style="font-size:11px;padding:3px 10px;' +
-      (_pmSortKey === id ? 'background:var(--color-blue);color:#fff;border-color:var(--color-blue);' : '') +
-      '" onclick="window._pmSkuSort=\'' + id + '\';renderPlanMonitor()">' + label + '</button>';
-  };
-  const _pmStatusOptions = [
-    ['all', '全部'], ['滞后', '滞后'], ['超额', '超额'], ['正常', '正常']
-  ];
-  html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">SKU 分仓计划偏差明细（当前显示 ' + _pmRowsFiltered.length + ' 条' + (_pmStatus !== 'all' ? (' · 状态=' + _pmStatus) : '') + '）</span>' +
-    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-      '<span style="font-size:11px;color:var(--text-secondary)">状态：</span>' +
-      '<select onchange="window._pmSkuStatus=this.value;renderPlanMonitor()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:11px;background:#fff;cursor:pointer">' +
-        _pmStatusOptions.map(function(o){ return '<option value="'+o[0]+'"'+(_pmStatus===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('') +
-      '</select>' +
-      '<span style="font-size:11px;color:var(--text-secondary);margin-left:4px">排序：</span>' +
-      _pmSortBtn('comp-asc', '完成率升序') + _pmSortBtn('comp-desc', '完成率降序') + _pmSortBtn('qty-desc', '订单量降序') + _pmSortBtn('qty-asc', '订单量升序') +
-      '<button class="btn-export" onclick="exportPlanMonitor()" style="margin-left:6px">导出CSV</button>' +
-    '</div>' +
-  '</div>';
+  html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">SKU 分仓计划偏差明细（按计划完成率升序）</span><button class="btn-export" onclick="exportPlanMonitor()">导出CSV</button></div>';
   html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table" id="pm-sku-detail-table"><thead><tr>';
   html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
   html += '</tr></thead><tbody></tbody></table></div></div>';
 
-  // 行html数组（供通用分页器切分）——v183: 用排序+筛选后的 _pmRowsFiltered
-  // v187: 「✓ 在补货建议清单中」badge 改为真实匹配。之前是无条件显示（建议文案非慢动品就打标），
-  //   用户在补货建议页找不到对应 SKU（v187 反馈：截图 5 个 SKU 里 4 个是假标记）。
-  //   候选集与补货建议页(renderReplenishment) Step1 完全同源同条件：
-  //   最新缺货日中该 SKU×RDC 缺货>0，且排除「总仓整体缺货且无在途」（此时补了也到不了，不入候选）。
-  //   不复用 _shortageMap：advice 文案逻辑依赖它区分总仓缺货根因（即便无在途也提示"协调总仓"），口径不同。
-  const _replCandSet = {};
-  if (_hasShortageData && dataStore.shortage.length) {
-    const _sd2 = dataStore.shortage;
-    const _sd2Dates = _sd2.map(function(x){ return x.dateStr; }).filter(Boolean).sort();
-    const _sd2Latest = _sd2Dates[_sd2Dates.length - 1];
-    _sd2.forEach(function(d){
-      if (d.dateStr !== _sd2Latest) return;
-      if (d.dcSupply && d.dcSupply.indexOf('整体缺货') >= 0 && (d.rdcTransitTotal || 0) <= 0) return;
-      _rdcKeys.forEach(function(rdcName){
-        if ((d[_rdcKeyMap[rdcName]] || 0) > 0) _replCandSet[String(d.materialCode) + '|' + rdcName] = true;
-      });
-    });
-  }
+  // 行html数组（供通用分页器切分）
   const skuRowsHtml = [];
-  if (_pmRowsFiltered.length === 0) {
+  if (rows.length === 0) {
     skuRowsHtml.push('<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>');
   } else {
-    _pmRowsFiltered.forEach(function(r) {
+    rows.forEach(function(r) {
       const compColor = planCompColor(r.comp);
       const compBg = r.comp < 0.7 ? '#FEE2E2' : r.comp < 1.0 ? '#FFFBEB' : r.comp <= 1.1 ? '#DCFCE7' : '#DBEAFE';
       const statusColor = r.status==='滞后' ? '#DC2626' : r.status==='超额' ? '#15803D' : '#D97706';
@@ -15835,10 +14615,8 @@ function renderPlanMonitor() {
         } else {
           row += '<td style="font-size:11px;color:var(--text-secondary)">—</td>';
         }
-      } else if (_replCandSet[String(r.sku) + '|' + r.rdc]) {
-        row += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#EEF2FF;border:1px solid #818CF8;color:#3730A3;border-radius:4px;white-space:nowrap" title="该 SKU×RDC 在最新缺货数据中缺货>0，出现在「补货建议」页每日建议候选中。">✓ 在补货建议清单中</span></td>';
       } else {
-        row += '<td style="font-size:11px;color:var(--text-secondary)" title="该 SKU×RDC 在最新缺货数据中无缺货，不在「补货建议」清单中。">—</td>';
+        row += '<td><span style="display:inline-block;padding:2px 8px;font-size:11px;background:#EEF2FF;border:1px solid #818CF8;color:#3730A3;border-radius:4px;white-space:nowrap" title="该 SKU 在「补货建议」清单中。">✓ 在补货建议清单中</span></td>';
       }
       row += '</tr>';
       skuRowsHtml.push(row);
@@ -16339,6 +15117,3 @@ function renderBizDemandDetail() {
 
 document.addEventListener('DOMContentLoaded', init);
 window.addEventListener('resize', resizeAllCharts);
-</script>
-</body>
-</html>
