@@ -5738,31 +5738,10 @@ function renderShortageLongTerm() {
   const curMonth = lt.curMonth;
   const counts = lt.counts || {};
 
-  // v183: 销售进度聚合——从分仓计划监控 rows 按 SKU 聚合（同一 SKU 跨 RDC 合并）
-  //   数据源 window._planMonitorRows（renderPlanMonitor 末尾赋值，含 plan/shipped/comp/status/rdc）
-  //   跨 RDC 合并：plan 求和、shipped 求和、comp = shipped/plan（重新算一次避免逐行均值偏差）
-  //   状态判定：取计数最多的（滞后 / 超额 / 正常）；若有平局取更严重的一侧
-  const _pmRows = window._planMonitorRows || [];
-  const _skuAgg = {};
-  _pmRows.forEach(function(r){
-    const k = r.sku;
-    if (!k) return;
-    if (!_skuAgg[k]) _skuAgg[k] = { plan: 0, shipped: 0, byStatus: {}, rdcs: [] };
-    _skuAgg[k].plan += r.plan;
-    _skuAgg[k].shipped += r.shipped;
-    _skuAgg[k].rdcs.push(r.rdc);
-    const s = r.status || '正常';
-    _skuAgg[k].byStatus[s] = (_skuAgg[k].byStatus[s] || 0) + 1;
-  });
-  Object.keys(_skuAgg).forEach(function(k){
-    const v = _skuAgg[k];
-    v.comp = v.plan > 0 ? v.shipped / v.plan : 0;
-    // 状态：滞后 > 超额 > 正常（按严重程度取）
-    const cnts = v.byStatus;
-    if ((cnts['滞后'] || 0) > 0) v.status = '滞后';
-    else if ((cnts['超额'] || 0) > 0) v.status = '超额';
-    else v.status = '正常';
-  });
+  // v184: 改为调用 buildPlanSkuAgg() 自建（v183 读 window._planMonitorRows 会因
+  //   未先访问分仓计划监控而为空 → 整列显示「—」；且旧逻辑按逐 RDC 计数取最严重判状态，
+  //   会出现「223.8% 却标滞后」的自相矛盾）。现在与分仓计划监控口径一致且顺序无关。
+  const _skuAgg = buildPlanSkuAgg();
 
   const filterTier = window._ltFilterTier || 'all';
   const filterBrand = window._ltFilterBrand || 'all';
@@ -5829,16 +5808,24 @@ function renderShortageLongTerm() {
   const rowHtml = pageData.map(function(p) {
     const t = LT_TIER[p.tier] || LT_TIER.none;
     const scc = skuSupplyChainCat(p.sku);
-    // v183: 销售进度（来自分仓计划监控的 SKU 聚合；缺数据时显示 —）
+    // v184: 销售进度（buildPlanSkuAgg 自建，与分仓计划监控同口径、顺序无关；无计划数据显示 —）
     const sp = _skuAgg[p.sku];
-    let spCell = '<span style="color:#CBD5E1">—</span>';
-    if (sp && sp.plan > 0) {
-      const statColor = sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706');
-      const statBg = sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB');
-      spCell = '<div style="font-size:11px;color:var(--text-secondary)">订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() + '</div>' +
-        '<div style="font-size:11px;color:' + statColor + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
-        '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + statBg + ';color:' + statColor + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>';
-    }
+    const spHas = !!(sp && sp.plan > 0);
+    const statColor = !spHas ? '#CBD5E1' : (sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706'));
+    const statBg = !spHas ? 'transparent' : (sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB'));
+    const spTip = !spHas
+      ? '销售进度：该 SKU 在「7月库存覆盖」表中当月计划量为 0 或已按促销装/新品期剔除，故无销售进度。'
+      : ('销售进度（v184）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;' +
+         '订单量 = 已放行订单 + 未放行订单（订单号去重），仅统计目标月；&#10;' +
+         '计划量 = 库存覆盖表的当月计划字段；&#10;' +
+         '完成率 = 订单量 ÷ 计划量（按聚合值重算，不是逐 RDC 均值）；&#10;' +
+         '状态按【聚合后的完成率】判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;' +
+         '聚合自 ' + (sp.rdcCnt || 0) + ' 个有计划量的 RDC。');
+    const spCell = !spHas
+      ? '<span style="color:#CBD5E1">—</span>'
+      : ('订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() +
+         '<div style="font-size:11px;color:' + statColor + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
+         '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + statBg + ';color:' + statColor + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>');
     return '<tr>' +
       '<td style="text-align:left">' + (p.brand || '') + '</td>' +
       '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
@@ -5853,7 +5840,7 @@ function renderShortageLongTerm() {
       '<td style="text-align:right" title="有效月里同时缺货的最大 RDC 数">' + p.rdcCntMax + '</td>' +
       '<td style="text-align:right;color:var(--color-red)">' + (p.curMr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right" title="从最新月往前连续在当月 P75 的月数">' + (p.curStreak || 0) + '</td>' +
-      '<td style="text-align:left;min-width:120px;line-height:1.4" title="数据来自「分仓计划监控」同 SKU 跨 RDC 聚合：订单量求和 / 计划量求和 / 重新算完成率；状态取计数最多的一侧">' + spCell + '</td>' +
+      '<td style="text-align:left;min-width:120px;line-height:1.4" title="' + spTip + '">' + spCell + '</td>' +
       '</tr>';
   }).join('');
 
@@ -5989,13 +5976,17 @@ function exportLongTermCSV() {
   }
   const head = ['品牌', 'SKU编码', 'SKU名称', '供应链品类', '长期标记', '收缩值', '有效月数', 'LSI',
     '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续',
-    // v183: 销售进度（从分仓计划监控同 SKU 跨 RDC 聚合）
+    // v184: 销售进度（自建聚合，与表体同源同口径）
     '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态']
     .concat(months.map(m => m + ' 百分位'))
     .concat(months.map(m => m + ' 严重度'));
+  // 🔴 v184 修：_skuAgg 曾是 renderLongTerm 的局部 const，本函数（顶层）访问不到 →
+  //    ReferenceError: _skuAgg is not defined（与 v175 的 SEV_HIGH 是同一类坑）。
+  //    改为本函数内自建，与表体口径一致且不依赖调用顺序。
+  const _skuAgg = buildPlanSkuAgg();
   const rows = list.map(function(p) {
-    // v183: 销售进度取值（保持与表体同源；缺数据时空字符串，避免误导）
-    const sp = _skuAgg && _skuAgg[p.sku];
+    // v184: 销售进度取值（保持与表体同源；无计划量时空字符串，避免误导）
+    const sp = _skuAgg && _skuAgg[p.sku] && _skuAgg[p.sku].plan > 0 ? _skuAgg[p.sku] : null;
     return [
       esc(p.brand), esc(p.sku), esc(p.name), esc(skuSupplyChainCat(p.sku)),
       esc((LT_TIER[p.tier] || LT_TIER.none).label),
@@ -14799,6 +14790,79 @@ function releasedOrderNoSet() {
   window._releasedOrderNos = s;
   window._releasedOrderNosLen = n;
   return s;
+}
+
+// v184: SKU 层销售进度聚合（供「长期高严重度分析」清单的「销售进度」列使用）
+//   为什么独立成函数：v183 直接读 window._planMonitorRows（renderPlanMonitor 末尾赋值），
+//   导致用户**没先访问分仓计划监控页就进长期分析页时**，该变量是空数组 → 整列全是「—」，
+//   看起来像功能没实现（2026-09-04 用户反馈「3 没实现」，实测 1144 行数据其实都有，只是没渲染）。
+//   修法：本函数自己重建 cov7 + shipMap，与 renderPlanMonitor 口径完全一致，不依赖调用顺序。
+//   口径对齐 renderPlanMonitor：
+//     · 计划量 = cov7 行的 targetField（可切换月份，默认 window._planMonthIdx=0）
+//     · 订单量 = orderDetail 按 SKU×RDC 聚合【仅已放行】+ unreleasedOrders【未放行，订单号去重】
+//     · 剔除促销装/新品期（覆盖周数分类）；海南开关与 RDC 筛选一律取全部（清单是全库视角）
+//     · 状态阈值与分仓计划监控一致：完成率 <0.7 滞后 / >1.1 超额 / 其余正常
+//   🔴 状态必须按【聚合后的 comp】判定，不能用「逐 RDC 计数取最严重」——
+//      v183 那样做会出现「订单 13,212 / 计划 5,904 → 223.8% 却显示『滞后』」的自相矛盾
+//      （某个 RDC 滞后，但 SKU 整体早已超额）。
+function buildPlanSkuAgg() {
+  const out = {}; // sku -> { plan, shipped, comp, status, rdcCnt }
+  const inv = dataStore.inventory || {};
+  const covSource = inv.cov7 ? 'cov7' : (inv.cov6 ? 'cov6' : 'cov5');
+  const cov7 = inv[covSource] || [];
+  const orders = dataStore.orderDetail || [];
+  if (!cov7.length || !orders.length) return out;
+
+  const cfg = getCovMonthConfig(covSource);
+  const idx = Math.min(Math.max(0, parseInt(window._planMonthIdx, 10) || 0), cfg.fields.length - 1);
+  const targetField = cfg.fields[idx];
+  const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
+  const targetMonth = COV_TO_YM[targetField] || '2026-08';
+
+  // 促销装/新品期剔除表（与 renderPlanMonitor 同源）
+  const excluded = {};
+  cov7.forEach(function(d){ if (d && d.sku && (d.coverageLevel === '促销装' || d.coverageLevel === '新品期')) excluded[d.sku] = true; });
+
+  const shipMap = {};
+  function accumulate(sku, rdc, q) { shipMap[sku + '|' + rdc] = (shipMap[sku + '|' + rdc] || 0) + (q || 0); }
+  orders.forEach(function(d) {
+    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
+    if (excluded[d.skuCode]) return;
+    const rdc = normalizeRdcName(d.warehouse);
+    if (!rdc) return;
+    accumulate(d.skuCode || '', rdc, d.orderQty || 0);
+  });
+  // 未放行订单（订单号已在已放行侧出现 → 整单剔除，避免一笔单算两次）
+  const relNoSet = releasedOrderNoSet();
+  (dataStore.unreleasedOrders || []).forEach(function(d) {
+    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
+    if (d.orderNo && relNoSet.has(String(d.orderNo))) return;
+    if (excluded[d.skuCode]) return;
+    const rdc = normalizeRdcName(d.warehouse);
+    if (!rdc) return;
+    accumulate(d.skuCode || '', rdc, d.orderQty || 0);
+  });
+
+  cov7.forEach(function(d) {
+    const plan = d[targetField] || 0;
+    if (plan <= 0) return;
+    if (excluded[d.sku]) return;
+    const rdc = d.rdc;
+    const sku = d.sku || '';
+    if (!sku) return;
+    const shipped = shipMap[sku + '|' + rdc] || 0;
+    if (!out[sku]) out[sku] = { plan: 0, shipped: 0, rdcCnt: 0 };
+    out[sku].plan += plan;
+    out[sku].shipped += shipped;
+    out[sku].rdcCnt += 1;
+  });
+  Object.keys(out).forEach(function(k) {
+    const v = out[k];
+    v.comp = v.plan > 0 ? v.shipped / v.plan : 0;
+    // 🔴 按聚合后的完成率判定，与同格显示的数字保持一致
+    v.status = v.comp < 0.7 ? '滞后' : (v.comp > 1.1 ? '超额' : '正常');
+  });
+  return out;
 }
 
 function renderPlanMonitor() {
