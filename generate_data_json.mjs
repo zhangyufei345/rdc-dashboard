@@ -290,6 +290,79 @@ function main() {
     totalRows = 0; // 仅用于日志，每行文件重置
   }
 
+  // ===== 补货调整记录（v186 新增数据源：补货调整跟踪模块）=====
+  // 来源：S 盘《RDC补货调整记录.xlsx》（计划员手工维护）；用户会复制到桌面「更新部署」再通知更新。
+  //   查找顺序：桌面「更新部署」优先 → S 盘兜底。两边都没有时保留已有 adjustments.json 不动。
+  // 产物：adjustments.json = { generatedAt, source, count, adjust: [...] }
+  //   只存原始记录（13 列），到货日/观察窗口由前端按运输周期动态计算——运输周期改了不用重跑脚本。
+  // 口径：窗口缺货量由前端按「订单明细首日缺货量(支) ÷ 箱规」计算，本文件不碰缺货数据。
+  {
+    const ADJ_CANDIDATES = [
+      'C:/Users/zhangyufei1/Desktop/更新部署/RDC补货调整记录.xlsx',
+      'S:/供应链/供应链计划部/03.创新/12.补货计划工作记录/RDC补货调整记录.xlsx'
+    ];
+    const adjSrc = ADJ_CANDIDATES.find(p => fs.existsSync(p));
+    if (adjSrc) {
+      try {
+        const wbA = XLSX.read(fs.readFileSync(adjSrc), { type: 'array' });
+        const shA = wbA.Sheets[wbA.SheetNames[0]];
+        const rowsA = XLSX.utils.sheet_to_json(shA, SHEET_OPTS);
+        const ser2iso = n => {
+          if (typeof n !== 'number' || !isFinite(n)) return null;
+          const d = new Date(Math.round((n - 25569) * 86400000));
+          return isNaN(d) ? null : d.toISOString().slice(0, 10);
+        };
+        const normSku = v => {
+          if (v === null || v === undefined || v === '') return '';
+          let s = String(v).trim();
+          if (/^\d+(\.0+)?$/.test(s)) s = String(Math.trunc(parseFloat(s)));
+          return s.padStart(5, '0');
+        };
+        const num = v => { const n = Number(v); return isNaN(n) ? 0 : n; };
+        const adjust = [];
+        for (let i = 1; i < rowsA.length; i++) {
+          const r = rowsA[i];
+          if (!r || r[0] === null || r[0] === undefined || r[0] === '') continue;
+          const d = ser2iso(typeof r[0] === 'number' ? r[0] : null) || (typeof r[0] === 'string' ? r[0].slice(0, 10) : null);
+          if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+          adjust.push({
+            date: d,                                    // 补货日期
+            rdc: String(r[1] || '').trim(),             // 华中/华南/华北/东北/西北/西南
+            sku: normSku(r[2]),
+            skuName: String(r[3] || '').trim(),
+            category: String(r[4] || '').trim(),        // 供应链品类
+            lifecycle: String(r[5] || '').trim(),       // 生命周期
+            hainan: String(r[6] || '').trim(),          // 海南花露水标记
+            spuMissing: String(r[7] || '').trim(),      // SPU缺失&不补货产品
+            planQty: num(r[8]),                         // 应补量（箱）
+            adjQty: num(r[9]),                          // 调整后补货量（箱）
+            dcStock: num(r[10]),                        // 当时大仓库存（箱）
+            adjType: String(r[11] || '').trim(),        // 调整类型：总仓缺货/超大仓10%/补货后超大仓20%/计划员调整/其他
+            adjReason: String(r[12] || '').trim()       // 调整原因或判断依据
+          });
+        }
+        const payloadA = { generatedAt: new Date().toISOString(), source: adjSrc, count: adjust.length, adjust };
+        fs.writeFileSync(path.join(ROOT, 'adjustments.json'), JSON.stringify(payloadA));
+        manifest.files['adjustments.json'] = sha256File(adjSrc);
+        console.log(`   adjustments.json  records=${adjust.length}  ← ${adjSrc}`);
+      } catch (e) {
+        console.error('   ⚠️ 补货调整记录解析失败，保留旧 adjustments.json：' + e.message);
+        const adjJson = path.join(ROOT, 'adjustments.json');
+        if (fs.existsSync(adjJson)) manifest.files['adjustments.json'] = sha256File(adjJson);
+      }
+    } else {
+      // 两边都没找到源文件：保留旧 adjustments.json 并按其自身内容纳入 manifest（同 history.json 逻辑），
+      // 否则 manifest 里缺了这个文件，前端按 manifest 加载时调整跟踪页会空。
+      const adjJson = path.join(ROOT, 'adjustments.json');
+      if (fs.existsSync(adjJson)) {
+        manifest.files['adjustments.json'] = sha256File(adjJson);
+        console.log('   adjustments.json  源文件未找到（更新部署/S盘），保留现有数据');
+      } else {
+        console.log('   adjustments.json  源文件未找到且无历史产物，跳过（补货调整跟踪页将显示引导）');
+      }
+    }
+  }
+
   // 纳入孤儿预解析 json（如 data-2026-01.json：仅有 .json 而无对应 .xlsx 源的历史月）。
   // 若不纳入，看板 bootLoad 只按 manifest.files 加载，孤儿历史月数据永不加载，导致趋势图该月空白。
   const orphanJsonRe = /^data-\d{4}-\d{2}\.json$/;
