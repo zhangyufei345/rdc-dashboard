@@ -298,6 +298,36 @@ if (html.includes('function computeStatusDerived') && html.includes('function en
   log('err', 'R7: 缺失 computeStatusDerived/ensureSlowDiag/ensureTransship，慢动诊断按需加载机制失效');
 }
 
+// R8: v197 分仓计划优化建议模块（多信号融合，替代 plan-monitor 单一完成率建议）
+// 用户核心诉求：建议不能一刀切；按原因分类给计划员互动式调整建议。钉死关键不变式防回潮。
+if (html.includes('function buildPlanOptimAdvice')) {
+  log('ok', 'R8a: buildPlanOptimAdvice（多信号融合聚合）函数存在');
+} else {
+  log('err', 'R8a: 找不到 buildPlanOptimAdvice（优化建议核心聚合被删）');
+}
+if (html.includes('function renderPlanAdvice')) {
+  log('ok', 'R8b: renderPlanAdvice（优化建议渲染）函数存在');
+} else {
+  log('err', 'R8b: 找不到 renderPlanAdvice（优化建议页未渲染）');
+}
+if (html.includes('💡 优化建议') || html.includes('planTabBarHtml')) {
+  log('ok', 'R8c: 分仓计划监控页「优化建议」Tab 入口存在');
+} else {
+  log('err', 'R8c: 找不到优化建议 Tab 入口（计划员进不去）');
+}
+// C4 大单去噪分支：用户明确要求"超额需识别临时大单因素，否则可能误上调计划"
+if (html.includes('peakFactor') && html.includes('maxLineRatio') && html.includes('疑似临时大单超销')) {
+  log('ok', 'R8d: C4 超额建议含「临时大单去噪」（峰值因子+单笔占比，防盲目上调计划）');
+} else {
+  log('err', 'R8d: C4 大单识别分支缺失（超额会被无脑判为"上调计划"）');
+}
+// 原因分类元信息齐全（C1~C6）
+if (html.includes('PLAN_ADVICE_TYPES') && ['C1','C2','C3','C4a','C4b','C5','C6'].every(function(k){ return html.includes("'" + k + "'"); })) {
+  log('ok', 'R8e: 原因分类体系 C1~C6 齐全（总仓+RDC双缺/长期/紧急/结构性超额/临时大单/滞后防呆滞/慢动）');
+} else {
+  log('err', 'R8e: 原因分类 PLAN_ADVICE_TYPES 不完整');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {
