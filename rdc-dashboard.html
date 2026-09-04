@@ -5814,8 +5814,9 @@ function renderShortageLongTerm() {
     const statColor = !spHas ? '#CBD5E1' : (sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706'));
     const statBg = !spHas ? 'transparent' : (sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB'));
     const spTip = !spHas
-      ? '销售进度：该 SKU 在「7月库存覆盖」表中当月计划量为 0 或已按促销装/新品期剔除，故无销售进度。'
-      : ('销售进度（v184）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;' +
+      ? ('销售进度：该 SKU 在库存覆盖表（' + (window._planSkuAggMonth || '') + '）中当月计划量为 0，' +
+         '或已被按「促销装/新品期」剔除，故无销售进度。可在「分仓计划监控」切换目标月后回看。')
+      : ('销售进度（' + (window._planSkuAggMonth || '') + '）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;' +
          '订单量 = 已放行订单 + 未放行订单（订单号去重），仅统计目标月；&#10;' +
          '计划量 = 库存覆盖表的当月计划字段；&#10;' +
          '完成率 = 订单量 ÷ 计划量（按聚合值重算，不是逐 RDC 均值）；&#10;' +
@@ -5935,7 +5936,7 @@ function renderShortageLongTerm() {
             <th style="text-align:right" title="有效月里同时缺货的最大 RDC 数">涉及RDC</th>
             <th style="text-align:right;color:var(--color-red)" title="${curMonth} 的首日缺货率">当月缺货率</th>
             <th style="text-align:right" title="从最新月往前连续在当月 P75 的月数">当前连续</th>
-            <th style="text-align:left" title="数据来自「分仓计划监控」同 SKU 跨 RDC 聚合：订单量/计划量/完成率/状态">销售进度</th>
+            <th style="text-align:left" title="销售进度（目标月 ${window._planSkuAggMonth || '—'}，随「分仓计划监控」的目标月联动）：&#10;同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致——订单量＝已放行＋未放行（订单号去重），计划量＝库存覆盖表当月计划字段。&#10;状态按聚合后的完成率判定：&lt;70% 滞后 / &gt;110% 超额 / 其余正常。&#10;显示「—」＝该 SKU 在目标月无计划量，或已按促销装/新品期剔除（可在分仓计划监控切换目标月后再看）。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
           </tr></thead>
           <tbody>
             ${pageData.length > 0 ? rowHtml : '<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
@@ -5976,8 +5977,8 @@ function exportLongTermCSV() {
   }
   const head = ['品牌', 'SKU编码', 'SKU名称', '供应链品类', '长期标记', '收缩值', '有效月数', 'LSI',
     '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续',
-    // v184: 销售进度（自建聚合，与表体同源同口径）
-    '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态']
+    // v184: 销售进度（自建聚合，与表体同源同口径）；列头带目标月，避免读者不知道这是哪个月的进度
+    '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态', '销售进度_目标月']
     .concat(months.map(m => m + ' 百分位'))
     .concat(months.map(m => m + ' 严重度'));
   // 🔴 v184 修：_skuAgg 曾是 renderLongTerm 的局部 const，本函数（顶层）访问不到 →
@@ -5992,7 +5993,8 @@ function exportLongTermCSV() {
       esc((LT_TIER[p.tier] || LT_TIER.none).label),
       p.shrunkPct.toFixed(4), p.nM, p.lsi.toFixed(4),
       p.totalShort, p.rdcCntMax, (p.curMr * 100).toFixed(1), p.curStreak || 0,
-      sp ? sp.shipped : '', sp ? sp.plan : '', sp ? (sp.comp * 100).toFixed(1) : '', sp ? sp.status : ''
+      sp ? sp.shipped : '', sp ? sp.plan : '', sp ? (sp.comp * 100).toFixed(1) : '', sp ? sp.status : '',
+      sp ? (window._planSkuAggMonth || '') : ''
     ].concat(months.map(function(m) {
       return p.m[m] ? (p.m[m].pct * 100).toFixed(1) : '';
     })).concat(months.map(function(m) {
@@ -14818,6 +14820,9 @@ function buildPlanSkuAgg() {
   const targetField = cfg.fields[idx];
   const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
   const targetMonth = COV_TO_YM[targetField] || '2026-08';
+  // 供 UI 列头显示（如「销售进度（8月）」），避免用户不知道这是哪个月的进度
+  window._planSkuAggMonth = targetMonth;
+  window._planSkuAggLabel = cfg.labels[idx] || targetMonth;
 
   // 促销装/新品期剔除表（与 renderPlanMonitor 同源）
   const excluded = {};
