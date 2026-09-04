@@ -6199,7 +6199,10 @@ function renderShortageOrderDetail() {
   }
 
   const data = dataStore.orderDetail;
-  const monthFilter = filters.dataMonth && filters.dataMonth !== 'all';
+  // 月份筛选：local（仅本页）—— 不影响全局 filters.dataMonth，避免切到订单明细页时其他页跟着变
+  window._odMonth = window._odMonth || 'all';
+  const odMonth = window._odMonth;
+  const monthFilter = odMonth && odMonth !== 'all';
 
   // ---- Filters ----
   window._odRdc = window._odRdc || 'all';
@@ -6215,10 +6218,12 @@ function renderShortageOrderDetail() {
 
   // Get all RDCs from orderDetail
   const allRdcs = [...new Set(data.map(d => d.warehouse).filter(Boolean))].sort();
+  // Get all months (YYYY-MM) from orderDetail.dateStr，筛选框选项按降序
+  const allMonths = [...new Set(data.map(d => d.dateStr && d.dateStr.slice(0, 7)).filter(Boolean))].sort().reverse();
 
   // Apply month+RDC+channel filters
   let filtered = data;
-  if (monthFilter) filtered = filtered.filter(d => d.dateStr && d.dateStr.startsWith(filters.dataMonth));
+  if (monthFilter) filtered = filtered.filter(d => d.dateStr && d.dateStr.startsWith(odMonth));
   if (odRdc !== 'all') filtered = filtered.filter(d => d.warehouse === odRdc);
   if (activeChannels.length > 0 && activeChannels.length < 2) {
     filtered = filtered.filter(d => activeChannels.includes(d.channel));
@@ -6311,34 +6316,35 @@ function renderShortageOrderDetail() {
   const startSku = (window._shortageSkuPage - 1) * perPage;
   const skuPageData = skuList.slice(startSku, startSku + perPage);
 
-  const monthLabel = monthFilter ? filters.dataMonth : '全部月份';
+  const monthLabel = monthFilter ? odMonth : '全部月份';
 
-  const rdcFilterHtml = `<label>RDC：</label>
-    <select onchange="window._odRdc=this.value;window._shortageSkuPage=1;renderShortage()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
+  // 月份下拉样式：与 RDC/渠道保持一致，并明确 padding/border/fontSize 避免被裁掉
+  const selStyle = 'padding:4px 10px;border:1px solid var(--border-card);border-radius:4px;font-size:13px;background:#fff;color:var(--text-primary);min-width:120px;cursor:pointer';
+  const lblStyle = 'font-size:13px;color:var(--text-primary);font-weight:500;margin-right:2px';
+  const rdcFilterHtml = `<label>${'\u00a0'}</label>
+    <select onchange="window._odRdc=this.value;window._shortageSkuPage=1;renderShortage()" style="${selStyle}">
       <option value="all" ${odRdc==='all'?'selected':''}>全部RDC</option>
       ${allRdcs.map(r => '<option value="'+r+'"'+(odRdc===r?' selected':'')+'>'+r+'</option>').join('')}
     </select>`;
-  const channelFilterHtml = `<label>渠道：</label>
-    <label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:12px;cursor:pointer">
+  const channelFilterHtml = `<label style="${lblStyle}">渠道：</label>
+    <label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:13px;cursor:pointer">
       <input type="checkbox" ${showKa?'checked':''} onchange="window._odChKa=this.checked;window._shortageSkuPage=1;renderShortage()"> KA
     </label>
-    <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;cursor:pointer">
+    <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;cursor:pointer">
       <input type="checkbox" ${showDealer?'checked':''} onchange="window._odChDealer=this.checked;window._shortageSkuPage=1;renderShortage()"> 经销商
     </label>`;
 
-  const summaryFilterHtml = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-left:auto">
-      <label style="font-size:12px">RDC：</label>
-      <select onchange="window._odRdc=this.value;window._shortageSkuPage=1;renderShortage()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:12px">
-        <option value="all" ${odRdc==='all'?'selected':''}>全部RDC</option>
-        ${allRdcs.map(r => '<option value="'+r+'"'+(odRdc===r?' selected':'')+'>'+r+'</option>').join('')}
-      </select>
-      <label style="font-size:12px">渠道：</label>
-      <label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:12px;cursor:pointer">
-        <input type="checkbox" ${showKa?'checked':''} onchange="window._odChKa=this.checked;window._shortageSkuPage=1;renderShortage()"> KA
-      </label>
-      <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;cursor:pointer">
-        <input type="checkbox" ${showDealer?'checked':''} onchange="window._odChDealer=this.checked;window._shortageSkuPage=1;renderShortage()"> 经销商
-      </label>
+  // v182 新增：月份下拉（local，置于汇总统计标题右侧最前位）
+  const monthFilterHtml = `<label style="${lblStyle}">月份：</label>
+    <select onchange="window._odMonth=this.value;window._shortageSkuPage=1;renderShortage()" style="${selStyle}">
+      <option value="all" ${odMonth==='all'?'selected':''}>全部月份</option>
+      ${allMonths.map(m => '<option value="'+m+'"'+(odMonth===m?' selected':'')+'>'+m+'</option>').join('')}
+    </select>`;
+
+  const summaryFilterHtml = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:auto">
+      ${monthFilterHtml}
+      ${rdcFilterHtml}
+      ${channelFilterHtml}
     </div>`;
 
   page.innerHTML = `
