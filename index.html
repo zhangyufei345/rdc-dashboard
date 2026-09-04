@@ -12218,6 +12218,30 @@ async function ensureSlowDiag() {
   } catch (e) { window._slowDiagReady = false; console.warn('[ensureSlowDiag] 失败:', e); }
 }
 
+// v198: inventory 按需扩展加载（拉回数据+转储数据+月度库存覆盖，4.1MB）
+// 首屏 inventory.json 已从 5.7MB 瘦身到 1.6MB（仅保留核心 6 sheet）；
+// 这 5 个大表仅在「分仓计划监控/转储数据/库存结构」页需要，进入时按需 fetch。
+async function ensureInventoryExtra() {
+  if (window._invExtraReady) return;
+  window._invExtraReady = true;
+  try {
+    if (dataStore.inventory && dataStore.inventory._extraLoaded) return;
+    const resp = await fetch('./inventory-extra.json', { cache: 'no-cache', signal: AbortController.timeout(30000).signal });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const j = await resp.json();
+    applyPreparsed('inventory-extra.json', j);
+    if (dataStore.inventory) dataStore.inventory._extraLoaded = true;
+    console.log('[ensureInventoryExtra] 按需加载完成');
+    // 触发当前页重渲染（如果正在使用 extra 数据的页面）
+    const cur = (typeof currentPage === 'string') ? currentPage : '';
+    if ((cur === 'plan-monitor' || cur === 'transship' || cur === 'inventory-structure') && typeof renderPage === 'function') renderPage();
+  } catch (e) {
+    window._invExtraReady = false;
+    console.warn('[ensureInventoryExtra] 失败:', e && e.message);
+  }
+}
+window.ensureInventoryExtra = ensureInventoryExtra;
+
 function parseInventoryExcel(rawData) {
   try {
     let wb;
@@ -13066,6 +13090,9 @@ function renderInventoryStructure() {
   setTitle('库存结构分析');
   const page = document.getElementById('page-inventory-structure');
   if (!page) return;
+
+  // v198: 月度库存覆盖数据(9K行)已拆到 inventory-extra.json 按需加载
+  if (!window._invExtraReady && typeof ensureInventoryExtra === 'function') ensureInventoryExtra();
 
   // 缓存命中：直接渲染缓存的 HTML + 重建两个图表（避免重遍历 + 重拼 HTML）
   const structCache = getStructCache();
@@ -15666,6 +15693,8 @@ function renderPlanMonitor() {
   const page = document.getElementById('page-plan-monitor');
   // v196 方案A: 慢动诊断已拆出首屏按需加载；进入本页若未就绪则后台补齐（不阻塞主体渲染，badge 稍后自动刷新）
   if (!window._slowDiagReady && typeof ensureSlowDiag === 'function') ensureSlowDiag();
+  // v198: 拉回数据(14K行)已拆到 inventory-extra.json 按需加载；plan-monitor 的批次拉回测算需要它
+  if (!window._invExtraReady && typeof ensureInventoryExtra === 'function') ensureInventoryExtra();
   if ((window._planTab || 'monitor') === 'advice') { renderPlanAdvice(); return; }
   const inv = dataStore.inventory || {};
   const covSource = inv.cov7 ? 'cov7' : (inv.cov6 ? 'cov6' : 'cov5');
