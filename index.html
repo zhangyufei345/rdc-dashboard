@@ -8,8 +8,34 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<script src="https://unpkg.com/echarts@5.5.0/dist/echarts.min.js"></script>
-<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+(function v182diag() {
+  'use strict';
+  function setT(t) { try { document.title = String(t).slice(0, 180); } catch(_) {} }
+  setT('[v182] head-script @ ' + new Date().toISOString().slice(11,19));
+  window.__v182_t0 = Date.now();
+  window.addEventListener('error', function(e) {
+    var msg = (e && (e.message || (e.error && e.error.message) || e.error)) || 'unknown';
+    var src = (e && e.filename) ? String(e.filename).split('/').pop() : '?';
+    var ln = (e && e.lineno) || 0;
+    setT('[v182-ERR L' + ln + '] ' + String(msg).slice(0, 60) + ' (' + src + ')');
+    try { console.error('[v182-ERR]', e); } catch(_) {}
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    var r = (e && e.reason && (e.reason.message || e.reason)) || 'unknown';
+    setT('[v182-PROMISE] ' + String(r).slice(0, 80));
+    try { console.error('[v182-PROMISE]', e); } catch(_) {}
+  });
+  // 异步探针：检查 echarts/xlsx 是否真加载成功
+  setTimeout(function() {
+    var et = (typeof echarts).slice(0,5), xt = (typeof XLSX).slice(0,5);
+    setT('[v182] e=' + et + ' x=' + xt + ' @ +' + (Date.now() - window.__v182_t0) + 'ms');
+    try { console.log('[v182-debug] CDN 加载状态: echarts=' + et + ', XLSX=' + xt); } catch(_) {}
+  }, 800);
+})();
+</script>
+<script src="https://unpkg.com/echarts@5.5.0/dist/echarts.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js'"></script>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'"></script>
 <style>
 :root {
   --bg-primary: #F8FAFC; --bg-card: #FFFFFF; --bg-sidebar: #1E293B;
