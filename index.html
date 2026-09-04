@@ -5134,9 +5134,15 @@ function renderShortageMonthly() {
   //      「一个长期问题 SKU」稀释成 6 个互不相干的仓。
   const ltProf = getLongTermProfile();
   const ltTierOf = sku => (ltProf.bySku[sku] && ltProf.bySku[sku].tier) || 'none';
+  // v183: 月份筛选（按月模式下，local 不影响全局 filters.dataMonth）
+  //      默认 'auto' = 跟随 _latestMonth，可手动下拉切换到任一有数据的月份
+  const msMonthAvail = Object.keys(prof.monthWorkdays || {}).sort().reverse(); // YYYY-MM 降序
+  if (!window._msMonth) window._msMonth = 'auto';
+  if (window._msMonth !== 'auto' && msMonthAvail.indexOf(window._msMonth) === -1) window._msMonth = 'auto';
+  const _msMonth = window._msMonth;
   const period = mode === 'rolling30'
     ? 'rolling30'
-    : (filters.dataMonth && filters.dataMonth !== 'all' ? filters.dataMonth : (window._latestMonth || ''));
+    : (_msMonth !== 'auto' ? _msMonth : (window._latestMonth || ''));
   const all = prof.list.filter(p => !period || p.period === period || p.month === period);
   const wd = (mode === 'rolling30')
     ? (prof.periodWorkdays && prof.periodWorkdays.rolling30) || 0
@@ -5356,9 +5362,13 @@ function renderShortageMonthly() {
   page.innerHTML = `
     <div class="filter-bar" style="flex-wrap:wrap;align-items:center;gap:8px">
       <span style="font-size:12px;color:var(--text-secondary)">${mode === 'rolling30' ? '近 30 天（滚动窗口 ' + (prof.maxDs || '') + ' 向后 30 天）' : (period || '全部月份')} · 已剔除双休日${wd ? '（有效工作日 ' + wd + ' 天）' : ''} · 基于订单明细按 SKU×RDC 聚合</span>
-      <div style="margin-left:auto;display:flex;gap:4px">
+      <div style="margin-left:auto;display:flex;gap:4px;align-items:center;flex-wrap:wrap">
         <button class="btn-export" style="font-size:11px;padding:3px 12px;${mode==='rolling30'?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':''}" onclick="window._msWindowMode='rolling30';renderShortage()">📅 近 30 天（最新）</button>
         <button class="btn-export" style="font-size:11px;padding:3px 12px;${mode==='monthly'?'background:var(--color-blue);color:#fff;border-color:var(--color-blue);':''}" onclick="window._msWindowMode='monthly';renderShortage()">📊 按月</button>
+        ${mode === 'monthly' ? ('<label style="font-size:11px;color:var(--text-secondary);margin-left:4px">月份：' +
+          '<select onchange="window._msMonth=this.value;renderShortage()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:11px;background:#fff;cursor:pointer;min-width:96px">' +
+          msMonthAvail.map(function(m){ return '<option value="'+m+'"'+(_msMonth===m?' selected':'')+'>'+m+'</option>'; }).join('') +
+          '</select></label>') : ''}
       </div>
     </div>
     ${shortageTabBarHtml('monthly')}
@@ -5728,6 +5738,32 @@ function renderShortageLongTerm() {
   const curMonth = lt.curMonth;
   const counts = lt.counts || {};
 
+  // v183: 销售进度聚合——从分仓计划监控 rows 按 SKU 聚合（同一 SKU 跨 RDC 合并）
+  //   数据源 window._planMonitorRows（renderPlanMonitor 末尾赋值，含 plan/shipped/comp/status/rdc）
+  //   跨 RDC 合并：plan 求和、shipped 求和、comp = shipped/plan（重新算一次避免逐行均值偏差）
+  //   状态判定：取计数最多的（滞后 / 超额 / 正常）；若有平局取更严重的一侧
+  const _pmRows = window._planMonitorRows || [];
+  const _skuAgg = {};
+  _pmRows.forEach(function(r){
+    const k = r.sku;
+    if (!k) return;
+    if (!_skuAgg[k]) _skuAgg[k] = { plan: 0, shipped: 0, byStatus: {}, rdcs: [] };
+    _skuAgg[k].plan += r.plan;
+    _skuAgg[k].shipped += r.shipped;
+    _skuAgg[k].rdcs.push(r.rdc);
+    const s = r.status || '正常';
+    _skuAgg[k].byStatus[s] = (_skuAgg[k].byStatus[s] || 0) + 1;
+  });
+  Object.keys(_skuAgg).forEach(function(k){
+    const v = _skuAgg[k];
+    v.comp = v.plan > 0 ? v.shipped / v.plan : 0;
+    // 状态：滞后 > 超额 > 正常（按严重程度取）
+    const cnts = v.byStatus;
+    if ((cnts['滞后'] || 0) > 0) v.status = '滞后';
+    else if ((cnts['超额'] || 0) > 0) v.status = '超额';
+    else v.status = '正常';
+  });
+
   const filterTier = window._ltFilterTier || 'all';
   const filterBrand = window._ltFilterBrand || 'all';
   const brandOptions = ['all'].concat([...new Set(lt.list.map(p => p.brand).filter(Boolean))].sort());
@@ -5793,6 +5829,16 @@ function renderShortageLongTerm() {
   const rowHtml = pageData.map(function(p) {
     const t = LT_TIER[p.tier] || LT_TIER.none;
     const scc = skuSupplyChainCat(p.sku);
+    // v183: 销售进度（来自分仓计划监控的 SKU 聚合；缺数据时显示 —）
+    const sp = _skuAgg[p.sku];
+    let spCell = '<span style="color:#CBD5E1">—</span>';
+    if (sp && sp.plan > 0) {
+      const statColor = sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706');
+      const statBg = sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB');
+      spCell = '<div style="font-size:11px;color:var(--text-secondary)">订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() + '</div>' +
+        '<div style="font-size:11px;color:' + statColor + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
+        '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + statBg + ';color:' + statColor + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>';
+    }
     return '<tr>' +
       '<td style="text-align:left">' + (p.brand || '') + '</td>' +
       '<td style="text-align:left;font-family:monospace">' + p.sku + '</td>' +
@@ -5807,6 +5853,7 @@ function renderShortageLongTerm() {
       '<td style="text-align:right" title="有效月里同时缺货的最大 RDC 数">' + p.rdcCntMax + '</td>' +
       '<td style="text-align:right;color:var(--color-red)">' + (p.curMr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right" title="从最新月往前连续在当月 P75 的月数">' + (p.curStreak || 0) + '</td>' +
+      '<td style="text-align:left;min-width:120px;line-height:1.4" title="数据来自「分仓计划监控」同 SKU 跨 RDC 聚合：订单量求和 / 计划量求和 / 重新算完成率；状态取计数最多的一侧">' + spCell + '</td>' +
       '</tr>';
   }).join('');
 
@@ -5901,9 +5948,10 @@ function renderShortageLongTerm() {
             <th style="text-align:right" title="有效月里同时缺货的最大 RDC 数">涉及RDC</th>
             <th style="text-align:right;color:var(--color-red)" title="${curMonth} 的首日缺货率">当月缺货率</th>
             <th style="text-align:right" title="从最新月往前连续在当月 P75 的月数">当前连续</th>
+            <th style="text-align:left" title="数据来自「分仓计划监控」同 SKU 跨 RDC 聚合：订单量/计划量/完成率/状态">销售进度</th>
           </tr></thead>
           <tbody>
-            ${pageData.length > 0 ? rowHtml : '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
+            ${pageData.length > 0 ? rowHtml : '<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -5940,15 +5988,20 @@ function exportLongTermCSV() {
     return v;
   }
   const head = ['品牌', 'SKU编码', 'SKU名称', '供应链品类', '长期标记', '收缩值', '有效月数', 'LSI',
-    '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续']
+    '累计缺货量', '涉及RDC', '当月缺货率(%)', '当前连续',
+    // v183: 销售进度（从分仓计划监控同 SKU 跨 RDC 聚合）
+    '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态']
     .concat(months.map(m => m + ' 百分位'))
     .concat(months.map(m => m + ' 严重度'));
   const rows = list.map(function(p) {
+    // v183: 销售进度取值（保持与表体同源；缺数据时空字符串，避免误导）
+    const sp = _skuAgg && _skuAgg[p.sku];
     return [
       esc(p.brand), esc(p.sku), esc(p.name), esc(skuSupplyChainCat(p.sku)),
       esc((LT_TIER[p.tier] || LT_TIER.none).label),
       p.shrunkPct.toFixed(4), p.nM, p.lsi.toFixed(4),
-      p.totalShort, p.rdcCntMax, (p.curMr * 100).toFixed(1), p.curStreak || 0
+      p.totalShort, p.rdcCntMax, (p.curMr * 100).toFixed(1), p.curStreak || 0,
+      sp ? sp.shipped : '', sp ? sp.plan : '', sp ? (sp.comp * 100).toFixed(1) : '', sp ? sp.status : ''
     ].concat(months.map(function(m) {
       return p.m[m] ? (p.m[m].pct * 100).toFixed(1) : '';
     })).concat(months.map(function(m) {
@@ -6341,7 +6394,7 @@ function renderShortageOrderDetail() {
       ${allMonths.map(m => '<option value="'+m+'"'+(odMonth===m?' selected':'')+'>'+m+'</option>').join('')}
     </select>`;
 
-  const summaryFilterHtml = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:auto">
+  const summaryFilterHtml = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       ${monthFilterHtml}
       ${rdcFilterHtml}
       ${channelFilterHtml}
@@ -14975,8 +15028,20 @@ function renderPlanMonitor() {
       cumByDayByRdc[rdc].push(acc);
     }
   });
-  rows.sort(function(a, b) { return a.comp - b.comp; });
-  window._planMonitorRows = rows;
+  // v183: SKU 分仓偏差明细——排序 + 状态筛选（用户要求：可按订单量、完成率排序；按状态筛）
+  // 默认保持 v180 的「完成率升序」（滞后在最前），其余三档显式按钮 + 一个状态下拉
+  window._pmSkuSort = window._pmSkuSort || 'comp-asc';
+  window._pmSkuStatus = window._pmSkuStatus || 'all';
+  const _pmSortKey = window._pmSkuSort;
+  const _pmStatus = window._pmSkuStatus;
+  // 状态筛选
+  const _pmRowsFiltered = _pmStatus === 'all' ? rows.slice() : rows.filter(function(r){ return r.status === _pmStatus; });
+  // 排序
+  if (_pmSortKey === 'comp-asc') _pmRowsFiltered.sort(function(a, b){ return a.comp - b.comp; });
+  else if (_pmSortKey === 'comp-desc') _pmRowsFiltered.sort(function(a, b){ return b.comp - a.comp; });
+  else if (_pmSortKey === 'qty-desc') _pmRowsFiltered.sort(function(a, b){ return b.shipped - a.shipped; });
+  else if (_pmSortKey === 'qty-asc') _pmRowsFiltered.sort(function(a, b){ return a.shipped - b.shipped; });
+  window._planMonitorRows = _pmRowsFiltered;
 
   // KPI
   const totalPlan = rows.reduce(function(s, r) { return s + r.plan; }, 0);
@@ -15097,17 +15162,36 @@ function renderPlanMonitor() {
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">横轴：'+targetMonth+' 第 1 ~ '+dayOfMonth+' 日 ｜ 每条线 = 一个 RDC 的 MTD 累计完成率%</span>';
   html += '</div><div id="pm-rdc-trend" style="height:340px"></div></div>';
 
-  html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">SKU 分仓计划偏差明细（按计划完成率升序）</span><button class="btn-export" onclick="exportPlanMonitor()">导出CSV</button></div>';
+  // v183: SKU 分仓偏差明细 card-header —— 排序按钮 + 状态下拉（与 KPI 等其它区域完全独立的 local 状态）
+  const _pmSortBtn = function(id, label){
+    return '<button class="btn-export" style="font-size:11px;padding:3px 10px;' +
+      (_pmSortKey === id ? 'background:var(--color-blue);color:#fff;border-color:var(--color-blue);' : '') +
+      '" onclick="window._pmSkuSort=\'' + id + '\';renderPlanMonitor()">' + label + '</button>';
+  };
+  const _pmStatusOptions = [
+    ['all', '全部'], ['滞后', '滞后'], ['超额', '超额'], ['正常', '正常']
+  ];
+  html += '<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">SKU 分仓计划偏差明细（当前显示 ' + _pmRowsFiltered.length + ' 条' + (_pmStatus !== 'all' ? (' · 状态=' + _pmStatus) : '') + '）</span>' +
+    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+      '<span style="font-size:11px;color:var(--text-secondary)">状态：</span>' +
+      '<select onchange="window._pmSkuStatus=this.value;renderPlanMonitor()" style="padding:3px 8px;border:1px solid var(--border-card);border-radius:4px;font-size:11px;background:#fff;cursor:pointer">' +
+        _pmStatusOptions.map(function(o){ return '<option value="'+o[0]+'"'+(_pmStatus===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('') +
+      '</select>' +
+      '<span style="font-size:11px;color:var(--text-secondary);margin-left:4px">排序：</span>' +
+      _pmSortBtn('comp-asc', '完成率升序') + _pmSortBtn('comp-desc', '完成率降序') + _pmSortBtn('qty-desc', '订单量降序') + _pmSortBtn('qty-asc', '订单量升序') +
+      '<button class="btn-export" onclick="exportPlanMonitor()" style="margin-left:6px">导出CSV</button>' +
+    '</div>' +
+  '</div>';
   html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table" id="pm-sku-detail-table"><thead><tr>';
   html += '<th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>建议</th><th>操作</th>';
   html += '</tr></thead><tbody></tbody></table></div></div>';
 
-  // 行html数组（供通用分页器切分）
+  // 行html数组（供通用分页器切分）——v183: 用排序+筛选后的 _pmRowsFiltered
   const skuRowsHtml = [];
-  if (rows.length === 0) {
+  if (_pmRowsFiltered.length === 0) {
     skuRowsHtml.push('<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选条件下无分仓计划数据</td></tr>');
   } else {
-    rows.forEach(function(r) {
+    _pmRowsFiltered.forEach(function(r) {
       const compColor = planCompColor(r.comp);
       const compBg = r.comp < 0.7 ? '#FEE2E2' : r.comp < 1.0 ? '#FFFBEB' : r.comp <= 1.1 ? '#DCFCE7' : '#DBEAFE';
       const statusColor = r.status==='滞后' ? '#DC2626' : r.status==='超额' ? '#15803D' : '#D97706';
