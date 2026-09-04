@@ -248,21 +248,35 @@ function main() {
       payload.discontinuedMap = pm.discontinuedMap;
       payload.brandMap = pm.brandMap;
       payload.abcMap = pm.abcMap;
-      // 2026-09: 订单导出文件（data.xlsx）可能不带「装运条件定义」sheet，
-      // 而未放行订单需要它把装运条件码映射到 RDC。若缺则从历史月 json（含该 sheet 的最新一个）回填。
+      // 未放行订单需要它把装运条件码映射到 RDC。若源文件里没有，才从历史月 json 回填。
       // 该表为 SAP 静态编码（20东北/50华南/60西北/70华中/80西南/90华北），沿用历史值安全。
-      if (!payload.sheets['装运条件定义']) {
+      //
+      // v181 修复：源文件的 sheet 名会变——8 月及以前叫「装运条件定义」，
+      //   2026-09-04 的 9 月文件改叫「装运条件」（内容一致，都是 7 行）。
+      //   此前这里是精确匹配 '装运条件定义'，把「有数据但换了名字」误判成缺失，
+      //   于是走回填分支，结果 json 里同时出现「装运条件」(自带 7 行) 与
+      //   「装运条件定义」(回填 7 行) 两份完全相同的数据，sheetNames 变成 9 个。
+      //   HTML 侧用的是模糊匹配（line 1490 的 indexOf('装运条件')），取第一个所以功能没坏，
+      //   但属于冗余且易误导。
+      //   改法：这里也改成与 HTML 一致的模糊匹配，命中源文件自带的表就直接用，不回填。
+      const SHIP_KEY = '装运条件';
+      const shipName = (wb.SheetNames || []).find(n => String(n || '').indexOf(SHIP_KEY) >= 0);
+      if (shipName) {
+        console.log(`   ✓ 装运条件表：使用源文件自带的「${shipName}」（${(payload.sheets[shipName] || []).length} 行），无需回填`);
+      } else {
         const histFiles = fs.readdirSync(ROOT)
           .filter(f => /^data-\d{4}-\d{2}\.json$/.test(f) && f !== 'data.json')
           .sort().reverse();
         for (const hf of histFiles) {
           try {
             const hj = JSON.parse(fs.readFileSync(path.join(ROOT, hf), 'utf8'));
-            if (hj.sheets && hj.sheets['装运条件定义'] && Array.isArray(hj.sheets['装运条件定义'])) {
-              payload.sheets['装运条件定义'] = hj.sheets['装运条件定义'];
-              payload.sheetNames = payload.sheetNames.filter(n => n !== '装运条件定义');
+            // 历史 json 同样用模糊匹配找，兼容新旧两种名字
+            const hName = (hj.sheetNames || []).find(n => String(n || '').indexOf(SHIP_KEY) >= 0);
+            if (hName && hj.sheets && hj.sheets[hName] && Array.isArray(hj.sheets[hName])) {
+              payload.sheets['装运条件定义'] = hj.sheets[hName];
+              payload.sheetNames = payload.sheetNames.filter(n => String(n || '').indexOf(SHIP_KEY) < 0);
               payload.sheetNames.push('装运条件定义');
-              console.log(`   ⚠️ data.xlsx 缺「装运条件定义」，已从 ${hf} 回填（${payload.sheets['装运条件定义'].length} 行）`);
+              console.log(`   ⚠️ data.xlsx 缺「${SHIP_KEY}」sheet，已从 ${hf} 的「${hName}」回填（${payload.sheets['装运条件定义'].length} 行）`);
               break;
             }
           } catch (e) { /* 跳过不可读历史文件 */ }
