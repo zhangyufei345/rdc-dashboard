@@ -684,7 +684,7 @@ try {
 //      （v191 同款死状态）。
 try {
   const rmIdx = html.indexOf('async function refreshFromManifest');
-  const rm = html.slice(rmIdx, rmIdx + 11000);
+  const rm = html.slice(rmIdx, rmIdx + 16000);
   const firstLoopAt = rm.indexOf('for (const f of first)');
   const markAt = rm.indexOf('first.forEach(function(f) { _markHash(f); });');
   const restoreAt = rm.indexOf('历史月份已从本地快照回填');
