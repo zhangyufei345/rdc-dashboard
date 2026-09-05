@@ -15295,15 +15295,12 @@ function buildPlanSkuAgg() {
     return out;
   }
 
-  // 促销装/新品期剔除表（与 renderPlanMonitor 同源）
-  const excluded = {};
-  cov7.forEach(function(d){ if (d && d.sku && (d.coverageLevel === '促销装' || d.coverageLevel === '新品期')) excluded[d.sku] = true; });
+  // v199+: 取消分类剔除（促销装/新品期/无需求全部纳入销售进度计算）
 
   const shipMap = {};
   function accumulate(sku, rdc, q) { shipMap[sku + '|' + rdc] = (shipMap[sku + '|' + rdc] || 0) + (q || 0); }
   orders.forEach(function(d) {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    if (excluded[d.skuCode]) return;
     const rdc = normalizeRdcName(d.warehouse);
     if (!rdc) return;
     accumulate(d.skuCode || '', rdc, d.orderQty || 0);
@@ -15313,7 +15310,6 @@ function buildPlanSkuAgg() {
   (dataStore.unreleasedOrders || []).forEach(function(d) {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (d.orderNo && relNoSet.has(String(d.orderNo))) return;
-    if (excluded[d.skuCode]) return;
     const rdc = normalizeRdcName(d.warehouse);
     if (!rdc) return;
     accumulate(d.skuCode || '', rdc, d.orderQty || 0);
@@ -15321,8 +15317,6 @@ function buildPlanSkuAgg() {
 
   cov7.forEach(function(d) {
     const plan = d[targetField] || 0;
-    if (plan <= 0) return;
-    if (excluded[d.sku]) return;
     const rdc = d.rdc;
     const sku = d.sku || '';
     if (!sku) return;
@@ -15708,13 +15702,7 @@ function renderPlanMonitor() {
   window._planRdc = rdcFilter;
   const hainan = window._invHainan || 'all';
   window._invHainan = hainan; // 反写回全局，规避跨页面状态被误初始化
-  // === 覆盖周数分类：剔除促销装/新品期（这两类不是按需求补货的）===
-  // 数据来源：7月库存覆盖数据 col28「覆盖周数分类」(cov7[i].coverageLevel)
-  //  - 促销装：139 行 cov08 都为 0，已被 plan<=0 自动过滤
-  //  - 新品期：20 行 cov08=11100，需主动剔除（否则会拉低完成率）
-  const _isPromoOrNew = function(cat){ return cat === '促销装' || cat === '新品期'; };
-  const _excludedSkuSet = {};
-  cov7.forEach(function(d){ if (d && d.sku && _isPromoOrNew(d.coverageLevel)) _excludedSkuSet[d.sku] = true; });
+  // v199+: 取消覆盖周数分类剔除（促销装/新品期/无需求全部纳入计算范围）
   // v116: 根因门控所需的「缺货报告真实缺货」查找表（按 SKU×RDC），随数据加载始终可用
   // 仅用「缺货箱数>0」与「大仓供应状态」两字段，不依赖 window._shortageReasons（后者需先开缺货页才有值，首次进计划监控会空→误判）
   // 失败安全：cov7.sku 与 shortage.materialCode 若不匹配，查找结果为 undefined → 保守判为"无真实缺货"→下调/暂停，绝不盲加
@@ -15800,7 +15788,6 @@ function renderPlanMonitor() {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
-    if (_excludedSkuSet[d.skuCode]) return; // 剔除促销装/新品期 SKU（与分母口径一致）
     const rdc = normalizeRdcName(d.warehouse);
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
     const sku = d.skuCode || '';
@@ -15828,7 +15815,6 @@ function renderPlanMonitor() {
     }
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
-    if (_excludedSkuSet[d.skuCode]) return;
     const rdc = normalizeRdcName(d.warehouse);
     if (!rdc) { unrelStat.noRdc++; return; } // 装运条件无法映射到 RDC 的不计入（避免落到空的 RDC 维度）
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
@@ -15845,10 +15831,7 @@ function renderPlanMonitor() {
   const rows = [];
   cov7.forEach(function(d) {
     const plan = d[targetField] || 0;
-    if (plan <= 0) return;
-    if (_isPromoOrNew(d.coverageLevel)) return; // 剔除促销装/新品期（不是按需求补货）
     if (hainan === 'yes' && !isH(d.sku)) return;
-    if (_isPromoOrNew(d.coverageLevel)) return; // v111: 剔除促销装/新品期（与第一处口径一致）
     if (hainan === 'no' && isH(d.sku)) return;
     const rdc = d.rdc;
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
@@ -16234,9 +16217,9 @@ function buildPlanOptimAdvice() {
   const COV_TO_YM = { cov06:'2026-06', cov07:'2026-07', cov08:'2026-08', cov09:'2026-09', cov10:'2026-10', cov11:'2026-11', cov12:'2026-12', cov13:'2027-01' };
   const targetMonth = COV_TO_YM[targetField] || '2026-08';
 
-  const _isPromoOrNew = function(cat){ return cat === '促销装' || cat === '新品期'; };
+  // v199+: 取消分类剔除（促销装/新品期/无需求全部纳入计算范围）
+  const _isPromoOrNew = function(cat){ return false; };
   const _excludedSkuSet = {};
-  cov7.forEach(function(d){ if (d && d.sku && _isPromoOrNew(d.coverageLevel)) _excludedSkuSet[d.sku] = true; });
   function isH(sku){ return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); }
 
   // 销售进度（SKU 级跨 RDC 聚合，buildPlanSkuAgg 已挂 window._planSkuAgg）
@@ -16291,7 +16274,6 @@ function buildPlanOptimAdvice() {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
-    if (_excludedSkuSet[d.skuCode]) return;
     const rdc = normalizeRdcName(d.warehouse);
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
     const sku = d.skuCode || '';
@@ -16307,8 +16289,6 @@ function buildPlanOptimAdvice() {
   const out = [];
   cov7.forEach(function(d){
     const plan = d[targetField] || 0;
-    if (plan <= 0) return;
-    if (_isPromoOrNew(d.coverageLevel)) return;
     const sku = d.sku || '';
     if (!sku) return;
     if (hainan === 'yes' && !isH(sku)) return;
