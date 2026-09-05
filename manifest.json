@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-09-05T14:52:04.051Z",
+  "version": "2026-09-05",
   "files": {
-    "inventory-core.json": "a68bc8bdf7c9fc151e4098e36e2f3d98bbf5edb7659fd1b2bf732840a767319b",
-    "inventory-extra.json": "89a40248c02430a21ddc1cd2616804b1d1f4053b57d3c47885b7caa7e23f64e3",
-    "inventory-master.json": "94ab5742415183e9cbc4a53f177780fd0e76ebfbb41eab85575daf37441dfd57",
-    "inventory-plan.json": "750a505731bed09ff11ea6fb1ac8a545d5ca01d0426c0c4aa5ddf1376f5f2a72",
+    "inventory-core.json": "f6bb17e3c27c66478e8395b70a6756ac78211eb5b2e2c752be34e3554294f992",
+    "inventory-plan.json": "58eb79340c7c2072888f77d294355d66c5f688b07a9ca13f57c12f6a5df73495",
+    "inventory-extra.json": "80d83b1e5857c7403567f57853e3d10dc96913f1d1134f90d6514d7231d3d72f",
+    "inventory-master.json": "2faf061aa05d8be90368e85f63090745e34cfda2792b924d06e594b1d2321cf4",
     "data.json": "6e7bb3fba2ef08048043e926d1ef1063183e6a3663c5c205b7ff060d96f9cc78",
     "adjustments.json": "8ef11ce86fb28c1e948c7e13aafb5ade5e302992ac1b46900b5839fb0167e273",
     "history.json": "b6c8d27eccb5903aef2d221f37f78197d7f6b9ca663cc5051e6146750acdf2c8",
