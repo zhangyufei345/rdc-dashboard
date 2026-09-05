@@ -1,31 +1,4 @@
 
-;
-(function v182diag() {
-  'use strict';
-  function setT(t) { try { document.title = String(t).slice(0, 180); } catch(_) {} }
-  setT('[v182] head-script @ ' + new Date().toISOString().slice(11,19));
-  window.__v182_t0 = Date.now();
-  window.addEventListener('error', function(e) {
-    var msg = (e && (e.message || (e.error && e.error.message) || e.error)) || 'unknown';
-    var src = (e && e.filename) ? String(e.filename).split('/').pop() : '?';
-    var ln = (e && e.lineno) || 0;
-    setT('[v182-ERR L' + ln + '] ' + String(msg).slice(0, 60) + ' (' + src + ')');
-    try { console.error('[v182-ERR]', e); } catch(_) {}
-  });
-  window.addEventListener('unhandledrejection', function(e) {
-    var r = (e && e.reason && (e.reason.message || e.reason)) || 'unknown';
-    setT('[v182-PROMISE] ' + String(r).slice(0, 80));
-    try { console.error('[v182-PROMISE]', e); } catch(_) {}
-  });
-  // 异步探针：检查 echarts/xlsx 是否真加载成功
-  setTimeout(function() {
-    var et = (typeof echarts).slice(0,5), xt = (typeof XLSX).slice(0,5);
-    setT('[v182] e=' + et + ' x=' + xt + ' @ +' + (Date.now() - window.__v182_t0) + 'ms');
-    try { console.log('[v182-debug] CDN 加载状态: echarts=' + et + ', XLSX=' + xt); } catch(_) {}
-  }, 800);
-})();
-
-;
 const DEFAULT_USER = 'admin';
 const DEFAULT_PASS = 'admin123';
 
@@ -8183,15 +8156,17 @@ function renderTransship() {
     return;
   }
 
-  // v205: 转储数据有**两批互补来源** —— transship.json（2026-01~06，16524 条）
-  //   + inventory-extra.json 的「转储数据」sheet（2026-07-02~08-31，7324 条），实测零重叠。
-  //   此前本页只触发 ensureTransship，导致**同一页面数据随点击顺序变化**：
-  //     直接进转储页            → 只有 1-6 月，16523 条
-  //     先进分仓计划监控/库存结构 → 顺带加载了 extra，再回来变成 23790 条（1-8 月）
-  //   这是客观的不一致（不是口径偏好），故补齐触发。放这里而非函数开头，是为了
-  //   等 1-6 月数据先就位，避免 extra 先到时 renderPage 落到「暂无转储数据」分支。
-  //   ensureInventoryExtra 内部完成时会 renderPage() 回来重渲染（见其 cur==='transship' 分支）。
-  if (!window._invExtraReady && typeof ensureInventoryExtra === 'function') ensureInventoryExtra();
+  // v208: 转储数据两批互补来源（transship.json 1-6月 + inventory-extra 7-8月），必须都就位后再渲染。
+  //   此前本页先触发 ensureTransship 用 1-6月（16523）渲染，再异步触发 ensureInventoryExtra，
+  //   后者完成时靠内部 renderPage 才补齐 7-8月 —— 用户会**先看到 1-6月、再跳到 1-8月**，
+  //   偶发只截到 1-6月就误判「7-8月没显示」。现改为：1-6月已就位但 7-8月未加载（且未达重试上限）时，
+  //   先显示「合并中」占位并等待 ensureInventoryExtra 完成，其成功/失败都会 renderPage 重渲染出全量数据。
+  //   放这里（ensureTransship 之后）而非函数开头，是为等 1-6月先就位，避免 extra 先到时落到「暂无转储数据」分支。
+  if (dataStore.transship.length > 0 && !window._invExtraReady && (window._invExtraRetry || 0) < 2 && typeof ensureInventoryExtra === 'function') {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔄</div><div style="font-size:var(--font-size-lg)">正在合并 7-8 月转储数据…</div><div style="font-size:12px;margin-top:8px;color:var(--text-secondary)">转储数据含两批互补来源（1-6月 + 7-8月），正在加载并合并</div></div>';
+    ensureInventoryExtra();
+    return;
+  }
 
   if (typeof window._transTab === 'undefined') window._transTab = 'transship';
   const _tTab = window._transTab;
@@ -12160,20 +12135,24 @@ async function ensureSlowDiag() {
 async function ensureInventoryExtra() {
   if (window._invExtraReady) return;
   window._invExtraReady = true;
+  // v208: 当前页（使用 extra 数据的页面）在成功/失败分支都重渲染，
+  //   失败时同样重渲染，避免 renderTransship 的「合并中」占位卡死。
+  const cur = (typeof currentPage === 'string') ? currentPage : '';
+  const needRerender = (cur === 'plan-monitor' || cur === 'transship' || cur === 'inventory-structure');
   try {
-    if (dataStore.inventory && dataStore.inventory._extraLoaded) return;
+    if (dataStore.inventory && dataStore.inventory._extraLoaded) { if (needRerender) renderPage(); return; }
     const resp = await fetch('./inventory-extra.json', { cache: 'no-cache', signal: abortAfter(60000) });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const j = await resp.json();
     applyPreparsed('inventory-extra.json', j);
     if (dataStore.inventory) dataStore.inventory._extraLoaded = true;
     console.log('[ensureInventoryExtra] 按需加载完成');
-    // 触发当前页重渲染（如果正在使用 extra 数据的页面）
-    const cur = (typeof currentPage === 'string') ? currentPage : '';
-    if ((cur === 'plan-monitor' || cur === 'transship' || cur === 'inventory-structure') && typeof renderPage === 'function') renderPage();
+    if (needRerender) renderPage();
   } catch (e) {
     window._invExtraReady = false;
+    window._invExtraRetry = (window._invExtraRetry || 0) + 1;
     console.warn('[ensureInventoryExtra] 失败:', e && e.message);
+    if (needRerender) renderPage();
   }
 }
 window.ensureInventoryExtra = ensureInventoryExtra;

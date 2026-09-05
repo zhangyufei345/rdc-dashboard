@@ -39,9 +39,28 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     return false;
   };
 
+  // 打点：把 cov7 / orders / loaded / _bootLoading 分开看（v206 首跑曾因 loaded 迟迟不为 true
+  //   被误判成「自愈失败」——实际数据是好的。分开打印才能定位是慢还是坏）
+  const tick = async (label, maxSec) => {
+    const s0 = Date.now();
+    for (let i = 0; i * 15 < maxSec; i++) {
+      const s = await p.evaluate(() => ({
+        cov: ((window.dataStore && dataStore.inventory && dataStore.inventory.cov7) || []).length,
+        ord: (window.dataStore && dataStore.orderDetail ? dataStore.orderDetail.length : 0),
+        loaded: !!(window.dataStore && dataStore.loaded),
+        booting: !!window._bootLoading,
+      })).catch(() => ({}));
+      console.log('   [' + label + ' ' + ((Date.now() - s0) / 1000).toFixed(0) + 's] cov7=' + s.cov + ' orders=' + s.ord + ' loaded=' + s.loaded + ' booting=' + s.booting);
+      if (s.cov > 100 && s.loaded) return true;
+      await sleep(15000);
+    }
+    return false;
+  };
+
   const t0 = Date.now();
   await p.goto(`http://127.0.0.1:${PORT}/rdc-dashboard.html`, { waitUntil: 'domcontentloaded' });
-  console.log('① 首次 boot：' + (await bootDone() ? '就绪 ✅' : '失败 ❌') + '（' + ((Date.now() - t0) / 1000).toFixed(0) + 's）');
+  const okBoot = await tick('首次boot', 600);
+  console.log('① 首次 boot：' + (okBoot ? '就绪 ✅' : '未就绪 ❌') + '（' + ((Date.now() - t0) / 1000).toFixed(0) + 's）');
 
   console.log('② 毒化 inventory（cov7=[] / structureByYear={}）并写回 IDB…');
   await p.evaluate(async () => {
@@ -51,12 +70,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   logs.length = 0;
   const t1 = Date.now();
   await p.reload({ waitUntil: 'domcontentloaded' });
-  let healed = false;
-  for (let i = 0; i < 180; i++) {                       // 全量重拉 ~4 分钟，给足 9 分钟
-    healed = await p.evaluate(() => !!(window.dataStore && dataStore.loaded && dataStore.inventory && dataStore.inventory.cov7 && dataStore.inventory.cov7.length > 100)).catch(() => false);
-    if (healed) break;
-    await sleep(3000);
-  }
+  const healed = await tick('自愈', 540);
   console.log('③ reload 后自愈：' + (healed ? '✅ 自动恢复' : '❌ 未恢复') + '（等待 ' + ((Date.now() - t1) / 1000).toFixed(0) + 's）');
 
   await p.evaluate(() => navigateTo('plan-monitor'));
