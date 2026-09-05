@@ -12188,7 +12188,7 @@ async function ensureTransship() {
   window._transshipReady = true;
   try {
     if (dataStore.transship && dataStore.transship.length > 0) return;
-    const resp = await fetch('./transship.json', { cache: 'no-cache' });
+    const resp = await fetch('./transship.json', { cache: 'no-cache', signal: AbortController.timeout(30000).signal });
     if (resp.ok) { const j = await resp.json(); applyPreparsed('transship.json', j); console.log('[ensureTransship] 按需加载完成，条数=' + dataStore.transship.length); }
     else { window._transshipReady = false; }
   } catch (e) { window._transshipReady = false; console.warn('[ensureTransship] 失败:', e); }
