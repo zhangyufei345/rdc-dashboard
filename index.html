@@ -5033,9 +5033,9 @@ function buildHiAttribution(hi, period) {
   var ATTR_TYPES = {
     A1: { label: '总仓完全卡死',   color: '#991B1B', bg: '#FEE2E2', desc: 'dcSupply含缺货/紧张 且 总仓异常天数≥缺货天数 → RDC侧无解，必须等/协调总仓', order: 1 },
     A2: { label: '总仓部分紧张',   color: '#92400E', bg: '#FEF3C7', desc: 'dcSupply含缺货/紧张 但 总仓异常天数<缺货天数 → 协调总仓+RDC调拨并行',        order: 2 },
-    C1: { label: '结构性超销',     color: '#B45309', bg: '#FEF3C7', desc: '总仓正常 + 完成率>110% + 非临时大单(peakFactor<3) → 计划系统性偏低，下月上调',     order: 3 },
-    C2: { label: '偶发大单超销',   color: '#047857', bg: '#D1FAE5', desc: '总仓正常 + 完成率>110% + 临时大单驱动(peakFactor≥3) → 偶发事件，不调计划',       order: 4 },
-    D:  { label: '⚠️ 需重点排查',  color: '#374151', bg: '#F3F4F6', desc: '总仓正常 + 完成率≤110% → 两边都没明显异常，可能是运输/排单/库位问题',      order: 5 },
+    C1: { label: '结构性超销',     color: '#B45309', bg: '#FEF3C7', desc: '总仓正常 + 完成率>100% + 非极端峰值(peakFactor<8) → 计划系统性偏低，下月上调',     order: 3 },
+    C2: { label: '偶发大单超销',   color: '#047857', bg: '#D1FAE5', desc: '总仓正常 + 完成率>100% + 极端峰值驱动(peakFactor≥8) → 偶发事件，不调计划',       order: 4 },
+    D:  { label: '⚠️ 需重点排查',  color: '#374151', bg: '#F3F4F6', desc: '总仓正常 + 完成率≤100% → 两边都没明显异常，可能是运输/排单/库位问题',      order: 5 },
     NA: { label: '数据不足',       color: '#94A3B8', bg: '#F1F5F9', desc: '缺少销售进度或dcSupply数据，无法归因',                                order: 9 }
   };
 
@@ -5051,11 +5051,11 @@ function buildHiAttribution(hi, period) {
     var dcFullyDead = dcAbnormal && dcs && dcs.dcShortDayCnt >= p.shortDayCnt;
 
     var comp = compInfo ? compInfo.comp : 0;
-    var isOversold = comp > 1.10; // 完成率>110%
+    var isOversold = comp > 1.0; // 完成率>100%即超销
 
     var peakFactor = compInfo ? compInfo.peakFactor : 0;
     var maxLineRatio = compInfo ? compInfo.maxLineRatio : 0;
-    var isStructuralOversold = isOversold && peakFactor < 3 && maxLineRatio < 0.25; // 非临时大单
+    var isStructuralOversold = isOversold && peakFactor < 8; // 非极端峰值(日峰值<8倍中位数)→结构性
 
     var type; // A1 | A2 | C1 | C2 | D | NA
     if (dcFullyDead)           { type = 'A1'; }
@@ -5528,7 +5528,7 @@ function renderShortageMonthly() {
       var m = ATTR[k]; if (!m) return;
       var c = attrData.cntBy[k] || 0;
       var pct = hi.length > 0 ? (c / hi.length * 100).toFixed(0) : 0;
-      h += '<div style="background:'+m.bg+';border-left:4px solid '+m.color+';border-radius:8px;padding:10px 12px">';
+      h += '<div style="background:'+m.bg+';border-left:4px solid '+m.color+';border-radius:8px;padding:10px 12px;cursor:pointer" onclick="window._attrFilter=\''+k+'\';window._msPage=1;renderShortage()" title="点击筛选'+k+'('+m.label+')的SKU明细">';
       h += '<div style="font-size:11px;color:'+m.color+';font-weight:600">'+k+' · '+m.label+'</div>';
       h += '<div style="font-size:22px;font-weight:700;color:'+m.color+';margin:4px 0">'+c+'</div>';
       h += '<div style="font-size:10px;color:'+m.color+';opacity:0.7">'+pct+'% 占比 · '+m.desc+'</div>';
