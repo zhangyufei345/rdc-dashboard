@@ -1,6 +1,6 @@
 // 数据预转换脚本：将 xlsx 预解析为行化 JSON，网页加载时跳过 SheetJS 解压/解析，大幅提升打开速度。
 // 用法（在项目根目录执行）：
-//   node generate_data_json.mjs
+//   node generate_data_json.mjs [--only=orders|inventory|transship]
 // 依赖：xlsx@0.18.5（须与网页 CDN 版本一致，保证 sheet_to_json 行化结果一致）
 // 产物：每个 <name>.xlsx 生成 <name>.json + manifest.json（含各源文件 sha256）
 // 注意：保留原 xlsx 不删除，网页端 JSON 异常时自动回退到 xlsx。
@@ -19,6 +19,52 @@ const ROOT = process.cwd();
 // 与网页端 sheet_to_json 选项保持一致（raw:true 时 dateNF 无效，故一致）
 const SHEET_OPTS = { header: 1, defval: null, raw: true };
 
+// v201 阶段D: 源 xlsx 哈希记忆（.cache/source_hashes.json）—— 源未变跳过输出 JSON 写入
+//   部署"只更新 8月订单"时，inventory.xlsx / transship.xlsx 等未触碰 → 不重写对应 JSON →
+//   manifest 哈希不变 → 客户端无需拉取。解决"每次都全量更新"的体感问题。
+const CACHE_DIR = path.join(ROOT, '.cache');
+const CACHE_FILE = path.join(CACHE_DIR, 'source_hashes.json');
+function loadHashCache() {
+  try {
+    if (fs.existsSync(CACHE_FILE)) return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+  } catch (e) {}
+  return {};
+}
+function saveHashCache(map) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(map, null, 2));
+  } catch (e) { console.warn('⚠️ 源哈希缓存保存失败：' + e.message); }
+}
+const hashCache = loadHashCache();
+
+// v201 阶段D: --only 参数，按模块选择性生成
+//   --only=orders 仅重新生成 data*.xlsx 对应 JSON
+//   --only=inventory 仅重新生成 inventory.xlsx 对应 JSON
+//   --only=transship 仅重新生成 transship.xlsx 对应 JSON
+//   不传 = 全部生成（向后兼容）
+const argOnly = (process.argv.find(a => a.startsWith('--only=')) || '').split('=')[1];
+const onlySet = argOnly ? new Set(argOnly.split(',').map(s => s.trim())) : null;
+function sourceCategory(src) {
+  if (/^data.*\.xlsx$/i.test(src)) return 'orders';
+  if (/^inventory\.xlsx$/i.test(src)) return 'inventory';
+  if (/^transship\.xlsx$/i.test(src)) return 'transship';
+  return null;
+}
+
+// v201: 按需 fetch 的 JSON 文件不进 manifest（前端通过 ensureTransship/ensureSlowDiag/ensureInventoryExtra/ensureInventoryMaster 按页触发）
+//   这是 v196 方案 B + v201 阶段 A 的设计：源数据按"用得到才拉"原则，首屏 manifest 只含必需文件
+//   历史 bug：v196/v198 系列声称"transship.json 移出首屏 manifest"，但脚本从未实际修改，
+//   导致每次 generate 都把它加回 manifest —— 部署链路的隐性回归（每次更新"看似全量更新"的根因之一）。
+//   注：inventory-master.json 含基础数据（产品主数据源），被 v198 改为强制依赖——多数页都需要，
+//       暂留 manifest（首屏加载 ~1.5MB；后续可拆为按需 ensureInventoryMaster）。inventory-plan.json 无数据时不创建。
+const ON_DEMAND_FILES = new Set([
+  'transship.json',          // 转储数据（ensureTransship）
+  'inventory-extra.json',    // 拉回数据+5/6月库存覆盖（ensureInventoryExtra）
+  'inventory-status.json',   // 5/6/7月库存状态分析（ensureSlowDiag）
+  'inventory-plan.json'      // 分仓计划（v201 阶段A；plan-monitor 用；若源无此 sheet 则不创建）
+]);
+
 // 需要转换的源文件（排除备份文件）
 function findSources() {
   const files = fs.readdirSync(ROOT).filter(f => {
@@ -26,7 +72,12 @@ function findSources() {
     if (lower.includes('backup')) return false;
     return /^data.*\.xlsx$/i.test(f) || /^inventory\.xlsx$/i.test(f) || /^transship\.xlsx$/i.test(f);
   });
-  return files.sort();
+  // v201 阶段D: --only 过滤（按模块选择性生成）
+  const filtered = onlySet ? files.filter(f => onlySet.has(sourceCategory(f))) : files;
+  if (onlySet && files.length !== filtered.length) {
+    console.log(`   --only=${argOnly} 过滤：${files.length} → ${filtered.length} 个源文件`);
+  }
+  return filtered.sort();
 }
 
 function sha256File(p) {
@@ -208,13 +259,41 @@ function parseTransship(srcPath) {
 }
 
 function main() {
-  const sources = findSources();
+  // v202 修复 TDZ：manifest 必须在最顶部声明。此前它在 for 循环之后才 const 声明，
+  //   不带 --only 时「--only 跳过」循环体不执行（allSources===allSourceFiles）故不报错；
+  //   一旦带 --only=orders，循环体在声明前访问 manifest.files → ReferenceError:
+  //   Cannot access 'manifest' before initialization，脚本直接崩。
+  const manifest = { generatedAt: new Date().toISOString(), files: {} };
+  const allSources = findSources(); // 受 --only 过滤后的
+  const allSourceFiles = fs.readdirSync(ROOT).filter(f => {
+    const lower = f.toLowerCase();
+    if (lower.includes('backup')) return false;
+    return /^data.*\.xlsx$/i.test(f) || /^inventory\.xlsx$/i.test(f) || /^transship\.xlsx$/i.test(f);
+  }).sort();
+  // --only 过滤的：保留旧 manifest 哈希（确保客户端不误判为"删除"）
+  for (const src of allSourceFiles) {
+    if (allSources.indexOf(src) >= 0) continue;
+    const outJson = src.replace(/\.xlsx$/i, '') + '.json';
+    const primaryOutJson = (src.replace(/\.xlsx$/i, '') === 'inventory') ? 'inventory-core.json' : outJson;
+    if (!ON_DEMAND_FILES.has(primaryOutJson) && fs.existsSync(path.join(ROOT, primaryOutJson))) {
+      manifest.files[primaryOutJson] = sha256File(path.join(ROOT, src));
+      console.log(`   ⏭️ --only 跳过：${src}（保留旧 JSON + 旧 manifest 哈希）`);
+    }
+    if (src.replace(/\.xlsx$/i, '') === 'inventory') {
+      ['inventory-master.json', 'inventory-plan.json'].forEach(f => {
+        if (fs.existsSync(path.join(ROOT, f)) && !ON_DEMAND_FILES.has(f)) {
+          manifest.files[f] = sha256File(path.join(ROOT, src));
+        }
+      });
+    }
+  }
+
+  const sources = allSources;
   if (sources.length === 0) {
     console.error('未找到 data*.xlsx / inventory.xlsx / transship.xlsx，请在项目根目录运行。');
     process.exit(1);
   }
 
-  const manifest = { generatedAt: new Date().toISOString(), files: {} };
   let totalRows = 0;
 
   for (const src of sources) {
@@ -224,11 +303,85 @@ function main() {
 
     console.log(`→ 转换 ${src} ...`);
 
+    // v201 阶段D: 源哈希记忆 —— 源 xlsx 未变则跳过输出 JSON 写入（保留旧 JSON + 旧 manifest 哈希）
+    const currentSrcHash = sha256File(srcPath);
+    // inventory.xlsx 拆为多文件，主输出 inventory-core.json 存在 + 哈希一致即视为未变
+    const primaryOutJson = (base === 'inventory') ? 'inventory-core.json' : outJson;
+    if (hashCache[src] === currentSrcHash && fs.existsSync(path.join(ROOT, primaryOutJson))) {
+      console.log(`   ⏭️ 源未变（哈希一致），跳过：${primaryOutJson}（保留旧 JSON + 旧 manifest 哈希）`);
+      // 仍记入 manifest（不变才显得"无变化"，触发 IDB 缓存命中）
+      if (!ON_DEMAND_FILES.has(primaryOutJson)) {
+        manifest.files[primaryOutJson] = currentSrcHash;
+      }
+      // inventory 拆出来的 inventory-master.json/inventory-plan.json 也都纳入 manifest（如已存在）
+      if (base === 'inventory') {
+        ['inventory-master.json', 'inventory-plan.json'].forEach(f => {
+          if (fs.existsSync(path.join(ROOT, f)) && !ON_DEMAND_FILES.has(f)) {
+            manifest.files[f] = currentSrcHash;
+          }
+        });
+      }
+      continue;
+    }
+    hashCache[src] = currentSrcHash;
+
     if (base === 'transship') {
       const payload = parseTransship(srcPath);
       fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
-      manifest.files[outJson] = sha256File(srcPath);
+      // v201: transship.json 按需 fetch，不进 manifest（修复 v196 脚本未真改的隐性 bug）
+      if (!ON_DEMAND_FILES.has(outJson)) manifest.files[outJson] = currentSrcHash;
       console.log(`   ${outJson}   rows=${payload.transship.length}`);
+      continue;
+    }
+
+    if (base === 'inventory') {
+      // v201 阶段A: inventory.xlsx 拆为 3 个 JSON（首屏 + 产品主数据 + 分仓计划按需加载）
+      // 首屏 inventory-core.json 仅含 cov7/库存金额/库存覆盖/订单满足率/周转（~500KB，替代原 3.7MB inventory.json）
+      // 按需 inventory-master.json 含 基础数据（v198 切的主数据源，按需加载，~2MB）
+      // 按需 inventory-plan.json 含 分仓计划（plan-monitor 用，~135KB）
+      const wb = XLSX.read(fs.readFileSync(srcPath), { type: 'array' });
+      // v202 修正：v201 首版拆分只定义 CORE/MASTER/PLAN，把 拉回数据/转储数据/5·6月覆盖/状态分析
+      //   四个 sheet 落进「未分类」警告后直接丢弃 → 转储数据（2026-07~08，与 transship.json 的
+      //   2026-01~06 互补、零重叠）和拉回数据（本轮新增 1763 行）在拆分后彻底丢失。
+      //   现在五路全量落盘：core(首屏) / master(首屏·产品主数据) / plan(按需) / extra(按需) / status(按需)
+      const CORE_SHEETS = ['订单满足率', '2026周转', '2025周转', '库存金额', '库存覆盖', '7月库存覆盖数据'];
+      const MASTER_SHEETS = ['基础数据'];
+      const PLAN_SHEETS = ['分仓计划'];
+      const EXTRA_SHEETS = ['拉回数据', '转储数据', '5月库存覆盖数据', '6月库存覆盖数据'];
+      const STATUS_SHEETS = ['5月库存状态分析', '6月库存状态分析', '7月库存状态分析'];
+      const coreSheets = {}, masterSheets = {}, planSheets = {}, extraSheets = {}, statusSheets = {};
+      let coreRows = 0, masterRows = 0, planRows = 0, extraRows = 0, statusRows = 0;
+      wb.SheetNames.forEach(name => {
+        const arr = XLSX.utils.sheet_to_json(wb.Sheets[name], SHEET_OPTS);
+        if (CORE_SHEETS.includes(name)) { coreSheets[name] = arr; coreRows += arr.length; }
+        else if (MASTER_SHEETS.includes(name)) { masterSheets[name] = arr; masterRows += arr.length; }
+        else if (PLAN_SHEETS.includes(name)) { planSheets[name] = arr; planRows += arr.length; }
+        else if (EXTRA_SHEETS.includes(name)) { extraSheets[name] = arr; extraRows += arr.length; }
+        else if (STATUS_SHEETS.includes(name)) { statusSheets[name] = arr; statusRows += arr.length; }
+        else console.log(`   ⚠️ inventory.xlsx 出现未分类 sheet：${name}（未输出，请确认 CORE/MASTER/PLAN/EXTRA/STATUS_SHEETS 配置）`);
+      });
+      const srcHash = sha256File(srcPath);
+      const writeSplit = (fileName, sheets, rows) => {
+        if (!Object.keys(sheets).length) return; // 空集跳过，避免产出空文件
+        const payload = { sheetNames: Object.keys(sheets), sheets };
+        const filePath = path.join(ROOT, fileName);
+        fs.writeFileSync(filePath, JSON.stringify(payload));
+        // v201: inventory-master.json / inventory-plan.json 按需 fetch，不进 manifest（首屏不下载）
+        if (!ON_DEMAND_FILES.has(fileName)) manifest.files[fileName] = currentSrcHash;
+        console.log(`   ${fileName}   sheets=${Object.keys(sheets).length}  rows=${rows}  size=${(fs.statSync(filePath).size / 1024).toFixed(1)}KB`);
+      };
+      writeSplit('inventory-core.json', coreSheets, coreRows);
+      writeSplit('inventory-master.json', masterSheets, masterRows);
+      writeSplit('inventory-plan.json', planSheets, planRows);
+      writeSplit('inventory-extra.json', extraSheets, extraRows);
+      writeSplit('inventory-status.json', statusSheets, statusRows);
+      // 删除旧 inventory.json（v201 起不再使用；保留会让 manifest 检查 stale 数据）
+      const legacyPath = path.join(ROOT, 'inventory.json');
+      if (fs.existsSync(legacyPath)) {
+        try { fs.unlinkSync(legacyPath); console.log('   ✓ 删除旧 inventory.json'); } catch (e) {}
+      }
+      // 删除旧 inventory.json 在 manifest 中的引用（如有）
+      delete manifest.files['inventory.json'];
       continue;
     }
 
@@ -285,10 +438,13 @@ function main() {
     }
     fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
     // manifest 以「源 xlsx 内容哈希」为键，仅当真实数据变化时才触发网页重新解析
-    manifest.files[outJson] = sha256File(srcPath);
+    if (!ON_DEMAND_FILES.has(outJson)) manifest.files[outJson] = currentSrcHash;
     console.log(`   ${outJson}   sheets=${wb.SheetNames.length}  rows=${totalRows}`);
     totalRows = 0; // 仅用于日志，每行文件重置
   }
+
+  // v201 阶段D: 保存源 xlsx 哈希记忆（下次跑脚本比对，未变则跳过）
+  saveHashCache(hashCache);
 
   // ===== 补货调整记录（v186 新增数据源：补货调整跟踪模块）=====
   // 来源：S 盘《RDC补货调整记录.xlsx》（计划员手工维护）；用户会复制到桌面「更新部署」再通知更新。

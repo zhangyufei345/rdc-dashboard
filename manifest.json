@@ -1,12 +1,13 @@
 {
-  "generatedAt": "2026-09-05T05:05:14.440Z",
+  "generatedAt": "2026-09-05T05:50:12.591Z",
   "files": {
     "data-2026-05.json": "2a353535fe31f82314353e8ec5edc22afab60f4741d5d8f122bbbfe33daafa1c",
     "data-2026-06.json": "4ef752e27a75460425563fa76521fe5014f4864f28c1df7b2dcfe1ffe525d976",
     "data-2026-07.json": "e433a8161251be193470130a29aa8bb24d6ac53fb740847137b5e7cfa710d0aa",
     "data-2026-08.json": "6610fb8269c43cd670572612311eee0418ebb29ed245de6969cc242d7f115fb2",
     "data.json": "fdd35c7e37689240acf8149afd17e9d53e299fae3b993f34d612b62cef0db44d",
-    "inventory.json": "60f3e69464616dd5",
+    "inventory-core.json": "5dafa7373e548c68cd41c381a3942c0cf304fc1bf891d99143fc788f7abac2d1",
+    "inventory-master.json": "5dafa7373e548c68cd41c381a3942c0cf304fc1bf891d99143fc788f7abac2d1",
     "adjustments.json": "3cea46ce74cbd3b2f8a6fd45bd63eca84b3a27c8bec0a82d3267f6dfc4597856",
     "data-2026-01.json": "d8e2be90e13c50f0dd2d69eb876c34269500d4c076e828ec688209bc55f89572",
     "data-2026-02.json": "b96b7c9b186749ce56326eb445a3b34a02309c5132486677838f01197c0e04be",

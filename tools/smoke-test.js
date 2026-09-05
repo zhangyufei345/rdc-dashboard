@@ -263,32 +263,46 @@ if (html.includes('_replSkuRdcSet') || html.includes('badge') && html.includes('
   log('warn', 'R4: 未找到 badge 真实匹配标记，请人工核对「分仓计划监控 ✓ badge 是否造假」');
 }
 
-// R5: inventory.json 不再含「库存状态分析」sheet（v196 已拆出为 inventory-status.json，首屏不再下载/解析 8.4MB）
+// R5: inventory-status.json 不在首屏 manifest（v196 拆出，v201 修脚本确保不被加回 manifest）
 try {
-  const invRaw = fs.readFileSync(path.resolve(__dirname, '..', 'inventory.json'), 'utf8');
-  const invObj = JSON.parse(invRaw);
-  const invSheets = invObj.sheetNames || Object.keys(invObj.sheets || {});
-  const hasStatus = invSheets.some(n => /月库存状态分析$/.test(n));
+  const mfRaw = fs.readFileSync(path.resolve(__dirname, '..', 'manifest.json'), 'utf8');
+  const mf = JSON.parse(mfRaw);
+  const hasStatus = mf.files && ('inventory-status.json' in mf.files);
   if (!hasStatus) {
-    log('ok', 'R5: inventory.json 已移除状态分析 sheet（首屏不再解析 8.4MB/45669 行）');
+    log('ok', 'R5: inventory-status.json 不在首屏 manifest（8.4MB 按需加载）');
   } else {
-    log('err', 'R5: inventory.json 仍含「库存状态分析」sheet，首屏仍会下载/解析 8.4MB 死重');
+    log('err', 'R5: inventory-status.json 仍在首屏 manifest，首屏仍会下载 8.4MB');
   }
 } catch (e) {
-  log('warn', 'R5: 无法读取 inventory.json 校验（' + e.message + '）');
+  log('warn', 'R5: 无法读取 manifest.json 校验（' + e.message + '）');
 }
 
-// R6: transship.json 已移出首屏 manifest（v196 方案B，转储数据按需加载）
+// R6: transship.json 已移出首屏 manifest（v196 方案B，v201 修脚本确保不被加回）
 try {
   const mfRaw = fs.readFileSync(path.resolve(__dirname, '..', 'manifest.json'), 'utf8');
   const mf = JSON.parse(mfRaw);
   if (mf.files && !('transship.json' in mf.files)) {
-    log('ok', 'R6: transship.json 已移出首屏 manifest（5.5MB 按需加载）');
+    log('ok', 'R6: transship.json 已移出首屏 manifest（按需加载）');
   } else {
-    log('err', 'R6: transship.json 仍在首屏 manifest，首屏仍会下载 5.5MB');
+    log('err', 'R6: transship.json 仍在首屏 manifest，首屏仍会下载');
   }
 } catch (e) {
   log('warn', 'R6: 无法读取 manifest.json 校验（' + e.message + '）');
+}
+
+// R6b: inventory-plan.json 按需加载（v201 阶段A；inventory-master.json 暂留 manifest）
+//     inventory-plan.json 仅 plan-monitor 页需要，源无「分仓计划」sheet 时不创建
+try {
+  const mfRaw = fs.readFileSync(path.resolve(__dirname, '..', 'manifest.json'), 'utf8');
+  const mf = JSON.parse(mfRaw);
+  const planOnDemand = mf.files && !('inventory-plan.json' in mf.files);
+  if (planOnDemand) {
+    log('ok', 'R6b: inventory-plan.json 按需加载（plan-monitor 用；源无此 sheet 则不创建）');
+  } else {
+    log('err', 'R6b: inventory-plan.json 在首屏 manifest（plan-monitor 加载时再拉即可）');
+  }
+} catch (e) {
+  log('warn', 'R6b: 无法读取 manifest.json 校验（' + e.message + '）');
 }
 
 // R7: 慢动诊断抽离 + 按需加载机制存在（防「拆出后忘记补算导致慢动诊断全空」回潮）
@@ -350,23 +364,40 @@ if (html.includes("_attrFilter") && html.includes('hiAttrFiltered')) {
   log('err', 'R9d: 归因筛选机制缺失');
 }
 
-// R10: inventory-core.json（首屏库存）必含库存金额/库存覆盖/7月库存覆盖数据 sheet
-//     v198+ 拆分后：inventory.json 不再含基础数据/分仓计划；首屏只需这 3 个 sheet + 周转
-//     防「拆分后退化成原样」/「首屏文件被无意义重写」回潮
+// R10: inventory-core.json（首屏库存）必含订单满足率/库存金额/库存覆盖/covX
+//     v201 阶段A 后 inventory.json 拆为 inventory-core(首屏) + inventory-master(基础数据按需) + inventory-plan(分仓计划按需)
+//     inventory-core.json 仅含首屏必需的 6 sheet（~650KB，替代原 3.7MB inventory.json）
 try {
-  const invRaw = fs.readFileSync(path.resolve(__dirname, '..', 'inventory.json'), 'utf8');
-  const invObj = JSON.parse(invRaw);
-  const invSheets = invObj.sheetNames || Object.keys(invObj.sheets || {});
-  const hasCore = ['库存金额', '库存覆盖'].every(s => invSheets.includes(s));
-  const hasCov7 = invSheets.some(n => /库存覆盖数据$/.test(n));
-  const hasOrderRate = invSheets.includes('订单满足率');
+  const coreRaw = fs.readFileSync(path.resolve(__dirname, '..', 'inventory-core.json'), 'utf8');
+  const coreObj = JSON.parse(coreRaw);
+  const coreSheets = coreObj.sheetNames || Object.keys(coreObj.sheets || {});
+  const hasCore = ['库存金额', '库存覆盖'].every(s => coreSheets.includes(s));
+  const hasCov7 = coreSheets.some(n => /库存覆盖数据$/.test(n));
+  const hasOrderRate = coreSheets.includes('订单满足率');
   if (hasCore && hasCov7 && hasOrderRate) {
-    log('ok', 'R10: inventory.json 首屏必备 sheet 齐全（库存金额+库存覆盖+covX+订单满足率）');
+    log('ok', 'R10: inventory-core.json 首屏必备 sheet 齐全（订单满足率+库存金额+库存覆盖+covX）');
   } else {
-    log('err', 'R10: inventory.json 缺首屏 sheet（金额=' + hasCore + ' cov=' + hasCov7 + ' 订单满足率=' + hasOrderRate + '）');
+    log('err', 'R10: inventory-core.json 缺首屏 sheet（金额=' + hasCore + ' cov=' + hasCov7 + ' 订单满足率=' + hasOrderRate + '）');
   }
 } catch (e) {
-  log('warn', 'R10: 无法读取 inventory.json 校验（' + e.message + '）');
+  log('err', 'R10: inventory-core.json 缺失或无法读取（v201 阶段A 必需）：' + e.message);
+}
+
+// R10b: inventory-core.json 必须 **不含** 基础数据/分仓计划/拉回数据/转储数据 sheets（拆干净）
+//     防回归：脚本误改导致 inventory-core 又把 1.9MB 基础数据塞回去
+try {
+  const coreRaw = fs.readFileSync(path.resolve(__dirname, '..', 'inventory-core.json'), 'utf8');
+  const coreObj = JSON.parse(coreRaw);
+  const coreSheets = coreObj.sheetNames || Object.keys(coreObj.sheets || {});
+  const forbidden = ['基础数据', '分仓计划', '拉回数据', '转储数据'];
+  const found = forbidden.filter(s => coreSheets.includes(s));
+  if (found.length === 0) {
+    log('ok', 'R10b: inventory-core.json 不含基础数据/分仓计划/拉回数据/转储数据 sheets（拆干净）');
+  } else {
+    log('err', 'R10b: inventory-core.json 含按需 sheet：' + found.join(', ') + '（首屏会被这些死重拖累）');
+  }
+} catch (e) {
+  log('warn', 'R10b: 无法读取 inventory-core.json 校验（' + e.message + '）');
 }
 
 // R11: data.json 必含 v198 切到的产品主数据 5 个 map（boxSpecMap/priceMap/discontinuedMap/brandMap/abcMap）
@@ -458,6 +489,119 @@ if (realExposures.length === 1) {
   log('err', 'R15a: window._skuIsHainan 完全没有暴露点（plan-monitor 海南花露水筛选将失效）');
 } else {
   log('err', 'R15a: window._skuIsHainan 暴露点数量 = ' + realExposures.length + '（多处暴露会导致 set 覆盖）');
+}
+
+// R16: inventory 五路拆分「零丢失」——inventory.xlsx 的每个 sheet 都必须落到某个输出 JSON
+//      v202 事故：v201 首版拆分只定义 CORE/MASTER/PLAN，把 拉回数据/转储数据/5·6月覆盖/状态分析
+//      落进「未分类」警告后直接丢弃 → 转储数据(2026-07~08，与 transship.json 的 2026-01~06 互补零重叠)
+//      与拉回数据(本轮 +1763 行) 彻底丢失，且不会有任何报错，属静默数据回归。
+try {
+  const XLSX = require('C:/Users/zhangyufei1/.workbuddy/binaries/node/workspace/node_modules/xlsx');
+  const wb = XLSX.read(fs.readFileSync(path.resolve(__dirname, '..', 'inventory.xlsx')), { type: 'array' });
+  const OUT_FILES = ['inventory-core.json', 'inventory-master.json', 'inventory-plan.json', 'inventory-extra.json', 'inventory-status.json'];
+  const covered = new Set();
+  OUT_FILES.forEach(f => {
+    const p = path.resolve(__dirname, '..', f);
+    if (!fs.existsSync(p)) return;
+    (JSON.parse(fs.readFileSync(p, 'utf8')).sheetNames || []).forEach(n => covered.add(n));
+  });
+  const lost = wb.SheetNames.filter(n => !covered.has(n));
+  if (lost.length === 0) {
+    log('ok', 'R16: inventory.xlsx 全部 ' + wb.SheetNames.length + ' 个 sheet 均已落入输出 JSON（无静默丢失）');
+  } else {
+    log('err', 'R16: inventory.xlsx 有 sheet 未落入任何输出 JSON（会被静默丢弃）：' + lost.join(', '));
+  }
+} catch (e) {
+  log('warn', 'R16: 无法校验 inventory 拆分完整性（' + e.message + '）');
+}
+
+// R17: 「拆出来的按需文件必须有加载器」——每个 inventory-*.json/transship.json 都要有对应的 ensureXxx
+//      这是本项目反复踩的坑：拆出文件很痛快，忘了写加载器 = 该数据源前端永远拿不到，且无任何报错。
+//      v202 事故：inventory-plan.json（分仓需求权威源）拆出来后没有加载器 → planBySkuRdc 恒空
+//      → getPlanDemand 静默回退 cov7 → 分仓需求口径悄悄退回 v198 之前，用户完全无感。
+try {
+  const onDemand = [
+    { file: 'transship.json', loader: 'ensureTransship' },
+    { file: 'inventory-extra.json', loader: 'ensureInventoryExtra' },
+    { file: 'inventory-status.json', loader: 'ensureSlowDiag' },
+    { file: 'inventory-plan.json', loader: 'ensureInventoryPlan' }
+  ];
+  const missing = onDemand.filter(x => {
+    if (!fs.existsSync(path.resolve(__dirname, '..', x.file))) return false; // 文件不存在则跳过（源无此 sheet）
+    return !new RegExp('async function ' + x.loader + '\\b').test(html);
+  });
+  if (missing.length === 0) {
+    log('ok', 'R17: 所有按需 inventory/transship 文件都有对应加载器（无「拆出但无人加载」）');
+  } else {
+    log('err', 'R17: 按需文件缺少加载器：' + missing.map(x => x.file + '→' + x.loader).join(', ') + '（前端永远读不到该数据）');
+  }
+} catch (e) {
+  log('warn', 'R17: 无法校验按需文件加载器（' + e.message + '）');
+}
+
+// R18: ensureInventoryPlan 必须在 renderPlanMonitor / renderPlanAdvice 中被触发
+//      （分仓需求的两个消费页；缺任一则进入该页时「分仓计划」表仍未加载）
+try {
+  const fnRanges = [];
+  const marker = (name) => html.indexOf('function ' + name + '(');
+  const pm = marker('renderPlanMonitor'), pa = marker('renderPlanAdvice');
+  const nextFnAfter = (idx) => { const m = html.slice(idx + 10).search(/\nfunction [A-Za-z_$]/); return m < 0 ? html.length : idx + 10 + m; };
+  const pmBody = pm >= 0 ? html.slice(pm, nextFnAfter(pm)) : '';
+  const paBody = pa >= 0 ? html.slice(pa, nextFnAfter(pa)) : '';
+  const inPm = /ensureInventoryPlan\s*\(/.test(pmBody);
+  const inPa = /ensureInventoryPlan\s*\(/.test(paBody);
+  if (inPm && inPa) {
+    log('ok', 'R18: ensureInventoryPlan 已在 renderPlanMonitor + renderPlanAdvice 中触发');
+  } else {
+    log('err', 'R18: ensureInventoryPlan 未在 ' + (!inPm ? 'renderPlanMonitor ' : '') + (!inPa ? 'renderPlanAdvice' : '') + ' 中触发（分仓需求会回退 cov7 旧口径）');
+  }
+} catch (e) {
+  log('warn', 'R18: 无法校验 ensureInventoryPlan 触发点（' + e.message + '）');
+}
+
+// R19: bootLoad 不得无条件 clearIDB —— 「每次部署都全量重拉 42MB」的根因
+//      允许的形式：clearIDB() 被 DB_VERSION 判断包住（needClear 之类），不允许 flag!==generatedAt 直接调 clearIDB
+try {
+  const blIdx = html.indexOf('async function bootLoad');
+  const bl = html.slice(blIdx, blIdx + 6000);
+  // 只认「await clearIDB(」真实调用点，不认注释里提到的 clearIDB() 字样
+  //  （v202 的注释正文里就写着被修掉的旧代码「+ clearIDB()」，按裸名字匹配会误判 —— 检测器自己踩坑）。
+  const re = /await\s+clearIDB\s*\(/g;
+  const calls = []; let m;
+  while ((m = re.exec(bl))) calls.push(m.index);
+  const unguarded = calls.filter(p => !/needClear|DB_VERSION/.test(bl.slice(Math.max(0, p - 400), p)));
+  if (calls.length > 0 && unguarded.length === 0) {
+    log('ok', 'R19: bootLoad 的 clearIDB 受 DB_VERSION 判断保护（部署只清文件哈希，按文件增量更新）');
+  } else if (unguarded.length > 0) {
+    log('err', 'R19: bootLoad 存在未受保护的 clearIDB 调用 ' + unguarded.length + ' 处（每次部署都全量重拉 42MB）');
+  } else {
+    log('warn', 'R19: bootLoad 未找到 clearIDB 调用点，请人工核对');
+  }
+} catch (e) {
+  log('warn', 'R19: 无法校验 bootLoad 缓存清理策略（' + e.message + '）');
+}
+
+// R20: 「部署不清 rdc_manifest_hashes」——v202 提速真正生效的关键
+//      rdc_manifest_hashes 记录「IDB 里已存了哪版数据」，是 refreshFromManifest 判断
+//      「哪些文件需要重拉」的唯一依据。在「generatedAt 变化」分支里清掉它 → 所有文件
+//      都被判为已变更 → 仍全量重拉 42MB，提速完全失效（v202 第一版实测踩了这个坑：
+//      只改了 clearIDB 判定，却把 removeItem 留在了外面）。
+//      正确形态：removeItem 只能出现在 if (needClear) 分支内（IDB 都没了，哈希自然要失效）。
+try {
+  const bl2Idx = html.indexOf('async function bootLoad');
+  const bl2 = html.slice(bl2Idx, bl2Idx + 6000);
+  const needClearAt = bl2.indexOf('let needClear');
+  const branchAt = bl2.indexOf('if (needClear)');
+  const hashCleanupAt = bl2.indexOf("removeItem('rdc_manifest_hashes')");
+  if (needClearAt < 0 || branchAt < 0) {
+    log('warn', 'R20: bootLoad 未找到 needClear 结构，请人工核对缓存清理策略');
+  } else if (hashCleanupAt >= 0 && hashCleanupAt < branchAt) {
+    log('err', 'R20: removeItem(rdc_manifest_hashes) 出现在 if(needClear) 之前 —— 每次部署都会全量重拉，提速失效');
+  } else {
+    log('ok', 'R20: rdc_manifest_hashes 仅在 if(needClear) 分支内清除（部署时保留文件哈希，按文件增量更新）');
+  }
+} catch (e) {
+  log('warn', 'R20: 无法校验 rdc_manifest_hashes 清理位置（' + e.message + '）');
 }
 
 // ── 总结 ──
