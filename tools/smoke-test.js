@@ -604,6 +604,181 @@ try {
   log('warn', 'R20: 无法校验 rdc_manifest_hashes 清理位置（' + e.message + '）');
 }
 
+// R21: 月度快照字段已移出 current_data（v203 分片生效）
+//      saveToIDB 里若仍把 orderDetail/shortage 整块塞进 current_data，每次保存都要
+//      structured clone 20 万+ 行，历史月份（几乎从不变）白白重写一遍。
+//      正确形态：current_data 只保留 inventory/transship/history/shipCond 等非按月字段。
+try {
+  const stIdx = html.indexOf('async function saveToIDB');
+  const stBody = html.slice(stIdx, stIdx + 2600);
+  const payloadAt = stBody.indexOf('const payload = {');
+  // 必须切到 payload 对象自己的结束处。用固定长度会越过 `};` 撞进 loadFromIDB 的
+  // `const merged = { shortage: [], orderDetail: [], ... }`，把恢复用的临时对象误判成
+  // 仍在存储按月字段（检测器自己踩坑，与 R19 注释误伤同款）。
+  const payloadEnd = stBody.indexOf('\n    };', payloadAt);
+  const payload = stBody.slice(payloadAt, payloadEnd > 0 ? payloadEnd : payloadAt + 1600);
+  const stillHas = ['orderDetail:', 'shortage:', 'bizDemand:', 'customerFulfill:', 'otherOrders:', 'unreleasedOrders:']
+    .filter((f) => payload.includes(f));
+  if (stillHas.length === 0) {
+    log('ok', 'R21: current_data 已不含按月字段（订单明细/缺货汇总等改存 snap_YYYY_MM）');
+  } else {
+    log('err', 'R21: current_data 仍含按月字段：' + stillHas.join(' ') + '（分片失效，每次仍全量 clone）');
+  }
+} catch (e) {
+  log('warn', 'R21: 无法校验 saveToIDB 分片（' + e.message + '）');
+}
+
+// R22: loadFromIDB 必须先合并月度快照、再健康检查
+//      顺序反了 → orderDetail 恒为 0 → 健康检查判「缓存残缺」→ 每次打开全量重拉，
+//      恰好把本轮要消灭的慢又造出来一遍。
+try {
+  const ldIdx = html.indexOf('async function loadFromIDB');
+  const ld = html.slice(ldIdx, ldIdx + 4200);
+  const snapAt = ld.indexOf('loadAllMonthSnapshots()');
+  const ordAt = ld.indexOf('const ord =');
+  if (snapAt > 0 && ordAt > snapAt) {
+    log('ok', 'R22: loadFromIDB 先合并月度快照再健康检查（顺序正确）');
+  } else if (snapAt > 0 && ordAt >= 0 && ordAt < snapAt) {
+    log('err', 'R22: loadFromIDB 健康检查早于快照合并（orderDetail 恒为 0 → 每次全量重拉）');
+  } else {
+    log('warn', 'R22: 未识别 loadFromIDB 的快照合并结构，请人工核对');
+  }
+} catch (e) {
+  log('warn', 'R22: 无法校验 loadFromIDB 顺序（' + e.message + '）');
+}
+
+// R23: clearIDB 必须连 snap_* 一起删
+//      只删 current_data → 旧月份快照残留 → 下次合并回来与当月新数据混成脏口径。
+try {
+  const clIdx = html.indexOf('async function clearIDB');
+  const cl = html.slice(clIdx, clIdx + 1200);
+  if (/IDBKeyRange\.bound\('snap_'/.test(cl) && cl.indexOf('store.delete(\'current_data\')') >= 0) {
+    log('ok', 'R23: clearIDB 同时清理 current_data 与 snap_* 月度快照');
+  } else {
+    log('err', 'R23: clearIDB 未清理 snap_* 快照（旧月份数据会残留并与新数据混合）');
+  }
+} catch (e) {
+  log('warn', 'R23: 无法校验 clearIDB（' + e.message + '）');
+}
+
+// R24: data-*.json 加载前必须 dropMonthRows
+//      append 模式用 existingXxxKeys 去重，不清旧行 → 新行全被拦下 → 快照被存成空
+//      → 下次「从本地回填」填进去一片空数据（v203 首要坑）。
+try {
+  const apIdx = html.indexOf("filename.indexOf('data-') === 0");
+  const ap = html.slice(apIdx, apIdx + 700);
+  const dropAt = ap.indexOf('dropMonthRows(');
+  const parseAt = ap.indexOf('parseExcel(');
+  if (dropAt >= 0 && parseAt > dropAt) {
+    log('ok', 'R24: data-*.json 先 dropMonthRows 再 parseExcel（避免去重拦新行导致空快照）');
+  } else {
+    log('err', 'R24: data-*.json 未在解析前清理旧月份数据（快照会被存成空）');
+  }
+} catch (e) {
+  log('warn', 'R24: 无法校验历史月加载分支（' + e.message + '）');
+}
+
+// R25: data.json 的哈希必须延后到历史月回填之后再标记
+//      它是 replace 模式，解析完会清空历史数据；此刻就标记哈希 → 中途关页面留下
+//      「当月有、历史无」的残缺缓存，而下轮比对 data.json 判无变化 → 残缺永久固化
+//      （v191 同款死状态）。
+try {
+  const rmIdx = html.indexOf('async function refreshFromManifest');
+  const rm = html.slice(rmIdx, rmIdx + 11000);
+  const firstLoopAt = rm.indexOf('for (const f of first)');
+  const markAt = rm.indexOf('first.forEach(function(f) { _markHash(f); });');
+  const restoreAt = rm.indexOf('历史月份已从本地快照回填');
+  if (firstLoopAt >= 0 && markAt > firstLoopAt && restoreAt > 0 && markAt > restoreAt) {
+    log('ok', 'R25: data.json 哈希延后到历史月回填之后标记（防残缺缓存固化）');
+  } else if (markAt < 0) {
+    log('err', 'R25: 未找到延后的 data.json 哈希标记（历史月回填前标记会固化残缺数据）');
+  } else {
+    log('warn', 'R25: data.json 哈希标记位置异常，请人工核对');
+  }
+} catch (e) {
+  log('warn', 'R25: 无法校验 data.json 哈希时机（' + e.message + '）');
+}
+
+// R26: 数据解析关键函数内不得引用「全文件从未声明」的标识符
+//   🔥 v203 实测抓到的真 Bug：parseInventoryExcel 读了从未声明的 pullbackDiag →
+//   ReferenceError → 整段解析中断 → dataStore.inventory 恒为 null → 库存/转储/分仓需求
+//   三块全空，且 loadFromIDB 因 cov7 缺失判「缓存残缺」→ 每次打开全量重拉 42MB。
+//   v64（2026-08-09）引入，线上潜伏近一个月；v200「分仓计划监控暂无数据」的真因也是它。
+//   为什么之前的检查抓不到：
+//     ① node --check 只校验语法，不校验未声明引用；
+//     ② 上面的 render* 检查器要求出现 ≥3 次才报，pullbackDiag 只出现 1 次恰好漏网；
+//     ③ 静态检查从来没覆盖过 parseInventoryExcel 这类解析函数。
+//   判别要点：排除「属性访问(.foo)」与「对象字面量键名(foo:)」，只认真正的标识符引用。
+try {
+  const CRITICAL_FNS = ['parseInventoryExcel', 'parseExcel', 'applyPreparsed', 'loadFromIDB', 'saveToIDB', 'refreshFromManifest'];
+  const suspects = [];
+  CRITICAL_FNS.forEach((fn) => {
+    const re = new RegExp('(?:async\\s+)?function\\s+' + fn + '\\s*\\([^)]*\\)\\s*\\{');
+    const m = html.match(re);
+    if (!m) return;
+    let depth = 0, i = m.index;
+    while (i < html.length) { const c = html[i]; if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) break; } i++; }
+    // stripStrings 不处理正则字面量：`.replace(/^inventory\.json$/, '库存数据')` 里的
+    //   inventory / product 会被当成标识符引用（最后一波假警报）。只剥离以 /^ 或 /\ 开头的
+    //   正则字面量（除法运算符后面不会紧跟 ^ 或 \，不会误伤）。
+    const code = stripStrings(html.slice(m.index, i + 1))
+      .replace(/\/(?:\^|\\)[^\/\n]*\/[gimsuy]*/g, '//');
+    // 函数参数也算已声明（第一版漏了这步，把 parseInventoryExcel(rawData, merge) 的参数
+    //   当成了未声明标识符 —— 检测器自己造的假警报）
+    const params = new Set();
+    const pm = html.slice(m.index, m.index + 260).match(/function\s+\w+\s*\(([^)]*)\)/);
+    if (pm) pm[1].split(',').forEach((p) => { const t = p.trim().split(/\s+/).pop(); if (t && /^\w+$/.test(t)) params.add(t); });
+    // 函数体内的声明。踩坑记录（本规则迭代 4 版才干净）：
+    //   ① 只认 `const X` 的第一个名字 → `const _sc = {}, _life = {}` 的后几个被误报；
+    //   ② 漏掉对象解构 `const { kws, pbCols } = ...` → 解构出来的名字被误报；
+    //   ③ 漏掉箭头函数/匿名函数参数 `(r, i) => ...` → 参数名被误报。
+    // 三类都要收，否则假警报会淹没真正的未声明引用。
+    const addNames = (chunk) => {
+      chunk.split(',').forEach((p) => {
+        const nm = p.trim().split(':').pop().trim().split(/\s*=/)[0].trim();
+        if (/^[a-zA-Z_]\w*$/.test(nm)) params.add(nm);
+      });
+    };
+    let d;
+    const declRe = /\b(?:const|let|var)\s+([^;]+);/g;
+    while ((d = declRe.exec(code)) !== null) addNames(d[1]);
+    const destrRe = /\b(?:const|let|var)\s*[{[]([^}\]]+)[}\]]/g;
+    while ((d = destrRe.exec(code)) !== null) addNames(d[1]);
+    const arrowRe = /\(([^()]*)\)\s*=>/g;
+    while ((d = arrowRe.exec(code)) !== null) addNames(d[1]);
+    const anonFnRe = /\bfunction\s*\(([^)]*)\)\s*\{/g;
+    while ((d = anonFnRe.exec(code)) !== null) addNames(d[1]);
+    const catchRe = /\bcatch\s*\(\s*(\w+)\s*\)/g;
+    while ((d = catchRe.exec(code)) !== null) params.add(d[1]);
+    const forOfRe = /\bfor\s*\(\s*(?:const|let|var)\s+(\w+)/g;
+    while ((d = forOfRe.exec(code)) !== null) params.add(d[1]);
+    // ⑤ 嵌套命名函数的参数：function _findCol(kws)、function parsePullbackWithCols(pbCols, logDiag)。
+    //    这类内部辅助函数的参数此前完全没被收集，是最后一波假警报的来源。
+    const namedFnRe = /\bfunction\s+(\w+)\s*\(([^)]*)\)/g;
+    while ((d = namedFnRe.exec(code)) !== null) { params.add(d[1]); addNames(d[2]); }
+    // 前面不是 . 或 $（排除属性访问）；后面不能紧跟 : 或单词字符（排除对象字面量键名）。
+    //   第二版踩坑：写成 \s*(?!:) 时正则会回溯少吞一个字母来「绕开」冒号——
+    //   `type:` 回溯成 `typ`、`defval:` 回溯成 `defva`，全是假警报。必须用 (?![:\w])。
+    const useRe = /([^.\w$]|^)([a-z_]\w{2,})(?![:\w])/g;
+    let u;
+    while ((u = useRe.exec(code)) !== null) {
+      const w = u[2];
+      if (params.has(w) || allDecls.has(w) || knownGlobals.has(w) || jsKeywords.has(w)) continue;
+      if (/^[A-Z]/.test(w)) continue;
+      suspects.push(fn + ' → ' + w);
+    }
+  });
+  // 去重
+  const uniq = [...new Set(suspects)];
+  if (uniq.length === 0) {
+    log('ok', 'R26: 数据解析关键函数无未声明标识符引用');
+  } else {
+    log('err', 'R26: 数据解析函数引用了未声明标识符（会抛 ReferenceError、整段解析静默中断）：' + uniq.slice(0, 6).join('; '));
+  }
+} catch (e) {
+  log('warn', 'R26: 无法校验未声明标识符（' + e.message + '）');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {
