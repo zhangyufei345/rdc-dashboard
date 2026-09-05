@@ -350,6 +350,116 @@ if (html.includes("_attrFilter") && html.includes('hiAttrFiltered')) {
   log('err', 'R9d: 归因筛选机制缺失');
 }
 
+// R10: inventory-core.json（首屏库存）必含库存金额/库存覆盖/7月库存覆盖数据 sheet
+//     v198+ 拆分后：inventory.json 不再含基础数据/分仓计划；首屏只需这 3 个 sheet + 周转
+//     防「拆分后退化成原样」/「首屏文件被无意义重写」回潮
+try {
+  const invRaw = fs.readFileSync(path.resolve(__dirname, '..', 'inventory.json'), 'utf8');
+  const invObj = JSON.parse(invRaw);
+  const invSheets = invObj.sheetNames || Object.keys(invObj.sheets || {});
+  const hasCore = ['库存金额', '库存覆盖'].every(s => invSheets.includes(s));
+  const hasCov7 = invSheets.some(n => /库存覆盖数据$/.test(n));
+  const hasOrderRate = invSheets.includes('订单满足率');
+  if (hasCore && hasCov7 && hasOrderRate) {
+    log('ok', 'R10: inventory.json 首屏必备 sheet 齐全（库存金额+库存覆盖+covX+订单满足率）');
+  } else {
+    log('err', 'R10: inventory.json 缺首屏 sheet（金额=' + hasCore + ' cov=' + hasCov7 + ' 订单满足率=' + hasOrderRate + '）');
+  }
+} catch (e) {
+  log('warn', 'R10: 无法读取 inventory.json 校验（' + e.message + '）');
+}
+
+// R11: data.json 必含 v198 切到的产品主数据 5 个 map（boxSpecMap/priceMap/discontinuedMap/brandMap/abcMap）
+//     v198 后分仓需求取基础数据 block C、产品主数据不再单独 fetch product.xlsx，依赖这 5 个 map
+//     任何缺 → 后续模块（计划员 dashboard / 重点跟进清单供应链品类列 / 缺货箱数计算）静默失败
+try {
+  const dataRaw = fs.readFileSync(path.resolve(__dirname, '..', 'data.json'), 'utf8');
+  const dataObj = JSON.parse(dataRaw);
+  const requiredMaps = ['boxSpecMap', 'priceMap', 'discontinuedMap', 'brandMap', 'abcMap'];
+  const missing = requiredMaps.filter(k => !(k in dataObj) || (typeof dataObj[k] !== 'object'));
+  if (missing.length === 0) {
+    log('ok', 'R11: data.json 含产品主数据 5 个 map（v198+ 必备）');
+  } else {
+    log('err', 'R11: data.json 缺产品主数据 map：' + missing.join(', '));
+  }
+} catch (e) {
+  log('warn', 'R11: 无法读取 data.json 校验（' + e.message + '）');
+}
+
+// R12: data-YYYY-MM.json 订单明细数据量级防线（v191 防「半量快照+全量哈希」死状态）
+//     当前全量 ord≈23.8 万，若低于 10 万视为残缺
+try {
+  const dataFiles = fs.readdirSync(path.resolve(__dirname, '..'))
+    .filter(f => /^data-\d{4}-\d{2}\.json$/.test(f))
+    .map(f => path.resolve(__dirname, '..', f));
+  let totalOrd = 0;
+  dataFiles.forEach(f => {
+    try {
+      const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const sh = j.sheets && j.sheets['订单明细'];
+      if (Array.isArray(sh)) totalOrd += Math.max(0, sh.length - 1); // 减表头
+    } catch (e) {}
+  });
+  if (totalOrd >= 100000) {
+    log('ok', 'R12: 订单明细总量 ' + totalOrd + ' ≥ 10 万（数据量级防线 OK）');
+  } else {
+    log('err', 'R12: 订单明细总量仅 ' + totalOrd + '（<10 万视为残缺，疑似半量快照）');
+  }
+} catch (e) {
+  log('warn', 'R12: 无法扫描历史月 data-*.json：' + e.message);
+}
+
+// R13: transship 按需 fetch 触发器（ensureTransship）存在 + 转储页可由 sidebar 进入
+//     v198 转储页死锁根因之一是缺 retry 上限/try-catch；这里钉死入口必须存在
+if (html.includes('function ensureTransship') && html.includes("data-page=\"transship\"")) {
+  log('ok', 'R13: 转储页按需 fetch（ensureTransship）+ sidebar 入口存在');
+} else {
+  log('err', 'R13: 转储页入口或 ensureTransship 缺失（点转储将全空/死锁）');
+}
+
+// R14: 数据加载链路根因检查 — bootLoad/refreshFromManifest/loadFromIDB 三个核心函数必须存在
+//     v188~v199 多次因 init/bootLoad 位置错导致首登空白、缓存路径下空态。钉死三件套
+const fns = ['function bootLoad', 'function refreshFromManifest', 'function loadFromIDB'];
+const missing = fns.filter(s => !html.includes(s));
+if (missing.length === 0) {
+  log('ok', 'R14: 数据加载核心三件套（bootLoad/refreshFromManifest/loadFromIDB）齐全');
+} else {
+  log('err', 'R14: 加载核心函数缺失：' + missing.join(', '));
+}
+
+// R15: 跨函数 window._xxx 暴露点检查（v113/v114 教训：必须挂在数据解析函数末尾，不能挂 UI 渲染函数体内）
+//     关键全局状态：_skuIsHainan（plan-monitor 海南花露水筛选）、_planSkuAggMonth（销售进度列）
+//     必须由 parseInventoryExcel/buildPlanSkuAgg 末尾暴露，不能由 renderXxx 末尾暴露
+//     改进 v201：排除注释行 + 字符串内提及（之前的索引比对太天真，会被 v201 注释里的字符串误判）
+const realExposures = [];
+const expRe = /window\._skuIsHainan\s*=/g;
+let em;
+while ((em = expRe.exec(html)) !== null) {
+  const pos = em.index;
+  // 取该行，检查是否注释
+  const before = html.lastIndexOf('\n', pos);
+  const lineStart = before + 1;
+  const lineEnd = html.indexOf('\n', pos);
+  const lineText = html.slice(lineStart, lineEnd);
+  if (/^\s*\/\//.test(lineText)) continue; // 跳过纯注释行
+  if (/^\s*\*/.test(lineText)) continue; // 跳过块注释行
+  realExposures.push({ pos, line: html.slice(0, pos).split('\n').length, text: lineText.trim() });
+}
+if (realExposures.length === 1) {
+  const exp = realExposures[0];
+  const prevParseInv = html.lastIndexOf('function parseInventoryExcel', exp.pos);
+  const prevRenderOI = html.lastIndexOf('function renderOrderInsight', exp.pos);
+  if (prevParseInv > prevRenderOI && prevParseInv > 0) {
+    log('ok', 'R15a: window._skuIsHainan 唯一暴露点位于 parseInventoryExcel 末尾（line ' + exp.line + '，v114 修复位置正确）');
+  } else {
+    log('err', 'R15a: window._skuIsHainan 唯一暴露点位于 renderOrderInsight 体内（line ' + exp.line + '，v113 旧坑）');
+  }
+} else if (realExposures.length === 0) {
+  log('err', 'R15a: window._skuIsHainan 完全没有暴露点（plan-monitor 海南花露水筛选将失效）');
+} else {
+  log('err', 'R15a: window._skuIsHainan 暴露点数量 = ' + realExposures.length + '（多处暴露会导致 set 覆盖）');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {

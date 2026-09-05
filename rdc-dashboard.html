@@ -3606,8 +3606,13 @@ function renderOrderInsight() {
       }
     }
   }
-  window._skuIsHainan = skuIsHainan; // v113: 暴露到全局，让 renderPlanMonitor 等其他函数能访问
-  console.log('[HainanFilter] 海南花露水 SKU 集合大小:', Object.keys(skuIsHainan).length, '当前筛选:', window._oiHainan);
+  // v201: 不再 window._skuIsHainan = skuIsHainan —— v113 教训回归
+  //   权威 window._skuIsHainan 由 parseInventoryExcel 末尾（line 13149 附近）暴露，
+  //   扫 cov5+cov6+cov7 + rawSheets 兜底（全量），用户进入任意页前已就位。
+  //   本函数旧的 v113 暴露仅扫 cov6+cov7（漏 cov5），会让跨页 plan-monitor 的
+  //   「不含花露水」开关在少数 SKU 上失效（5 月出现当月已退的 SKU 被误纳为非花露水）。
+  //   修法：本地变量 skuIsHainan 保留供本函数内筛选用，window 由权威源独占。
+  // console.log('[HainanFilter] 已迁至 parseInventoryExcel 行末，本地 skuIsHainan 仅供本函数筛选');
 
   const _pm = (dataStore.inventory && dataStore.inventory.productMaster) || {};
   function specOf(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : 1; }
