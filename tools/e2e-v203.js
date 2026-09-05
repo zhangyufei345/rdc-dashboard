@@ -145,6 +145,9 @@ async function waitLoaded(page, expectMonths, timeoutMs) {
   console.log('   其中历史月文件: ' + histFetched.length + ' 个 ' + (histFetched.length === 0 ? '✅ 未重拉（从本地快照回填）' : '❌ 仍走网络: ' + histFetched.join(',')));
 
   // ── 结论 ──
+  // 注：P4（转储数据跨部署保留）**不放在本脚本里** —— 实测并进来后整体会卡死
+  //   （22 分钟不退出，怀疑与转储页 ensureTransship 大額数据下的重试有关）。
+  //   P4 独立在 tools/e2e-p4-transship.js，带硬超时与实时进度，3 分钟内可跑完。
   console.log('\n═══════════ 结论 ═══════════');
   const pass = [];
   const fail = [];

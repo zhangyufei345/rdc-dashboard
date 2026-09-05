@@ -779,6 +779,144 @@ try {
   log('warn', 'R26: 无法校验未声明标识符（' + e.message + '）');
 }
 
+// R27: 基础数据 sheet 必须含前端依赖的全部列（防列投影误删）
+//   v203 引入列投影：删「表头为空且整列全 null」的占位列（30→20 列，省 0.5MB）。
+//   安全性依赖两个前提，任一被破坏都会静默丢数据：
+//     ① 前端用 bColIdx() 按**表头名**寻列 → 被删的列必须确实没有表头名；
+//     ② 硬编码索引 r[0]/r[1]（产品编码/产品名称）必须仍在 0、1 位。
+//   模板换版时列布局可能变，这条规则就是防止投影把有用列删掉的兜底。
+try {
+  const mp = path.resolve(__dirname, '..', 'inventory-master.json');
+  if (!fs.existsSync(mp)) {
+    log('warn', 'R27: 未找到 inventory-master.json，跳过列校验');
+  } else {
+    const arr = JSON.parse(fs.readFileSync(mp, 'utf8')).sheets['基础数据'];
+    const head = arr && arr[0] ? arr[0] : [];
+    const idxOf = (n) => head.findIndex((x) => String(x || '').trim() === n);
+    const need = ['产品编码', '产品名称', '成本价', '品牌', '是否为淘汰品', '收货库位',
+      '收货仓', 'RDC', 'ABC分类', '供应链品类', '品类', '是否为软切新品', '生命周期标签', '箱规转化因子'];
+    const missing = need.filter((n) => idxOf(n) < 0);
+    const headOk = String(head[0] || '').trim() === '产品编码' && String(head[1] || '').trim() === '产品名称';
+    if (missing.length === 0 && headOk) {
+      log('ok', 'R27: 基础数据含前端依赖的全部 ' + need.length + ' 列，且 r[0]/r[1] 仍为产品编码/产品名称');
+    } else {
+      log('err', 'R27: 基础数据列投影删错了 —— 缺列：' + (missing.join(',') || '无') + '；r[0]/r[1] 正确=' + headOk);
+    }
+  }
+} catch (e) {
+  log('warn', 'R27: 无法校验基础数据列（' + e.message + '）');
+}
+
+// R28: 禁止使用不存在的 API（v204 血的教训）
+//   `AbortController.timeout(ms)` **在 Web 标准里不存在** —— 正确的是
+//   `AbortSignal.timeout(ms)`（静态方法在 AbortSignal 上，且直接返回 signal）。
+//   v198-fix3 写错后，三个按需加载器每次执行都同步抛 TypeError 并被 try/catch 吞掉，
+//   表现为「数据永远加载不出来」而不是报错，潜伏到 v204 才被发现。
+//   这类问题 node --check 完全查不出来，只能靠静态扫描兜底。
+try {
+  // 必须先剥掉注释：v204 的修复说明（DB_VERSION 注释、abortAfter 上方注释）里
+  //   都提到了 `AbortController.timeout` 这个错误写法本身，不剥离会全部误报。
+  //   引号感知扫描，避免把 'https://...' 里的 // 当成注释起点。
+  const stripComment = (ln) => {
+    let q = null;
+    for (let i = 0; i < ln.length; i++) {
+      const c = ln[i];
+      if (q) { if (c === q && ln[i - 1] !== '\\') q = null; continue; }
+      if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+      if (c === '/' && ln[i + 1] === '/') return ln.slice(0, i);
+    }
+    return ln;
+  };
+  const hits = [];
+  const lines = html.split(/\r?\n/);
+  lines.forEach((ln, i) => {
+    const code = stripComment(ln);
+    if (/AbortController\.timeout\s*\(/.test(code)) hits.push(`L${i + 1}: AbortController.timeout → 应为 AbortSignal.timeout`);
+    // 顺带守住同类「静态方法挂错宿主」的高频错误
+    if (/\bnew\s+AbortSignal\s*\(/.test(code)) hits.push(`L${i + 1}: new AbortSignal() 不合法 → 用 new AbortController().signal`);
+  });
+  if (hits.length === 0) {
+    log('ok', 'R28: 未发现不存在的 AbortController/AbortSignal API 用法');
+  } else {
+    hits.forEach((h) => log('err', 'R28: ' + h));
+  }
+} catch (e) {
+  log('warn', 'R28: 无法校验（' + e.message + '）');
+}
+
+// R29: 跨作用域引用检查 —— 顶层函数不得直接调用 init() 里的嵌套闭包
+//   v204 一次抓到两个同类致命 Bug，都是「顶层函数引用了看不见的标识符」：
+//     · pullbackDiag    —— v182 引入，parseInventoryExcel 整段中断 → 库存恒空（潜伏近一个月）
+//     · applyPreparsed  —— init() 的嵌套函数，三个按需加载器调用即 ReferenceError，
+//                          被 try/catch 吞掉后表现为「数据永远加载不出来」
+//   这类问题的共同点：node --check 查不出、控制台只是一条 warn、现象是「数据静默为空」。
+//   这里做通用兜底：扫描 init() 内声明的嵌套函数，若顶层函数体内出现同名调用
+//   且没有 window. 前缀（也没在体内自行声明），就报错。
+try {
+  const lines = html.split(/\r?\n/);
+  const initStart = lines.findIndex((l) => /^function init\(\)\s*\{/.test(l));
+  let initEnd = -1;
+  if (initStart >= 0) { for (let i = initStart + 1; i < lines.length; i++) { if (/^\}/.test(lines[i])) { initEnd = i; break; } } }
+  if (initStart < 0 || initEnd < 0) {
+    log('warn', 'R29: 未定位到 init() 函数体，跳过跨作用域检查');
+  } else {
+    // init() 内声明的嵌套函数名（缩进 ≥ 2 的 function 声明）
+    const nested = new Set();
+    for (let i = initStart; i < initEnd; i++) {
+      const m = lines[i].match(/^\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/);
+      if (m) nested.add(m[1]);
+    }
+    // 顶层函数（缩进 0）的起止
+    const tops = [];
+    lines.forEach((l, i) => {
+      const m = l.match(/^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/);
+      if (m) tops.push({ name: m[1], start: i, end: -1 });
+    });
+    tops.forEach((f, k) => { f.end = (k + 1 < tops.length ? tops[k + 1].start : lines.length) - 1; });
+    // 已挂 window 的名字不算越界：暴露点可以不在调用处（v204 就是在 init() 末尾
+    //   统一 `window.applyPreparsed = applyPreparsed`），调用处仍是裸名字。
+    //   参考 v113/v114 铁律：跨函数依赖的标识符必须挂 window —— 挂了就合法。
+    const exposed = new Set();
+    lines.forEach((l) => {
+      const m = l.match(/window\.([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function|[A-Za-z_$][\w$]*)\s*[;(]?/);
+      if (m) exposed.add(m[1]);
+    });
+    const clean = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+    const stripComment = (ln) => { const i = ln.indexOf('//'); return i >= 0 ? ln.slice(0, i) : ln; };
+    const hits = [];
+    tops.forEach((f) => {
+      // 函数体内自行声明的同名标识符不算越界（局部遮蔽）
+      const localDecl = new Set();
+      for (let i = f.start; i <= f.end && i < lines.length; i++) {
+        const c = stripComment(clean(lines[i]));
+        const dm = c.match(/(?:^|[^.\w$])(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g);
+        if (dm) dm.forEach((d) => localDecl.add(d.replace(/.*\s/, '')));
+        const pm = c.match(/^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/);
+        if (pm) pm[2].split(',').forEach((p) => localDecl.add(p.trim().split('=')[0].trim()));
+      }
+      for (let i = f.start; i <= f.end && i < lines.length; i++) {
+        const c = stripComment(clean(lines[i]));
+        nested.forEach((n) => {
+          if (localDecl.has(n) || exposed.has(n)) return;
+          const re = new RegExp('(^|[^.\\w$])' + n.replace(/\$/g, '\\$') + '\\s*\\(');
+          if (re.test(c) && !new RegExp('window\\.\\s*' + n.replace(/\$/g, '\\$') + '\\s*\\(').test(c)) {
+            hits.push(`${f.name} (L${i + 1}) 调用了 init() 内嵌套函数 ${n}()`);
+          }
+        });
+      }
+    });
+    const uniq = [...new Set(hits)];
+    if (uniq.length === 0) {
+      log('ok', `R29: 顶层函数未越界调用 init() 的 ${nested.size} 个嵌套函数（applyPreparsed 类 Bug 兜底）`);
+    } else {
+      uniq.slice(0, 8).forEach((h) => log('err', 'R29: ' + h));
+      if (uniq.length > 8) log('err', 'R29: …以及另外 ' + (uniq.length - 8) + ' 处');
+    }
+  }
+} catch (e) {
+  log('warn', 'R29: 无法校验（' + e.message + '）');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {

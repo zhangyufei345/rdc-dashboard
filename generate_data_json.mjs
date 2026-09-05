@@ -16,6 +16,27 @@ const XLSX = require('C:/Users/zhangyufei1/.workbuddy/binaries/node/workspace/no
 
 const ROOT = process.cwd();
 
+// v203: 删除「表头为空 且 整列全为 null/空串」的列（纯占位列）。
+//   用途：基础数据 sheet 有 30 列，其中 10 列表头为空且整列全是 null，占体积 27%。
+//   为什么安全：前端按**表头名**寻列（bColIdx），无名列永远查不到；硬编码索引 r[0]/r[1]
+//   （产品编码/产品名称）表头非空，必然保留。任一列若有实际数据则原样保留，不丢信息。
+function projectEmptyColumns(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return arr;
+  const head = arr[0] || [];
+  const keep = [];
+  for (let c = 0; c < head.length; c++) {
+    if (String(head[c] || '').trim() !== '') { keep.push(c); continue; }
+    let hasData = false;
+    for (let r = 1; r < arr.length; r++) {
+      const v = arr[r] && arr[r][c];
+      if (v !== null && v !== undefined && v !== '') { hasData = true; break; }
+    }
+    if (hasData) keep.push(c); // 表头空但有数据 → 保留，宁可多存也不丢信息
+  }
+  if (keep.length === head.length) return arr;
+  return arr.map(row => keep.map(i => (row ? row[i] : null)));
+}
+
 // 与网页端 sheet_to_json 选项保持一致（raw:true 时 dateNF 无效，故一致）
 const SHEET_OPTS = { header: 1, defval: null, raw: true };
 
@@ -354,7 +375,18 @@ function main() {
       wb.SheetNames.forEach(name => {
         const arr = XLSX.utils.sheet_to_json(wb.Sheets[name], SHEET_OPTS);
         if (CORE_SHEETS.includes(name)) { coreSheets[name] = arr; coreRows += arr.length; }
-        else if (MASTER_SHEETS.includes(name)) { masterSheets[name] = arr; masterRows += arr.length; }
+        // v203: 基础数据列投影——删掉「表头为空 且 整列全 null」的列（实测 30 列里 10 列是纯占位，
+        //   占该 sheet 体积的 27%，即 0.51MB）。安全性：前端 parseInventoryExcel 用 bColIdx() 按
+        //   **表头名**寻列，删无名列完全无影响；硬编码索引 r[0]/r[1]（产品编码/产品名称）都在
+        //   block A 且表头非空，也会保留。双保险：表头空但整列有数据则保留（防脏数据）。
+        else if (MASTER_SHEETS.includes(name)) {
+          const proj = projectEmptyColumns(arr);
+          masterSheets[name] = proj;
+          masterRows += proj.length;
+          if (proj[0] && arr[0] && proj[0].length !== arr[0].length) {
+            console.log(`   基础数据列投影：${arr[0].length} → ${proj[0].length} 列`);
+          }
+        }
         else if (PLAN_SHEETS.includes(name)) { planSheets[name] = arr; planRows += arr.length; }
         else if (EXTRA_SHEETS.includes(name)) { extraSheets[name] = arr; extraRows += arr.length; }
         else if (STATUS_SHEETS.includes(name)) { statusSheets[name] = arr; statusRows += arr.length; }
