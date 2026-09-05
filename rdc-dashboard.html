@@ -8636,6 +8636,16 @@ function renderTransship() {
     return;
   }
 
+  // v205: 转储数据有**两批互补来源** —— transship.json（2026-01~06，16524 条）
+  //   + inventory-extra.json 的「转储数据」sheet（2026-07-02~08-31，7324 条），实测零重叠。
+  //   此前本页只触发 ensureTransship，导致**同一页面数据随点击顺序变化**：
+  //     直接进转储页            → 只有 1-6 月，16523 条
+  //     先进分仓计划监控/库存结构 → 顺带加载了 extra，再回来变成 23790 条（1-8 月）
+  //   这是客观的不一致（不是口径偏好），故补齐触发。放这里而非函数开头，是为了
+  //   等 1-6 月数据先就位，避免 extra 先到时 renderPage 落到「暂无转储数据」分支。
+  //   ensureInventoryExtra 内部完成时会 renderPage() 回来重渲染（见其 cur==='transship' 分支）。
+  if (!window._invExtraReady && typeof ensureInventoryExtra === 'function') ensureInventoryExtra();
+
   if (typeof window._transTab === 'undefined') window._transTab = 'transship';
   const _tTab = window._transTab;
   const tabStyle = (t) => t === _tTab ? 'background:var(--color-blue);color:#fff;' : '';
