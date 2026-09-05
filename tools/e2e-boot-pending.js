@@ -1,7 +1,18 @@
-// 验证 v205 修复：boot（首拉全量）期间点击「转储数据」，boot 完成后应
-//   ① 停在转储页（而不是被踢回 overview）② 自动渲染出数据
-// 修复前：init() 里 bootLoad().then 无条件 navigateTo('overview')，把用户刚点的页面顶掉，
-//   表现为「点了转储没反应、还被弹回首页」。
+// 验证：boot（首拉全量 42MB）期间点击「转储数据」，boot 完成后应
+//   ① 停在转储页 ② 自动渲染出数据（而不是永远卡在「数据加载中」占位层）
+//
+// 背景（v205 排查结论，供后来者参考，别再走一遍弯路）：
+//   这条路径一度被判定为「boot 完成后被无条件 navigateTo('overview') 踢回首页」，
+//   并据此加了 _bootPendingPage 修复 —— 但 **A/B 实测推翻了这个判断**：
+//   把该分支禁用（else if (false)）后本用例照样通过。
+//   真正兜底的是 refreshFromManifest 末尾的 renderAll() → renderPage(currentPage)：
+//   boot 结束前会用「用户当前所在页」重渲染一次，所以点过的页面会自己恢复。
+//   当时误判是因为只看了 init() 的 navigateTo，没注意到 bootLoad 内部还有 renderAll()。
+//   → 已把 _bootPendingPage 相关改动全部回退（不留在代码里当死代码）。
+//   保留本用例的价值：一旦 renderAll 被改掉、或不再渲染 currentPage，
+//   「boot 期间点菜单」就会退化成永久占位层，此用例会立刻红灯。
+//
+// 另注：本用例**必须限速** —— 本地静态服务 1.5s 就 boot 完，造不出 boot 窗口。
 // 用法：node tools/e2e-boot-pending.js
 const http = require('http'), fs = require('fs'), path = require('path');
 const { chromium } = require('C:/Users/zhangyufei1/.workbuddy/binaries/node/workspace/node_modules/playwright-core');

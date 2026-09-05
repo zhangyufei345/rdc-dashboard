@@ -1984,10 +1984,6 @@ function renderPage(page) {
       //   ②boot 期间点转储/分仓监控时顺手预触发按需加载器，boot 一结束页面立即可用，不用再等第二轮 fetch。
       if (page === 'transship' && !window._transshipReady && typeof ensureTransship === 'function') ensureTransship();
       if (page === 'plan-monitor' && !window._invPlanReady && typeof ensureInventoryPlan === 'function') ensureInventoryPlan();
-      // v205: 记住用户在 boot 期间主动点了哪个页面（见 init() 里 bootLoad().then 的配套改动）。
-      //   此前 boot 一结束就无条件 navigateTo('overview')，把用户刚点的「转储数据」踢回首页，
-      //   用户感受到的就是「点了转储没反应、还被弹回去了、再点其他功能也像失效」。
-      window._bootPendingPage = page;
       document.getElementById('page-' + page).innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite">⏳</div><div style="font-size:var(--font-size-lg)">数据加载中…</div><div style="font-size:12px;margin-top:8px">首次打开 / 新版本部署后需全量拉取，之后自动走本地缓存秒开</div><div id="boot-loading-note" style="font-size:12px;margin-top:10px;color:#f59e0b;font-weight:600">' + ((window._bootProgress && window._bootProgress.text) || '正在准备…') + '</div><div style="font-size:11px;margin-top:8px;color:var(--text-muted)">数据到位后本页会自动刷新，无需手动操作</div></div>';
       return;
     }
@@ -12213,14 +12209,6 @@ function init() {
       bootLoad().then(loaded => {
         window._bootLoading = false;
         if (window.location.hash) handleHash();
-        else if (window._bootPendingPage && (loaded || dataStore.loaded)) {
-          // v205: 首拉期间用户主动点过某个页面（renderPage 的 _bootLoading 分支会记录），
-          //   boot 完成后回到他点的那一页并重新渲染 —— 而不是一律踢回 overview。
-          //   这是「boot 中点转储数据 → 没反应、像被弹回去」的直接原因。
-          const _pg = window._bootPendingPage;
-          window._bootPendingPage = null;
-          navigateTo(_pg);
-        }
         else navigateTo((loaded || dataStore.loaded) ? 'overview' : 'data');
       });
     }
