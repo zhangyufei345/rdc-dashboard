@@ -17196,6 +17196,13 @@ function buildPlanOptimAdvice() {
   const _cov7Lookup = {};
   cov7.forEach(function(d) { if (d.sku && d.rdc) _cov7Lookup[normSkuCode(d.sku) + '|' + d.rdc] = d; });
 
+  // v231: 预建全局 SKU 名称映射（三源回退：orderDetail > cov7 > planBySkuRdc）
+  //   解决部分 SKU 在分仓计划表有值但 cov7 无对应行 → 品名显示为纯SKU码的问题
+  const _skuNameMap = {};
+  orders.forEach(function(d){ var s = normSkuCode(d.skuCode || ''); if (s && d.skuName && !_skuNameMap[s]) _skuNameMap[s] = d.skuName; });
+  cov7.forEach(function(d){ var s = normSkuCode(d.sku || ''); if (s && d.skuName && !_skuNameMap[s]) _skuNameMap[s] = d.skuName; });
+  if (_hasPlan2) { Object.keys(_pb2).forEach(function(sku){ var info = _pb2[sku]; if (!info) return; Object.keys(info).forEach(function(rdc){ var r = info[rdc]; if (r && r.skuName && !_skuNameMap[sku]) _skuNameMap[sku] = r.skuName; }); }); }
+
   const _out2 = [];
 
   // v230: 评分制分类（替代 v197 的 C1-C6 原因分类）——综合 5 维度加权，输出 score + direction + 调整幅度
@@ -17279,7 +17286,12 @@ function buildPlanOptimAdvice() {
     }
 
     _out2.push({
-      sku: sku, skuName: (cd && cd.skuName) || sku, brand: (cd && cd.brand) || '', rdc: rdc,
+      sku: sku,
+      // v231: 品名三源回退——cd.skuName 若为空或等于SKU码（部分数据源品名列填的是代码）视为无效，
+      //   依次回退：全局 _skuNameMap（orderDetail>cov7>分仓计划）→ window._planSkuNameMap → 兜底显示SKU码但不重复渲染
+      skuName: (function(){ var _n = String((cd && cd.skuName) || '').trim(); if (_n && _n !== sku) return _n; _n = String(_skuNameMap[sku] || '').trim(); if (_n && _n !== sku) return _n; _n = String((window._planSkuNameMap || {})[sku] || '').trim(); if (_n && _n !== sku) return _n; return _n || sku; })(),
+      // v231: 品牌回退 window._brandMap（data.json 基础数据 sku→品牌），保证品牌筛选/品牌图表覆盖全量
+      brand: (cd && cd.brand) || (window._brandMap && window._brandMap[sku]) || '(未分类)', rdc: rdc,
       plan: plan, shipped: shipped, comp: comp,
       dims: dims, score: Math.round(score),
       direction: direction, timeWindow: timeWindow,
@@ -17442,16 +17454,39 @@ function renderPlanAdvice() {
   let html = '';
   html += planTabBarHtml();
 
-  // 筛选 / 工具条
-  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--bg-card);border-radius:12px;margin-bottom:14px">';
-  // 权重调节（⚙️）——首屏同步从 localStorage 载入持久化权重，避免摘要文案与评分口径首帧不一致
+  // 筛选 / 工具条（权重面板 + 筛选栏合并为单行紧凑布局）
   if (!window._optWeights) { try { window._optWeights = JSON.parse(localStorage.getItem('optWeights_v' + DB_VERSION)); } catch(e){} if (!window._optWeights || typeof window._optWeights !== 'object') window._optWeights = { urgency:30, deviation:25, dcAvail:20, ltTrend:15, slowRisk:10 }; }
   const _w = window._optWeights;
+  const _wsum = (_w.urgency + _w.deviation + _w.dcAvail + _w.ltTrend + _w.slowRisk) || 100;
   html += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--bg-card);border-radius:12px;margin-bottom:14px">';
-  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">⚙️ 评分权重</span>';
+  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">⚙️ 权重</span>';
   html += '<button class="btn-export" onclick="toggleOptWeightPanel()" style="padding:4px 10px;font-size:11px">'+(window._optWeightOpen?'收起':'调整')+'</button>';
-  html += '<span id="opt-weight-summary" style="font-size:11px;color:var(--text-secondary);margin-left:auto">综合分 = 缺货'+_w.urgency+' + 偏离'+_w.deviation+' + 总仓'+_w.dcAvail+' + 趋势'+_w.ltTrend+' + 慢动'+_w.slowRisk+'</span>';
+  html += '<span id="opt-weight-summary" style="font-size:11px;color:var(--text-secondary)">缺货'+_w.urgency+'+偏离'+_w.deviation+'+总仓'+_w.dcAvail+'+趋势'+_w.ltTrend+'+慢动'+_w.slowRisk+'</span>';
+  // 分隔线
+  html += '<span style="width:1px;height:20px;background:var(--border-card);margin:0 4px"></span>';
+  // 筛选器：时间窗 / 方向 / 评分 / 品牌(NEW)
+  const fTime = window._planAdviceTime || 'all';
+  const fDir = window._planAdviceDir || 'all';
+  const fScore = window._planAdviceScore || 'all';
+  const fBrand = window._planAdviceBrand || 'all';
+  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">时间</span>';
+  html += '<select onchange="window._planAdviceTime=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all">全部</option><option value="short"'+(fTime==='short'?' selected':'')+'>本周内</option><option value="mid"'+(fTime==='mid'?' selected':'')+'>下月评估</option></select>';
+  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">方向</span>';
+  html += '<select onchange="window._planAdviceDir=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all">全部</option><option value="上调分仓计划">↑ 上调</option><option value="下调分仓计划">↓ 下调</option><option value="保持观察">→ 保持</option></select>';
+  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">评分</span>';
+  html += '<select onchange="window._planAdviceScore=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all">全部</option><option value="high">≥70</option><option value="mid">40-69</option><option value="low"><40</option></select>';
+  // 品牌(NEW)
+  var _brandList = [];
+  var _brandSet = {};
+  all.forEach(function(r){ if (r.brand && !_brandSet[r.brand]) { _brandSet[r.brand] = true; _brandList.push(r.brand); } });
+  _brandList.sort();
+  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">品牌</span>';
+  html += '<select onchange="window._planAdviceBrand=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;min-width:100px"><option value="all">全部品牌</option>';
+  _brandList.forEach(function(b){ html += '<option value="'+b+'"'+(fBrand===b?' selected':'')+'>'+b+'</option>'; });
+  html += '</select>';
+  html += '<button class="btn-export" style="margin-left:auto" onclick="exportPlanAdvice()">⬇ 导出CSV</button>';
   html += '</div>';
+  // 权重展开面板（收起时隐藏）
   if (window._optWeightOpen) {
     html += '<div class="card" style="margin-bottom:14px;padding:14px 18px"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">';
     [['urgency','缺货紧迫度'],['deviation','需求偏离度'],['dcAvail','总仓可用度'],['ltTrend','长期趋势'],['slowRisk','慢动风险']].forEach(function(p){
@@ -17461,21 +17496,27 @@ function renderPlanAdvice() {
     html += '</div></div>';
   }
 
-  // 筛选栏（时间窗 / 方向 / 评分）
-  const fTime = window._planAdviceTime || 'all';
-  const fDir = window._planAdviceDir || 'all';
-  const fScore = window._planAdviceScore || 'all';
-  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--bg-card);border-radius:12px;margin-bottom:14px">';
-  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">时间窗</span>';
-  html += '<select onchange="window._planAdviceTime=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all">全部</option><option value="short"'+(fTime==='short'?' selected':'')+'>本周内</option><option value="mid"'+(fTime==='mid'?' selected':'')+'>下月评估</option></select>';
-  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">方向</span>';
-  html += '<select onchange="window._planAdviceDir=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all">全部</option><option value="上调分仓计划">↑ 上调</option><option value="下调分仓计划">↓ 下调</option><option value="保持观察">→ 保持</option></select>';
-  html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">评分</span>';
-  html += '<select onchange="window._planAdviceScore=this.value;renderPlanMonitor()" style="padding:5px 8px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all">全部</option><option value="high">≥70</option><option value="mid">40-69</option><option value="low"><40</option></select>';
-  html += '<button class="btn-export" style="margin-left:auto" onclick="exportPlanAdvice()">⬇ 导出CSV</button>';
+  // ---- 筛选后数据集 ----
+  let _list = all.slice();
+  if (fTime !== 'all') _list = _list.filter(function(r){ return r.timeWindow === fTime; });
+  if (fDir !== 'all') _list = _list.filter(function(r){ return r.direction === fDir; });
+  if (fScore === 'high') _list = _list.filter(function(r){ return r.score >= 70; });
+  else if (fScore === 'mid') _list = _list.filter(function(r){ return r.score >= 40 && r.score < 70; });
+  else if (fScore === 'low') _list = _list.filter(function(r){ return r.score < 40; });
+  if (fBrand !== 'all') _list = _list.filter(function(r){ return r.brand === fBrand; });
+  _list.sort(function(a,b){ return b.score - a.score; });
+
+  // v231: 结构分析图表区（3张并排 echarts）——解决"全是数字表格"问题，让计划员一眼看清全局结构
+  html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">';
+  // 图表A：方向分布饼图
+  html += '<div class="card"><div class="card-header"><span class="card-title" style="font-size:12px">调整方向分布</span></div><div id="pa-chart-dir" style="height:240px"></div></div>';
+  // 图表B：品牌×方向堆叠柱状图
+  html += '<div class="card"><div class="card-header"><span class="card-title" style="font-size:12px">品牌×方向分布</span></div><div id="pa-chart-brand-dir" style="height:240px"></div></div>';
+  // 图表C：综合分分布直方图
+  html += '<div class="card"><div class="card-header"><span class="card-title" style="font-size:12px">综合分分布</span></div><div id="pa-chart-score-dist" style="height:240px"></div></div>';
   html += '</div>';
 
-  // v230: 6 张 KPI 概览（短期 3 + 中期 2 + 总览 1）——业务语言，回答"本月/中期各要做多少"
+  // v231: KPI 卡片 —— 横排 2行×3列（修复竖排单列问题）
   const _shortActions = all.filter(function(r){ return r.timeWindow === 'short' && r.direction !== '保持观察'; });
   const _midUp = all.filter(function(r){ return r.timeWindow === 'mid' && r.direction === '上调分仓计划'; });
   const _midDown = all.filter(function(r){ return r.timeWindow === 'mid' && r.direction === '下调分仓计划'; });
@@ -17488,75 +17529,188 @@ function renderPlanAdvice() {
     { label:'需求高估待减配', val:_midDown.length, color:'#2563EB', bg:'#DBEAFE', sub:'下月评估下调' },
     { label:'本月需调整总数', val:_total, color:'#475569', bg:'#F1F5F9', sub:'短期+中期去重' }
   ];
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">';
+  html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">';
   _kpi.forEach(function(k){
     html += '<div class="kpi-card" style="border-left:4px solid '+k.color+'"><div class="kpi-label">'+k.label+'</div><div class="kpi-value" style="color:'+k.color+'">'+k.val+'</div><div style="font-size:10px;color:var(--text-secondary)">'+k.sub+'</div></div>';
   });
   html += '</div>';
 
-  // 筛选后列表
-  let _list = all.slice();
-  if (fTime !== 'all') _list = _list.filter(function(r){ return r.timeWindow === fTime; });
-  if (fDir !== 'all') _list = _list.filter(function(r){ return r.direction === fDir; });
-  if (fScore === 'high') _list = _list.filter(function(r){ return r.score >= 70; });
-  else if (fScore === 'mid') _list = _list.filter(function(r){ return r.score >= 40 && r.score < 70; });
-  else if (fScore === 'low') _list = _list.filter(function(r){ return r.score < 40; });
-  _list.sort(function(a,b){ return b.score - a.score; });
+  // v231: 品牌汇总表（计划员按品牌切分工作，先看品牌维度再钻取SKU）
+  var _brandAgg = {};
+  _list.forEach(function(r){
+    var b = r.brand || '(未分类)';
+    if (!_brandAgg[b]) _brandAgg[b] = { brand:b, count:0, upCount:0, downCount:0, holdCount:0, topSkus:[] };
+    var g = _brandAgg[b];
+    g.count++;
+    if (r.direction === '上调分仓计划') g.upCount++;
+    else if (r.direction === '下调分仓计划') g.downCount++;
+    else g.holdCount++;
+    if (g.topSkus.length < 3) g.topSkus.push(r);
+  });
+  var _brandRows = Object.keys(_brandAgg).map(function(k){ return _brandAgg[k]; }).sort(function(a,b){ return b.count - a.count; });
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📊 品牌汇总（按品牌切分，共 '+_brandRows.length+' 个品牌）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击品牌名筛选</span></div>';
+  html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+  html += '<thead><tr style="background:var(--bg-card)"><th style="padding:8px 10px;text-align:left;border-bottom:2px solid var(--border-card)">品牌</th><th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-card)">SKU数</th><th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-card);color:#DC2626">↑ 上调</th><th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-card);color:#2563EB">↓ 下调</th><th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-card)">→ 保持</th><th style="padding:8px 10px;text-align:left;border-bottom:2px solid var(--border-card)">Top3 高分SKU</th></tr></thead><tbody>';
+  _brandRows.forEach(function(g){
+    html += '<tr style="border-bottom:1px solid var(--border-card);cursor:pointer" onclick="window._planAdviceBrand=\''+g.brand+'\';renderPlanMonitor()">';
+    html += '<td style="padding:8px 10px;font-weight:600;color:var(--text-primary)">'+g.brand+'</td>';
+    html += '<td style="padding:8px 10px;text-align:center">'+g.count+'</td>';
+    html += '<td style="padding:8px 10px;text-align:center;color:#DC2626;font-weight:600">'+g.upCount+'</td>';
+    html += '<td style="padding:8px 10px;text-align:center;color:#2563EB;font-weight:600">'+g.downCount+'</td>';
+    html += '<td style="padding:8px 10px;text-align:center;color:#94A3B8">'+g.holdCount+'</td>';
+    html += '<td style="padding:8px 10px;font-size:11px;color:var(--text-secondary)">'+g.topSkus.map(function(r){ return (r.skuName||r.sku)+'('+r.score+'分)'; }).join(' / ')+'</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div></div>';
 
-  // 列表（Top 80 + 折叠）
-  const _topN = window._planAdviceShowAll ? _list.length : 80;
+  // v231: 分层速览条（P0紧急≥70 / P1关注40-69 / P2观察<40）——先告诉计划员"重点在哪"，默认只展开头部
+  const _listNoScore = all.filter(function(r){
+    if (fTime !== 'all' && r.timeWindow !== fTime) return false;
+    if (fDir !== 'all' && r.direction !== fDir) return false;
+    if (fBrand !== 'all' && r.brand !== fBrand) return false;
+    return true;
+  });
+  const _cntP0 = _listNoScore.filter(function(r){ return r.score >= 70; }).length;
+  const _cntP1 = _listNoScore.filter(function(r){ return r.score >= 40 && r.score < 70; }).length;
+  const _cntP2 = _listNoScore.filter(function(r){ return r.score < 40; }).length;
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:12px">';
+  html += '<span style="font-weight:600;color:var(--text-primary)">分层速览</span>';
+  html += '<span onclick="window._planAdviceScore=\'high\';renderPlanMonitor()" style="cursor:pointer;padding:4px 12px;border-radius:8px;font-weight:600;background:'+(fScore==='high'?'#DC2626':'#FEE2E2')+';color:'+(fScore==='high'?'#fff':'#DC2626')+'">P0 紧急 ≥70分：'+_cntP0+' 条</span>';
+  html += '<span onclick="window._planAdviceScore=\'mid\';renderPlanMonitor()" style="cursor:pointer;padding:4px 12px;border-radius:8px;font-weight:600;background:'+(fScore==='mid'?'#D97706':'#FEF3C7')+';color:'+(fScore==='mid'?'#fff':'#B45309')+'">P1 关注 40-69分：'+_cntP1+' 条</span>';
+  html += '<span onclick="window._planAdviceScore=\'low\';renderPlanMonitor()" style="cursor:pointer;padding:4px 12px;border-radius:8px;font-weight:600;background:'+(fScore==='low'?'#64748B':'#F1F5F9')+';color:'+(fScore==='low'?'#fff':'#64748B')+'">P2 观察 <40分：'+_cntP2+' 条</span>';
+  html += '<span style="color:var(--text-secondary)">点击分层快速筛选</span>';
+  html += '</div>';
+
+  // 重点清单（Top 30 而非 80 —— 2434条中真正需要计划员关注的头部重点）
+  const _topN = window._planAdviceShowAll ? _list.length : 30;
   const _shown = _list.slice(0, _topN);
   const _rest = _list.length - _shown.length;
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">📋 优化建议清单（评分降序）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">显示 '+Math.min(_topN,_list.length)+' / 共 '+_list.length+' 条｜点击行展开评分明细</span></div>';
+  window._adviceShown = _shown; // v231: 行展开用
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">🎯 重点建议清单（Top '+Math.min(_topN,_list.length)+'，评分降序）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">显示 '+Math.min(_topN,_list.length)+' / 共 '+_list.length+' 条'+(fBrand!=='all' ? ' ['+fBrand+']' : '')+'｜点击行展开五维评分明细</span></div>';
   html += '<div style="padding:8px 14px">';
   if (!_shown.length) {
     html += '<div style="text-align:center;padding:40px;color:var(--text-secondary)">当前筛选条件下无调整建议</div>';
   } else {
-    _shown.forEach(function(r){
+    _shown.forEach(function(r, i){
       const _dm = PLAN_DIR_META[r.direction] || { color:'#64748B', bg:'#F1F5F9' };
       const _ar = r.direction === '上调分仓计划' ? '↑' : (r.direction === '下调分仓计划' ? '↓' : '→');
       const _tw = r.timeWindow === 'short' ? '本周内' : '下月评估';
       const _adj = r.adjustPct > 0 ? ('+'+ (r.adjustPct*100).toFixed(0) + '%') : (r.adjustPct < 0 ? (r.adjustPct*100).toFixed(0) + '%' : '—');
-      html += '<div style="border:1px solid var(--border-card);border-radius:8px;padding:10px 12px;margin-bottom:8px">';
+      const _tier = r.score >= 70 ? ['P0','紧急','#DC2626','#FEE2E2'] : (r.score >= 40 ? ['P1','关注','#B45309','#FEF3C7'] : ['P2','观察','#64748B','#F1F5F9']);
+      html += '<div style="border:1px solid var(--border-card);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="toggleAdviceDetail('+i+')">';
       html += '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">';
-      html += '<div style="min-width:180px;flex:1"><div style="font-size:13px;font-weight:600;color:var(--text-primary)">'+(r.skuName||'')+' <span style="color:#94A3B8;font-weight:400">'+r.sku+'</span></div><div style="font-size:11px;color:var(--text-secondary)">'+r.brand+' · '+r.rdc+'</div></div>';
+      html += '<div style="min-width:180px;flex:1"><div style="display:flex;align-items:center;gap:6px"><span style="padding:1px 7px;border-radius:5px;font-size:10px;font-weight:700;background:'+_tier[3]+';color:'+_tier[2]+'">'+_tier[0]+'</span><span style="font-size:13px;font-weight:600;color:var(--text-primary)">'+(r.skuName||'')+'</span></div><div style="font-size:11px;color:#94A3B8;margin-top:2px">'+r.sku+' · '+r.brand+' · '+r.rdc+'</div></div>';
       html += '<div style="font-size:11px;color:var(--text-secondary);text-align:center;min-width:90px"><div>计划 '+formatNum(r.plan)+'</div><div>出货 '+formatNum(r.shipped)+'</div><div>完成率 '+(r.comp*100).toFixed(0)+'%</div></div>';
       html += '<div style="text-align:center;min-width:60px"><div style="font-size:18px;font-weight:800;color:'+scoreColor(r.score)+'">'+r.score+'</div><div style="font-size:10px;color:var(--text-secondary)">综合分</div></div>';
       html += '<div style="text-align:center;min-width:110px"><span style="display:inline-block;padding:2px 9px;border-radius:6px;font-size:11px;font-weight:700;background:'+_dm.bg+';color:'+_dm.color+'">'+_ar+' '+r.direction+'</span><div style="font-size:10px;color:var(--text-secondary);margin-top:2px">'+_tw+'</div></div>';
       html += '<div style="text-align:center;min-width:90px;font-size:11px"><div>调整 '+_adj+'</div><div>建议 '+formatNum(r.suggestedPlan)+'</div></div>';
       html += '<div style="min-width:200px;flex:2;font-size:11px;color:var(--text-secondary)">'+r.reasons.join('；')+'</div>';
-      html += '</div></div>';
+      html += '</div>';
+      // v231: 行展开明细——五维评分贡献度条 + 原始信号（解决"只给总分不给构成"的可解释性问题）
+      html += '<div id="pa-detail-'+i+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-card)">';
+      html += '<div style="font-size:11px;font-weight:600;color:var(--text-primary);margin-bottom:6px">五维评分构成（权重：缺货'+_w.urgency+' 偏离'+_w.deviation+' 总仓'+_w.dcAvail+' 趋势'+_w.ltTrend+' 慢动'+_w.slowRisk+'）</div>';
+      [['urgency','缺货紧迫度','#DC2626'],['deviation','需求偏离度','#D97706'],['dcAvail','总仓可用度','#B91C1C'],['ltTrend','长期趋势','#7C3AED'],['slowRisk','慢动风险','#64748B']].forEach(function(_dmeta){
+        var _dv = (r.dims && r.dims[_dmeta[0]]) || 0;
+        var _contrib = (_dv * _w[_dmeta[0]] / (_wsum || 100)) * 100;
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="width:76px;font-size:11px;color:var(--text-secondary);flex-shrink:0">'+_dmeta[1]+'</span><div style="flex:1;height:10px;background:#F1F5F9;border-radius:5px;overflow:hidden"><div style="width:'+Math.min(100,_dv*100).toFixed(0)+'%;height:100%;background:'+_dmeta[2]+'"></div></div><span style="width:150px;font-size:11px;color:var(--text-secondary)">维度分 '+(_dv*100).toFixed(0)+'/100 → 贡献 '+_contrib.toFixed(1)+' 分</span></div>';
+      });
+      html += '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--text-secondary)">';
+      html += '<span>真实缺货：<b style="color:'+(r.shortQty>0?'#DC2626':'#64748B')+'">'+r.shortQty+' 箱</b></span>';
+      html += '<span>总仓受限：<b style="color:'+(r.cdcShort?'#DC2626':'#64748B')+'">'+(r.cdcShort?'是（波及 '+r.rdcShortCnt+' 个RDC）':'否')+'</b></span>';
+      html += '<span>当月严重度：<b>'+(r.severity != null ? (r.severity*100).toFixed(0)+'%' : '—')+'</b></span>';
+      html += '<span>长期分型：<b>'+(r.ltTier === 'repeat' ? '反复' : r.ltTier === 'stub' ? '顽固' : r.ltTier || '—')+'</b></span>';
+      html += '<span>慢动命中：<b style="color:'+(r.slow?'#7C3AED':'#64748B')+'">'+(r.slow?'是':'否')+'</b></span>';
+      html += '</div></div></div>';
     });
     if (_rest > 0) {
-      html += '<div style="text-align:center;padding:10px;font-size:11px;color:var(--text-secondary)">还有 '+_rest+' 条未显示（评分较低）｜<span style="color:#2563EB;cursor:pointer" onclick="window._planAdviceShowAll=true;renderPlanMonitor()">展开全部</span></div>';
+      html += '<div style="text-align:center;padding:10px;font-size:11px;color:var(--text-secondary)">还有 '+_rest+' 条未显示（评分较低，多为 P2 观察项）｜<span style="color:#2563EB;cursor:pointer" onclick="window._planAdviceShowAll=true;renderPlanMonitor()">展开全部</span></div>';
     }
   }
   html += '</div></div>';
 
-  // Top10 计划vs出货图（保留，对计划员最有价值）
-  const _top10 = _list.slice(0, 10);
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">⚖️ 计划 vs 出货对比 · Top'+_top10.length+'（评分最高）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">灰条=计划量，彩条=实际出货</span></div><div id="pa-chart-top" style="height:'+Math.max(220,_top10.length*34+70)+'px;padding:0 10px"></div></div>';
+  // 计划 vs 出货对比图（Top15，比之前Top10覆盖更多重点项）
+  const _topChart = _list.slice(0, 15);
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">⚖️ 计划 vs 出货 · Top'+_topChart.length+'</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">灰条=计划量，彩条=实际出货</span></div><div id="pa-chart-top" style="height:'+Math.max(260,_topChart.length*32+70)+'px;padding:0 10px"></div></div>';
 
   page.innerHTML = html;
 
-  // v230: 仅保留 Top10 计划vs出货图（原因分类图/RDC堆叠图语义已随评分制废弃）
+  // v231: 填充所有图表（方向饼图 + 品牌方向柱状图 + 评分直方图 + Top计划vs出货）
   (function fillAdviceCharts(){
     if (typeof echarts === 'undefined') return;
-    const el3 = document.getElementById('pa-chart-top');
-    if (el3 && _top10.length) {
-      const c3 = initChart('pa-chart-top');
-      const _names = _top10.map(function(r, i){ return (i + 1) + '. ' + (r.skuName || r.sku) + ' · ' + r.rdc; });
+
+    // 图表A：方向分布饼图
+    var elDir = document.getElementById('pa-chart-dir');
+    if (elDir) {
+      var dirCounts = { '上调分仓计划':0, '下调分仓计划':0, '保持观察':0 };
+      _list.forEach(function(r){ if (dirCounts[r.direction] !== undefined) dirCounts[r.direction]++; });
+      var cDir = initChart('pa-chart-dir');
+      cDir.setOption({
+        tooltip: { trigger: 'item', formatter: '{b}: {c}条 ({d}%)' },
+        legend: { bottom: 4, textStyle: { fontSize: 11 } },
+        color: ['#DC2626','#2563EB','#94A3B8'],
+        series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%','46%'], label: { fontSize: 11, formatter: '{b}\n{c}条' }, data: [
+          { name:'↑ 上调', value:dirCounts['上调分仓计划'] },
+          { name:'↓ 下调', value:dirCounts['下调分仓计划'] },
+          { name:'→ 保持', value:dirCounts['保持观察'] }
+        ] }]
+      });
+    }
+
+    // 图表B：品牌×方向堆叠柱状图
+    var elBD = document.getElementById('pa-chart-brand-dir');
+    if (elBD && _brandRows.length) {
+      var cBD = initChart('pa-chart-brand-dir');
+      var bNames = _brandRows.map(function(g){ return g.brand; });
+      cBD.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { top: 4, textStyle: { fontSize: 10 } },
+        grid: { left: 10, right: 10, top: 36, bottom: 40, containLabel: true },
+        xAxis: { type: 'category', data: bNames, axisLabel: { fontSize: 10, rotate: bNames.length > 6 ? 20 : 0 } },
+        yAxis: { type: 'value', axisLabel: { fontSize: 10 } },
+        color: ['#DC2626','#2563EB','#94A3B8'],
+        series: [
+          { name:'↑ 上调', type:'bar', stack:'dir', barMaxWidth: 16, data: _brandRows.map(function(g){ return g.upCount; }) },
+          { name:'↓ 下调', type:'bar', stack:'dir', barMaxWidth: 16, data: _brandRows.map(function(g){ return g.downCount; }) },
+          { name:'→ 保持', type:'bar', stack:'dir', barMaxWidth: 16, data: _brandRows.map(function(g){ return g.holdCount; }) }
+        ]
+      });
+    }
+
+    // 图表C：综合分分布直方图
+    var elSD = document.getElementById('pa-chart-score-dist');
+    if (elSD && _list.length) {
+      var buckets = [0,0,0,0,0,0,0,0,0,0]; // 0-9,10-19,...,90-100
+      _list.forEach(function(r){ var idx = Math.min(9, Math.floor(r.score / 10)); buckets[idx]++; });
+      var cSD = initChart('pa-chart-score-dist');
+      var bucketLabels = [];
+      for (var bi = 0; bi < 10; bi++) bucketLabels.push(bi * 10 + '-' + (bi + 1) * 0.999);
+      cSD.setOption({
+        tooltip: { trigger: 'axis', formatter: function(ps){ var p = ps[0]; return p.axisValue + '分: ' + p.value + '条'; } },
+        grid: { left: 40, right: 10, top: 16, bottom: 30, containLabel: false },
+        xAxis: { type: 'category', data: bucketLabels, axisLabel: { fontSize: 10, interval: 1, rotate: 30 } },
+        yAxis: { type: 'value', axisLabel: { fontSize: 10 } },
+        series: [{ type: 'bar', barMaxWidth: 18, itemStyle: {
+          color: function(p){ var s = p.dataIndex * 10; if (s >= 70) return '#DC2626'; if (s >= 40) return '#F59E0B'; return '#64748B'; }
+        }, data: buckets }]
+      });
+    }
+
+    // 图表D：Top 计划vs出货对比（保留，扩展至Top15）
+    var el3 = document.getElementById('pa-chart-top');
+    if (el3 && _topChart.length) {
+      var c3 = initChart('pa-chart-top');
+      var _names = _topChart.map(function(r, i){ return (i + 1) + '. ' + (r.skuName || r.sku) + ' · ' + r.rdc; });
       c3.setOption({
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(ps){ const r = _top10[ps[0].dataIndex]; let s = (r.skuName || r.sku) + '（' + r.sku + '）· ' + r.rdc + '<br>方向：' + r.direction + '｜评分：' + r.score; ps.forEach(function(p){ s += '<br>' + p.marker + p.seriesName + '：' + formatNum(p.value) + ' 支'; }); s += '<br>完成率：' + (r.comp * 100).toFixed(1) + '%'; return s; } },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(ps){ const r = _topChart[ps[0].dataIndex]; let s = (r.skuName || r.sku) + '（' + r.sku + '）· ' + r.rdc + '<br>方向：' + r.direction + '｜评分：' + r.score; ps.forEach(function(p){ s += '<br>' + p.marker + p.seriesName + '：' + formatNum(p.value) + ' 支'; }); s += '<br>完成率：' + (r.comp * 100).toFixed(1) + '%'; return s; } },
         legend: { top: 4, textStyle: { fontSize: 11 } },
         grid: { left: 8, right: 70, top: 34, bottom: 10, containLabel: true },
         xAxis: { type: 'value', axisLabel: { formatter: function(v){ return v >= 10000 ? (v / 10000) + '万' : v; } } },
         yAxis: { type: 'category', data: _names, axisLabel: { fontSize: 11 } },
         series: [
-          { name: '计划(支)', type: 'bar', barMaxWidth: 12, itemStyle: { color: '#CBD5E1' }, data: _top10.map(function(r){ return r.plan || 0; }) },
+          { name: '计划(支)', type: 'bar', barMaxWidth: 12, itemStyle: { color: '#CBD5E1' }, data: _topChart.map(function(r){ return r.plan || 0; }) },
           { name: '出货(支)', type: 'bar', barMaxWidth: 12, itemStyle: { color: '#2563EB' },
-            label: { show: true, position: 'right', fontSize: 10, formatter: function(p){ const r = _top10[p.dataIndex]; return (r.comp * 100).toFixed(0) + '%'; } },
-            data: _top10.map(function(r){ return r.shipped || 0; }) }
+            label: { show: true, position: 'right', fontSize: 10, formatter: function(p){ const r = _topChart[p.dataIndex]; return (r.comp * 100).toFixed(0) + '%'; } },
+            data: _topChart.map(function(r){ return r.shipped || 0; }) }
         ]
       });
     }
@@ -17603,6 +17757,13 @@ window.toggleOptWeightPanel = toggleOptWeightPanel;
 window.setOptWeight = setOptWeight;
 window.resetOptWeights = resetOptWeights;
 
+// v231: 优化建议行展开/收起（五维评分明细）
+function toggleAdviceDetail(i) {
+  var el = document.getElementById('pa-detail-' + i);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+window.toggleAdviceDetail = toggleAdviceDetail;
+
 // 导出优化建议 CSV（v230：评分制新字段）
 function exportPlanAdvice() {
   const all = (typeof buildPlanOptimAdvice === 'function') ? buildPlanOptimAdvice() : [];
@@ -17610,12 +17771,14 @@ function exportPlanAdvice() {
   const fTime = window._planAdviceTime || 'all';
   const fDir = window._planAdviceDir || 'all';
   const fScore = window._planAdviceScore || 'all';
+  const fBrand = window._planAdviceBrand || 'all';
   let list = all.slice();
   if (fTime !== 'all') list = list.filter(function(r){ return r.timeWindow === fTime; });
   if (fDir !== 'all') list = list.filter(function(r){ return r.direction === fDir; });
   if (fScore === 'high') list = list.filter(function(r){ return r.score >= 70; });
   else if (fScore === 'mid') list = list.filter(function(r){ return r.score >= 40 && r.score < 70; });
   else if (fScore === 'low') list = list.filter(function(r){ return r.score < 40; });
+  if (fBrand !== 'all') list = list.filter(function(r){ return r.brand === fBrand; });
   list.sort(function(a, b){ return b.score - a.score; });
   let csv = '﻿SKU,SKU名称,品牌,RDC,计划(支),出货(支),完成率(%),综合分,调整方向,时间窗,调整幅度(%),建议新计划(支),缺货箱数,总仓受限,长期分型,慢动命中,原因\n';
   list.forEach(function(r){
