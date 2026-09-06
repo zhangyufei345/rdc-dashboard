@@ -531,7 +531,10 @@ function main() {
         }
         const payloadA = { generatedAt: new Date().toISOString(), source: adjSrc, count: adjust.length, adjust };
         fs.writeFileSync(path.join(ROOT, 'adjustments.json'), JSON.stringify(payloadA));
-        manifest.files['adjustments.json'] = sha256File(adjSrc);
+        // v235: 哈希口径统一为「输出 adjustments.json 内容」——此前成功分支哈希源 xlsx、失败分支哈希旧 JSON，
+        //   两种口径混用导致 v208（xlsx 未命中）与后续部署间哈希 A→B→A 跳变；且 xlsx 未变而解析逻辑升级时
+        //   哈希不变，前端会漏拉新解析结果。统一后与 history.json 等其他非 manifest 常规文件口径一致。
+        manifest.files['adjustments.json'] = sha256File(path.join(ROOT, 'adjustments.json'));
         console.log(`   adjustments.json  records=${adjust.length}  ← ${adjSrc}`);
       } catch (e) {
         console.error('   ⚠️ 补货调整记录解析失败，保留旧 adjustments.json：' + e.message);
