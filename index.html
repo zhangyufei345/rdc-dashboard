@@ -718,7 +718,7 @@ function getTopShortageAmountSKUsByRDC(dateStr, rdcKey, limit) {
 
 // ============ IndexedDB 持久化 ============
 const DB_NAME = 'RDC_Dashboard';
-const BUILD_VERSION = 270; // v270: 长期高严重度"逐月轨迹"列表头从"01 · 02 · ... · 09"(全列出)改为"(01~09)"(首尾月份范围)，更简洁。纯UI，DB_VERSION保持228不动。// v269: ①调整方向分布饼图标签从环形内移到外侧(position:outside)+引导线，解决大数字被截断省略号问题；②6个KPI卡片加点击下钻(点击后筛选该维度SKU清单，显示清除按钮，重置筛选联动清除)；③「总仓协调锁定」改名为「总仓缺货」(更直观)。纯逻辑+UI，DB_VERSION保持228不动。// v267: 分仓计划优化建议「下调」长尾保护升级——长尾判定从"月计划<MIN"改为"月计划<MIN 且 整月0出货"。两个分支协同：分支1(可调)条件放宽=plan>=MIN || shipped>0(有真实出货的小计划慢动品仍保留为下调候选，不误伤真需求)；分支2(长尾)仅当 plan<MIN && shipped===0 才判保持观察(纯无需求噪声)。MIN=50：据2026-08 C5候选(780)回放，0~50箱且整月0出货纯噪声共84个(占11%)全部剔除零误伤，50箱以上零出货属真实过量预测保留标下调。纯逻辑，DB_VERSION保持228不动。// v266: 分仓计划优化建议「下调」加长尾低需求保护（方案A：绝对值门槛）。月计划量(箱/月·RDC)<DOWN_ADJ_PLAN_MIN(默认20)的SKU×RDC，即使进度滞后且无缺货也不判「下调分仓计划」，改判「保持观察」并标注"长尾低需求≤N箱，下调空间有限且操作无意义"。门槛据2026-09分仓计划实测非零计划量P5=24/P2.5=15取20(约最底4%长尾)。纯逻辑，DB_VERSION保持228不动。// v265: 批量导出6仓改为1个Sheet合并(不再分6个sheet)，只保留A-E列核心字段(品牌/SKU编码/SKU名称/供应链品类/长期标记)，新增「所属RDC」字段(第6列)用于区分各仓。纯逻辑，DB_VERSION保持228不动。// v264: 长期高严重度分析增加「月份切片」筛选框——可选查看每月月底的长期画像快照（以选中月为截止月重算收缩值/分型/LSI/连续月数）。buildLongTermProfile/buildLongTermProfileByRdc 加 targetMonth 参数；缓存键加入切片月；filter-bar 加 select 下拉（默认最新月）；导出感知切片月。纯逻辑+UI，DB_VERSION保持228。
+const BUILD_VERSION = 271; // v271: 分仓计划优化建议「分数=纯上调意向」重构——综合分只由5个上调信号加权(缺货紧迫/缺货严重度/需求偏离正部/总仓可用/长期趋势)，剔除长期高严重度(ltSev)与慢动(slowRisk)两个护栏/反向因子(它们仅拦截下调、不支撑加量)，下调SKU分数≈0落在P2。deviation维度改取正向max(dev,0)(滞后不再加分，下调由独立规则判定)。方向判定链不变(上调优先链①总仓受限+缺货②仅RDC缺货③严重度P90④结构性超销 → 下调兜底⑤滞后>50pt且无缺货且plan≥50或有出货⑥长尾保持 → 保持⑦慢动⑧ltSev≥0.6⑨plan=0)。同步：删6个KPI卡片(因素改每行行内打勾 缺/仓/单/超/滞/慢/长 7因素,命中彩色未命中灰)+图例；逻辑说明面板改写为两段式+5维权重环图+五维表；权重面板收敛5维；exportPlanAdvice列同步。纯逻辑+UI，DB_VERSION保持228不动。// v269: ①调整方向分布饼图标签从环形内移到外侧(position:outside)+引导线，解决大数字被截断省略号问题；②6个KPI卡片加点击下钻(点击后筛选该维度SKU清单，显示清除按钮，重置筛选联动清除)；③「总仓协调锁定」改名为「总仓缺货」(更直观)。纯逻辑+UI，DB_VERSION保持228不动。// v267: 分仓计划优化建议「下调」长尾保护升级——长尾判定从"月计划<MIN"改为"月计划<MIN 且 整月0出货"。两个分支协同：分支1(可调)条件放宽=plan>=MIN || shipped>0(有真实出货的小计划慢动品仍保留为下调候选，不误伤真需求)；分支2(长尾)仅当 plan<MIN && shipped===0 才判保持观察(纯无需求噪声)。MIN=50：据2026-08 C5候选(780)回放，0~50箱且整月0出货纯噪声共84个(占11%)全部剔除零误伤，50箱以上零出货属真实过量预测保留标下调。纯逻辑，DB_VERSION保持228不动。// v266: 分仓计划优化建议「下调」加长尾低需求保护（方案A：绝对值门槛）。月计划量(箱/月·RDC)<DOWN_ADJ_PLAN_MIN(默认20)的SKU×RDC，即使进度滞后且无缺货也不判「下调分仓计划」，改判「保持观察」并标注"长尾低需求≤N箱，下调空间有限且操作无意义"。门槛据2026-09分仓计划实测非零计划量P5=24/P2.5=15取20(约最底4%长尾)。纯逻辑，DB_VERSION保持228不动。// v265: 批量导出6仓改为1个Sheet合并(不再分6个sheet)，只保留A-E列核心字段(品牌/SKU编码/SKU名称/供应链品类/长期标记)，新增「所属RDC」字段(第6列)用于区分各仓。纯逻辑，DB_VERSION保持228不动。// v264: 长期高严重度分析增加「月份切片」筛选框——可选查看每月月底的长期画像快照（以选中月为截止月重算收缩值/分型/LSI/连续月数）。buildLongTermProfile/buildLongTermProfileByRdc 加 targetMonth 参数；缓存键加入切片月；filter-bar 加 select 下拉（默认最新月）；导出感知切片月。纯逻辑+UI，DB_VERSION保持228。
 const DB_VERSION = 228; // v228: 修复总仓问题SKU漏进D——dcAbnormal判定改为"当月任一日总仓异常"即A1/A2(v227要求最新一天仍异常→月内恢复误判总仓正常漏进D)。①shipMap建表统一normSkuCode修复"订单0却有大额缺货"显示异常 ②D类加shippedQty>0门槛排除无出货记录条目// v215: 修复冷启动/DB_VERSION升级后cov7=0导致分仓计划监控+库存周转双空白。bootLoad结束后无条件校验cov7，缺失则立即补拉inventory-core.json；分仓计划监控暂无数据页增加「补拉库存数据」按钮。// v214: ①修复销售进度"plan=0就显示—"(如09862不在cov7→sp=undefined→空白)：buildPlanSkuAgg补充分仓计划回退路径(planBySkuRdc有但cov7无的SKU不再遗漏)；渲染层区分三种状态(真无数据/超销/正常)，plan=0+shipped>0显示紫色「超销」徽章而非隐藏。②normSkuCode补全shipMap accumulate端(与lookup端对齐防格式不匹配) // v210: 修复库存周转页「读不到 8月数据」。①【根因】parseInventoryTurnoverSheet 写死读 7 个月（rowVals(r,1,7) 左表周转天数 / rowVals(r,rightStartCol+1,rightStartCol+7) 右表出货成本），8月模板 2026周转表有 1-8 月共 8 列（左表 col8=46235=8月、右表出货成本 col17=8月），第 8 列被丢弃→库存周转页看不到 8月周转天数/8月出货成本（即用户报「库存周转页面数据还是空的（8月缺）」）。改动态识别月份列数读满 monthCount 列，months 标签同步推导，未来 9月+ 自动兼容。②inventoryTurnover 在 IDB 有缓存（旧 7 月版），数据文件未变仅解析逻辑变→必须 bump 206→207 触发全量重解析。③分仓需求口径/取消 SKU 过滤（v206 已落）经核验确认无误：getPlanDemand 优先「分仓计划」表；分仓计划监控主表行源=cov7 的 741 SKU，buildPlanSkuAgg 无 _isExcluded 过滤。 // v206: 根治用户端残缺缓存 + 诚实文案修正。①【用户报「分仓计划监控 cov7=0行 / 库存结构分析找不到库存金额表 / 拉回·转储全空」】经核验数据文件全部完好（分仓计划2435行、拉回16173行含8月至08-20、转储7-8月7324行、2026周转=9/5新模版、基础数据含产品主数据block C）——根因是 v205 之前时代遗留的**中毒 IDB 缓存**（inventory 解析残缺但 orderDetail 满量238352，被 partialResume 通道放行后写回固化），用户端数据状态无法远程修复，bump DB_VERSION 205→206 触发 onupgradeneeded 全量清空，所有在线用户下次打开强制重拉一次到位。②诚实文案：v199 已取消「促销装/新品期/无需求」剔除，但 4 处悬浮提示仍写「已按促销装或新品期剔除」（用户 9/5 质疑「为什么 SKU 少」），全部改为如实描述——销售进度「—」= 该 SKU 在目标月无计划量。③分仓需求口径确认（无代码改动）：getPlanDemand 优先「分仓计划」表（2026-08~2027-01 六个月与覆盖表 cov08~cov13 字段一一对齐），缺该 SKU×RDC 才回退覆盖表计划值；主表行来源=7月库存覆盖数据（741 SKU，促销装/新品/无需求全部在内），分仓计划中独有的 59 个 SKU（不在覆盖表快照、39个连主数据都没有）不单独造行——没有库存/覆盖上下文，造行只会整行「—」。 // v205: 修复慢网下「转储/库存数据永远加载不出来 + 页面像死机」三件套。①【根因】refreshFromManifest 单文件 fetch 固定 25s 总超时：inventory-core.json 4.6MB 在慢网（~180KB/s，国内访问 pages.dev 实测水平）需 26s+ → **每次打开都在 25s 被掐死** → 哈希永远标不上 → 断点续传每次都补拉又每次都失败 → cov7=0 永不自愈（用户实测 orderDetail=238352 满量、cov7=0，且转储/分仓监控全空）。改为流式读取 + 20s 空闲超时：字节持续到达就继续等，快网行为不变。②转储/拉回按需加载器 fetch 超时 30s→60s（transship 2.4MB/inventory-extra 4.3MB 慢网下 30s 不够）。③boot 覆盖层「约20秒」假承诺改为实时进度（#boot-loading-note 由 _setProgress 回写「正在导入 N/M：文件名」），boot 期间点转储/分仓监控页顺手预触发按需加载器。④plan-monitor/advice 数据等待从 3次×1.5s=4.5s（冷加载必然耗尽成死错误页）改为 2s×90 次长轮询+实时进度，数据到位自动出图。⑤兜底：缓存命中但 cov7 缺失（partialResume 放行后哈希异常路径已在）→ 强制把 inventory-core/master 塞进重拉列表。 // v204: 修复三个按需加载器恒失败（AbortController.timeout 是不存在的 API，正确写法 AbortSignal.timeout）+ 转储 replace 误清空 + 基础数据列投影瘦身。①【致命】ensureTransship / ensureInventoryExtra / ensureInventoryPlan 三处 fetch 用了 `AbortController.timeout(30000).signal`，标准里只有 `AbortSignal.timeout(ms)`（返回 signal 本身）→ 三行每次执行都同步抛 TypeError 并被各自 try/catch 吞掉，表现为「永远加载不出来」而非报错。后果：转储数据(1-6月)恒空→转储页永远「加载失败」；拉回数据(16173行)+5/6月库存覆盖+转储数据(7-8月,7324行)恒空→批次拉回测算/拉回分析全空；分仓计划 sheet 恒空→分仓需求静默回退旧口径 cov7。v199 修的「转储页点了就死」只把无限重试改成显示失败，**根因至此才动**。新增 abortAfter(ms) 统一封装（无 AbortSignal.timeout 的老浏览器降级为不设超时）。②parseExcel 的 replace 模式此前无条件清空 dataStore.transship，而实测 data.json / data-2026-*.json **都没有转储 sheet**（转储有两个独立来源：transship.json 与 inventory-extra.json 的「转储数据」sheet）→ 每次更新当月订单后转储数据全丢，必须重进转储页才恢复；改为仅当本次文件真的含转储 sheet 才清空。③generate_data_json.mjs 新增 projectEmptyColumns：基础数据 30 列 → 20 列（删表头为空且整列无数据的列），inventory-master.json 2.67MB → 2.17MB；前端 bColIdx 按表头名查找，未命名列可安全删除，r[0]/r[1]（产品编码/产品名称）保持不变。新增 smoke-test 规则 R27（基础数据 14 个前端依赖列 + r[0]/r[1] 校验）与 R28（禁止 AbortController.timeout）。 // v203: 订单按月分片（IndexedDB 月度快照）。根因：首屏 41.3MB 里 37.9MB（92%）是订单 JSON，而 refreshFromManifest 有段「data.json 哈希一变 → 把 8 个历史月文件全部塞进重拉列表」的联动（因为 data.json 走 replace 会清空 store，不重拉就丢历史数据）→ **每次更新当月订单都要重传 37.9MB**。改法：①parseExcel 新增 capture 能力（记录各字段解析前长度、结束后 slice 出新增行），把每个月的解析结果存成 IDB 记录 snap_YYYY_MM（含 订单明细/缺货汇总/业务需求/客户满足/其他订单/未放行订单/日满足明细 七个带 dateStr 的字段；overall.kaDealer·brandFulfill 无月份、shipCondRdcMap 是静态表、transship·inventory 各有独立来源，均不进快照）；②current_data 不再存这些按月字段（否则每次 saveToIDB 都要 structured clone 20 万+ 行），loadFromIDB 改为先合并快照再健康检查（顺序反了会误判残缺→每次全量重拉）；③data.json 变化时不强制重拉历史月，改为加载完成后从本地快照回填；④data.json 的哈希延后到回填之后再标记（否则中途关页面留下「当月有历史无」的残缺缓存，且下轮比对判无变化 → 残缺固化，v191 同款死状态）；⑤dropMonthRows 必须在 append 前调用，否则 existingXxxKeys 去重拦住新行、快照被存成空。历史月快照缺失时自动退回网络重拉该月，安全性不变。 // v202: 数据导入提速（D 部署分片 + A inventory 五路拆分）。①【核心提速】bootLoad 不再无条件 clearIDB：旧逻辑「manifest.generatedAt 一变 → removeItem(rdc_manifest_hashes) + clearIDB()」使任何一次部署都清空 25MB 本地缓存并全量重拉 42MB，哪怕只更新了库存 3.4MB。改为 generatedAt 变只清逐文件哈希、把「哪些文件要重拉」交给 refreshFromManifest 的逐文件比对；仅 DB_VERSION 真变（结构升级）才 clearIDB。残缺缓存仍由既有健康检查（cov7<100 / orderDetail<10万）自愈。②generate_data_json.mjs 五路拆分修正：v201 首版只定义 CORE/MASTER/PLAN，把 拉回数据/转储数据/5·6月覆盖/状态分析 落进「未分类」后丢弃 → 转储数据(2026-07~08，与 transship.json 的 2026-01~06 互补且零重叠) 和拉回数据(本轮 +1763 行) 彻底丢失；现全部落盘为 inventory-extra.json / inventory-status.json。③新增 ensureInventoryPlan：inventory-plan.json（分仓计划 sheet，204KB）此前无任何加载器，而它是 v198 指定的「分仓需求」权威源（getPlanDemand 优先读它、缺则回退 cov7）→ 缺加载器等于 planBySkuRdc 恒空、分仓需求静默回退旧口径；renderPlanMonitor / renderPlanAdvice 进入时触发。④项目 inventory.xlsx 换成桌面「8月库存分析模版.xlsx」（v198 部署漏拷）：老文件(8/12)无「分仓计划」sheet，新文件补上 2435 行 + 拉回数据 14410→16173 + 转储数据 3659→7324 + 基础数据增加 block C 产品主数据列。⑤修 generate_data_json.mjs 的 TDZ：manifest 在 for 循环之后才 const 声明，不带 --only 时不触发，一用 --only=orders 就 ReferenceError 崩脚本。继承 v201 全部变更（smoke-test R10-R15 + 修复 v113 window._skuIsHainan 暴露点回归）。 // v200: 分仓计划监控「暂无数据」诊断增强——①自动重试（最多3次×1.5s，覆盖数据还在后台加载的场景）；②3次重试失败后展示具体诊断（cov7行数/orderDetail行数/loaded状态+原因推断+手动重试按钮）；③renderPlanAdvice 同步加诊断信息。继承 v199 全部变更。——①renderTransship+ensureTransship 无限重试循环（失败时 _transshipReady 被重置→.then 再次进入 loading 分支→永久死循环），加 retry 上限 + catch 错误展示；②refreshFromManifest 成功路径补 dataStore.loaded=true（否则 renderPage 拦截所有页面 + saveToIDB 因 !loaded 跳过导致 IDB 永远写不进去）；③renderTransship 渲染主体加 try/catch 防异常白屏。继承 v198 全部变更。 // v197: 分仓计划优化建议模块（多信号融合 · 原因分类 · 计划员互动）。在「分仓计划监控」页内新增「💡优化建议」Tab：融合计划/订单/销售进度/缺货/总仓缺货/四象限严重度(P75/P90)/长期严重度/慢动诊断 7维，按原因分类 C1总仓+多RDC双缺→上调 / C2长期高严重度(stub/repeat)→针对性 / C3当前P90紧急→立即补货 / C4a结构性超额→上调 / C4b疑似临时大单超销→需核实(峰值因子+单笔占比去噪) / C5滞后无缺货→防呆滞 / C6慢动品。每条建议含原因标签+证据+查看数据源跳转；计划员可「标记采纳」(localStorage按DB_VERSION隔离) + 按原因分类/处理状态筛选 + 导出CSV。根治「建议一刀切」——从单一完成率文案升级为分原因决策支持。 // v196: 库存加载提速（根治「库存相关页半天出不来」）：①inventory.json 拆出「X月库存状态分析」三个sheet(8.4MB/45669行,原占84%)为 inventory-status.json，首屏不再下载/同步解析；②transship.json(5.5MB)移出首屏manifest，转储/慢动品页进入时按需fetch；③慢动诊断(expiry+_slowDiagMap)抽离为全局 computeStatusDerived，首屏无status时由 ensureSlowDiag 后台fire-and-forget补齐；库存结构/分仓计划监控/转储数据三页首屏直接受益（首屏最大单文件14.7MB→5.6MB，解析行数砍80%）。 // v195: 缺货四象限「严重度高重点跟进清单」销售进度列空值根因修复 + 防御性诊断。根因：buildPlanSkuAgg 在 cov7/orderDetail 为空时提前 return，且 _planSkuAggMonth/_planSkuAggLabel 在 return 后才设置 → 表头括号内目标月为空 + 全列静默「—」；触发场景为 IDB 缓存不完整（orderDetail 缺当月 append 数据）或 data-YYYY-MM.json（如 data-2026-08.json）未加载。修复：①将 label/cfg/idx/targetMonth 设置提前到守卫 return 之前，UI 始终显示目标月而非空括号；②空值单元格区分「数据未加载」/「无计划量」并加 hover 诊断提示；③版本号 bump 强制清 IDB 缓存。 // v194: 首开加载提速 + 恢复「逐文件导入提醒」。根因（用户 9/4 报「数据加载速度还是太慢、以前有不断导入提醒现在过了半天才弹一条」）：①JSON 快速路径（v189 起）只在全部加载完弹一条「已更新 N 个数据文件」，丢失了旧 xlsx 路径「导入XXX数据」的逐文件连续反馈 → 新增同一个 toast 节点逐文件更新「⏳ 正在导入数据 N/12：库存数据」，恢复连续提醒观感；②v191 把并发从「无限制」砍到 BATCH=4（3 批串行），57MB 体量下受 inventory.json(14MB) 拖累墙钟≈38s 超 30s → 改为并发池 limit=6 立即补位，连接持续忙碌不空闲（不触发 Cloudflare QUIC 空闲超时），墙钟压到≈最慢单文件+data.json≈22s（满足<30s）；③单文件 fetch 加 25s AbortController 超时兜底，杜绝 QUIC 挂死永久卡死；④saveToIDB 降频（每 3 文件/末次才全量序列化 57MB，此前每文件一次是隐藏开销），断点续传哈希标记仍每文件做。 // v193: 缺货四象限月份下拉移到筛选栏内（用户 9/4）。将「月份」选择器从 filter-bar 右侧独立区域移入 📌 筛选栏（4 个筛选控件统一一行：月份/RDC/品牌/海南花露水）。关于「只有9月」：monthWorkdays 由 orderDetail 的 dateStr.slice(0,7) 聚合，数据源含 data-2026-05~08.json + data.json，强刷后应自动出现 5~9 月。 // v192: 缺货四象限取消「近 30 天」窗口，完全按月筛选。理由（用户 9/4）：①每月销售特点不同，月底关账前有冲业绩动作，近 30 天滚动窗口可能横跨当月+下月两次关账订单 → 数据失真；②高严重跟进清单含「月度销售进度」列，与近 30 天口径无法匹配。改动：①renderShortageMonthly 硬编码 mode='monthly'，删除「近 30 天（最新）/按月」切换按钮，月份下拉常驻；②跟进清单 CSV 导出窗口标签固定月度；③补货建议页 _replMode 跟随逻辑固定为 monthly（此前默认 rolling30），两页「严重度高/紧急」继续同源同口径。getRollingShortageProfile 及 rolling30 索引保留为死代码未删（不影响运行，后续如确认不再需要可清理）。 // v191: 修 QUIC 挂死 + 半量快照固化——「打开慢」的收尾两刀。①实测 12 文件无限制并发 fetch 会触发 Cloudflare QUIC_NETWORK_IDLE_TIMEOUT（连接打挂、fetch 永久挂起 → bootLoad 卡死、页面空白，且无报错浮出）；改为每批 4 个分批并发 + Promise.allSettled：单文件失败不拖垮整批，失败文件哈希不标记 → 下次打开断点续传自动补，toast 明示。②saveToIDB 完成 await 再 return：此前 fire-and-forget，快速 reload 会拿到中途快照（实测 ord=114130/正常 238352）且哈希已标全量 → 下次「无变化」不补拉 → 残缺数据固化；另在「无变化」分支加数据量级防线（orderDetail<10万 强制全量重拉）拦底同类死状态。 // v188: 修复「每次打开都慢/首次登录空白」——①首次登录 handleLogin 改走 bootLoad（JSON 快速流程）：旧路径 autoLoadData 依赖 xlsx，线上 xlsx 全 404 → loaded 永远 false →「请先导入数据」空状态（v186 只补拉 adjustments.json 是打补丁没修根；bootLoad 自带 manifest 404→xlsx 回退，本地模式不受影响）；init 的加载函数定义移出 if(isAuthenticated)，bootLoad 挂 window 暴露。②版本部署标记 rdc_deploy_flag 从 sessionStorage 改 localStorage：sessionStorage 标签页会话级，每次重开浏览器/新 tab 都为空 → 无脑 clearIDB → 全量重拉（v74 时代 7MB 感知不明显，现在 25MB+ 用户每次打开都慢）；改 localStorage 后只有 manifest.generatedAt 真变（每日数据部署）才清一次缓存，其余打开 IDB 秒开。③新增 window._bootLoading：首拉期间页面占位显示「数据加载中…」而非误导性的「请先导入数据」。 // v187: 分仓计划监控明细「✓ 在补货建议清单中」badge 改为真实匹配。此前无条件显示（建议文案非慢动品就打标），用户在补货建议页找不到对应 SKU（v187 反馈：截图 5 个 SKU 里 4 个是假标记）。候选集与补货建议页 renderReplenishment Step1 同源同条件：最新缺货日中 SKU×RDC 缺货>0，且排除「总仓整体缺货且无在途」；不命中显示灰「—」（hover 有解释）。不复用 _shortageMap：advice 文案逻辑依赖它区分总仓缺货根因（即便无在途也提示「协调总仓」），两处口径故意不同。 // v186: 新增「补货调整跟踪」模块（预测补货优化组）。①新数据源 adjustments.json（源：S盘《RDC补货调整记录.xlsx》，generate_data_json.mjs 自动从 桌面「更新部署」/S盘 两处查找解析，只存原始 13 列，到货日/观察窗口由前端按运输周期动态计算）；②dataStore.adjustRecords 进入 IDB（saveToIDB/loadFromIDB 成对补齐，v179/v181 同款教训——只写不读或既不写不读都会在缓存路径下永远为空）；该字段**可能合法为空**（记录表未部署时），故不加健康检查、按长度判会误伤导致每次全量重拉；③到货日=补货日+运输周期（华中4/华南4/华北5/东北5/西北5/西南7），观察窗口=[到货日, 到货日+5)，窗口缺货量=订单明细首日缺货量(支)÷箱规(箱)；④四象限归因：调整类型「总仓缺货」→大仓紧张，其余类型→大仓充足 × 窗口内是否缺货 → 无奈之举/无谓损失/判断有效/规则无感；⑤DB_VERSION 181→186 触发缓存自愈。// v181: 修复「otherOrders / unreleasedOrders / shipCondRdcMap 既不存也不读」的 IDB 缺陷 + 清理装运条件表冗余。①IDB 字段对称（v179 同类问题的**另一面**）：saveToIDB 此前没存这三个字段、loadFromIDB 也没读，reload 走缓存路径后必为空，且 saveToIDB 随后把空值写回，与 v179 一样永远自愈不了。影响：otherOrders → 订单数据洞察页的免费单/特殊价格；unreleasedOrders → 分仓计划监控的未放行订单；shipCondRdcMap → 未放行订单的 RDC 反查（装运条件码→RDC，装运条件编码≠收货库位编码，华南是 50 不是 40）。修法：saveToIDB 加三字段 + loadFromIDB 加三行恢复 + bump DB_VERSION 触发 onupgradeneeded 清空旧缓存。**健康检查只加 shipCondRdcMap**（SAP 静态编码表恒 6 键，为空即残缺）；otherOrders/unreleasedOrders **可能合法为空**（如 9 月当月其他订单仅 18 行、某月可能没有未放行订单），按长度判会误伤，导致每次刷新都被迫全量加载 17~20s，故不加。②generate_data_json.mjs 的装运条件表匹配改为模糊匹配：此前精确匹配 '装运条件定义'，而 9 月源文件改叫「装运条件」（内容一致，都是 7 行），于是把「有数据但换了名字」误判成缺失、走回填分支，json 里同时出现「装运条件」(自带 7 行) 与「装运条件定义」(回填 7 行) 两份相同数据、sheetNames 变 9 个。改为与 HTML line 1490 一致的 indexOf('装运条件') 匹配，命中自带表即直接用、不回填；重跑后 data.json sheets=9→8，冗余清除。Playwright 实测（本地静态服务，DB_VERSION=182）三场景全 PASS：P1 首载 / **P2 reload（IDB 缓存路径，Bug 现场）** / P3 毒化三字段后 reload，otherOrders=6407、unreleasedOrders=486、shipCondRdcMap=6 键（20东北/50华南/60西北/70华中/80西南/90华北）在缓存路径下均保持不丢；P3 靠 shipCond 健康检查自愈（日志 `shipCond=0 → 自动清空回退`）。// v180: 数据源更新——9 月订单补入 09-03（当天新文件 9月RDC订单满足汇总.xlsx）。data.xlsx 订单明细日期覆盖 09-01~09-03（原止于 09-02）：09-01 704 行不变、09-02 1305→1300（−5 行）、09-03 新增 601 行；缺货汇总 122→191 行；未放行订单 157→461 行（切片日期 09-03→09-04，属存量快照增长）；其他订单 621→18 行（见下方警示）。1~8 月数据与 json 全部未动（manifest 里除 data.json 外 11 个文件哈希保持原值）。实测影响：orderDetail 237,756→238,352 行；shortage 8,261→8,330 行（+69，全部来自 9 月 120→189）；overviewDate 自动定位 2026-09-02→2026-09-03；总览最新日 KPI 缺货总金额 ¥179,048→¥256,332、缺货总箱数 3,079→4,552、在途总箱数 5,660→11,273、涉及 RDC 6 个不变（口径见下）。长期画像：9 月 validCnt 71→80、9 月 P75 0.381→0.426、P90 0.790→0.738；默认口径（判定「本月是否在 P75」用 9 月）顽固 15→16、反复 23→24、新发 5→7、已缓解 129→127、偶发 271→269（合计 443 不变）；强制回退到 8 月口径 13/21/8/139/262 → 14/20/8/139/262。A/B 方法同 v178（git show HEAD:data.json 导出旧 9 月 json，同一份代码跑两遍）。⚠️「涉及 RDC 数」口径提示（离线复核脚本极易算错）：页面算法在 line 1918-1921，是统计 6 大 RDC 各自的 Short 列（huananShort/huabeiShort/dongbeiShort/xibeiShort/huazhongShort/xinanShort）有多少列存在 >0 的行；**不是** `rdcCount` 字段（那是「该物料涉及几个 RDC」的计数值 0~6，对它去重得到的是"出现了几种计数值"，与页面口径无关）。v180 首次统计时误用 rdcCount 得到 5，实测应为 6（09-02：华南10/华北13/东北9/西北4/华中32/西南28；09-03：华南13/华北21/东北18/西北5/华中35/西南15）。⚠️ 两点已知、未擅自改动：①新源文件的 sheet 名为「装运条件」（旧为「装运条件定义」）——HTML 用 indexOf('装运条件') 模糊匹配故能命中，但 generate_data_json.mjs 是精确匹配 '装运条件定义'，会走「从历史月 json 回填」分支，导致 data.json 里同时存在「装运条件」(自带 7 行)与「装运条件定义」(回填 7 行)两个内容相同的 sheet，HTML 取前者，功能正确但有冗余；②9 月 validCnt 虽从 71 升到 80，仍远低于 8 月的 215，9 月 P75(0.426) 因此明显低于 8 月(0.558) —— 这是月初样本不足的固有现象（v177 的 MIN_VALID_CNT_MONTH=30 回退机制因 80>30 未触发），随 9 月数据累积会自然收敛，不建议为此调参。// v179: 修复「首次加载有数据、F5 刷新后主仪表盘全空」的 IDB 缓存 Bug。根因：saveToIDB 写了 shortage 字段，但 loadFromIDB 的恢复段漏了 dataStore.shortage（只恢复了 overall/dailyDetail/bizDemand/orderDetail/customerFulfill/transship/inventoryTurnover/inventory/history 九项）。后果：①全量加载后 shortage=8261 正常；②F5 走 IDB 缓存路径时 shortage 停在初始 [] → 概览 4 个 KPI（缺货总金额/缺货总箱数/在途总箱数/涉及RDC数）全 0、Top20 显示「暂无缺货数据」、dateLabel 退化成 'all'（ensureOverviewDate 因 getLatestShortageDate() 返回 null 而不更新 overviewDate）；③随后 saveToIDB 把 shortage=[] 写回 IDB，永久覆盖缓存里那 8261 行，此后每次刷新都好不了，只有等下次 manifest.generatedAt 变化触发 clearIDB 才恢复。修：①loadFromIDB 补 dataStore.shortage = req.result.shortage || [];；②IDB 健康检查新增 shMissing（shortage 非数组或长度为 0 即判残缺），让 v179 之前被写坏的存量缓存能自愈回退到全量重拉；③升 DB_VERSION 触发 onupgradeneeded 清空旧缓存，保证所有在线用户一次到位。Playwright 实测：修复前 reload 后 shortage 8261→0（且 IDB 被写成 0）；修复后 reload 后 shortage 稳定 8261、overviewDate 自动定位 2026-09-02、KPI 正常。// v178: 数据源更新——8 月订单补入 8/31（8/29 亦有补录与修订）。data-2026-08.xlsx 订单明细 23,384 → 24,114 行，日期覆盖 08-01~08-31（原止于 08-29）。9 月 data.json 未动（用户要求）。影响实测：orderDetail 237,026 → 237,756 行；8 月有效 SKU 214 → 215，8 月 P75 0.556 → 0.558、P90 0.689 → 0.683；长期画像默认口径 15/23/5/129/271 不变（「是否进入当月 P75」判的是 9 月，9 月数据未动）；强制回退到 8 月口径下 顽固 13→13、反复 21→21、新发 7 → 8、已缓解 140 → 139、偶发 262→262（合计 443 不变，1 个 SKU 因 8/31 新增缺货进入 8 月 P75，由已缓解转新发）。注：新文件不是纯追加——8/29 有 793 行发生修订（主要是「总履约排单支数」由 0 补登为实际数、「总履约缺口」相应清零），另有 9 个历史日合计 -61 行，属 SAP 月末重抽数，看板口径按首日缺货量计算，不受影响。// v177: 修复 v176 在「月初前几天」数据下长期画像全判成「已缓解」的问题。根因：buildLongTermProfile 用 MS_PROFILE.MIN_DAYS=4 过滤各月有效 SKU，月度清单要这个门槛防「下 1 次缺了就是 100%」的统计噪声；但长期画像只看相对分位，过严会让月初几天全月 SKU 不达标 → 该月 P75 为空 → r.inCurP75 全 false → 历史 P75 过的 SKU 全部误判成「已缓解」。9 月只有 1-2 天数据时 100% 触发（顽固/反复/新发 全 0，已缓解 174）。修：① LT_PARAMS.LT_MIN_DAYS=1（长期画像只看分位，放宽到 1 天即可，9 月实际拿到 71 个有效 SKU）；② LT_PARAMS.MIN_VALID_CNT_MONTH=30，「本月 P75」判定时如果 curMonth validCnt<30 自动回退到上一个样本充足的月份（防月初 P75 极低导致单 SKU 误进顽固）；③ 新增 effectiveCurMonth 字段返回给 UI，tooltip 和口径说明里如实标注「数据不足，已回退到 X 月」。实测（真实 9 月数据 2026-09-01~02）：默认 → 顽固 15/反复 23/新发 5/已缓解 129/偶发 271（之前是 0/0/0/174/179）；强制回退（MIN_VALID_CNT_MONTH=100 模拟更深月初）→ 顽固 13/反复 18/新发 7/已缓解 132/偶发 273——与 v176 上线时 1-8 月数据 13/15/14/128/183 一致，回退逻辑正确。⚠️ 注意：这组数字测于「1-4 月 json 重生成」之前；1-4 月重生成后同口径基线变为 13/21/7/140/262（见 v178），跨版本对比时别拿这两组数字直接相减。// v176: 新增「长期高严重度分析」TAB + 四象限清单加「长期标记」列。 未放行订单与已放行订单「订单号」重复时只取已放行数据，避免一笔单算两次。业务规则：同一销售订单号若同时出现在已放行与未放行数据中，说明该单实际已放行，未放行侧快照行属陈旧残留 → 整单剔除（不只剔同 SKU 行）。①新增全局 releasedOrderNoSet()：懒加载 cached Set，按 dataStore.orderDetail.length 变化自动失效；②renderPlanMonitor 未放行循环在最前面加订单号命中检查，命中则既不计数(unrelStat)也不累加(accumulate)，因此开关开与关两种状态都不会虚增；③统计口径修正：「笔」改为按销售订单号去重（实测 100 行 = 38 个订单号，一个订单多行物料），保留行数进 tooltip；④筛选框旁提示增加「· 订单号重复已剔除 N 笔」，全部重复时显示「N 笔均与已放行订单号重复，已全部剔除」。实测：当前真实数据零重复 → 8月/9月聚合零差异（不误伤现有口径）；造重复场景注入 3 个订单号(4 行/32,520 支) → 去重后 199,866→167,346 支、38→35 笔，已放行侧只计一次，合计口径正确；部分放行场景（同订单号仅 1 行已放行）→ 整单剔除生效。// v175: 修复补货建议「导出CSV」点击报错 SEV_HIGH is not defined。根因：exportShortageFocusListCSV 是顶层函数（挂 window），但内部 severityLevel 用了 render 闭包的局部 const SEV_HIGH/SEV_DOUBLE——render 不跑或作用域不可达时就 ReferenceError。修复：改读 window._msSevHigh/_msSevDouble（v154 已挂全局），无值兜底 MS_SEVERITY 默认值；同名导出行替换 fallback 安全
   // 之前 isPersistent = isPersistentOld || severity >= sevP75
   //   isPersistentOld = (率 ≥ 50% 且 频 ≥ 50% 且 有单 ≥ 4天) ← 完全不看缺货量
@@ -17704,9 +17704,11 @@ function renderPlanMonitor() {
 // v242: 7 维评分默认权重（方案 B）——时点 / 月度 / 跨月 三层时间纵深
 //   urgency 缺货紧迫度(时点) 20 · sevScore 缺货严重度(月度) 18 · deviation 需求偏离度(月度) 16
 //   dcAvail 总仓可用度(时点) 12 · ltSev 长期高严重度水平(跨月) 12 · ltTrend 长期趋势方向(跨月) 10 · slowRisk 慢动风险 12
-var OPT_W_KEYS = ['urgency', 'sevScore', 'deviation', 'dcAvail', 'ltSev', 'ltTrend', 'slowRisk'];
+// v271: 权重维度收敛为「上调意向」5 维——移除 ltSev/slowRisk（护栏/反向因子，不计上调分）
+var OPT_W_KEYS = ['urgency', 'sevScore', 'deviation', 'dcAvail', 'ltTrend'];
 var OPT_W_LABEL = { urgency: '缺货紧迫', sevScore: '缺货严重', deviation: '需求偏离', dcAvail: '总仓可用', ltSev: '长期严重', ltTrend: '长期趋势', slowRisk: '慢动风险' };
-function OPT_W_DEFAULT() { return { urgency: 20, sevScore: 18, deviation: 16, dcAvail: 12, ltSev: 12, ltTrend: 10, slowRisk: 12 }; }
+// v271: 仅 5 个上调信号维度有权重（ltSev/slowRisk 改为护栏因子，不再参与上调分）
+function OPT_W_DEFAULT() { return { urgency: 20, sevScore: 18, deviation: 16, dcAvail: 12, ltTrend: 10 }; }
 window.OPT_W_DEFAULT = OPT_W_DEFAULT;
 
 function buildPlanOptimAdvice() {
@@ -18031,6 +18033,7 @@ function buildPlanOptimAdvice() {
   //   7 维度：缺货紧迫度(20·时点) / 缺货严重度(18·月度) / 需求偏离度(16·月度) / 总仓可用度(12·时点)
   //           / 长期高严重度(12·跨月) / 长期趋势方向(10·跨月) / 慢动风险(12)
   //   权重由 window._optWeights 控制（默认 20/18/16/12/12/10/12，localStorage 持久化，UI 可调）
+  // v271: 综合分(上调意向)只由前5个「上调信号」加权(缺货紧迫/缺货严重度/需求偏离正部/总仓可用/长期趋势)，长期高严重度(ltSev)与慢动风险(slowRisk)为护栏/反向因子不计入分(仅拦截下调、支撑减配)；deviation 改取 max(dev,0) 正向部。7 维 dims 仍全部计算供展示/CSV，但计分核收敛为5维。
   function _classify(sku, rdc, plan, comp, key, shipped, cd) {
     var _ltRec2 = _ltBySku[sku];
     var _ms2 = msBySkuRdc(sku, rdc);
@@ -18048,8 +18051,8 @@ function buildPlanOptimAdvice() {
     // 维度2 缺货严重度（月度·SKU×RDC）v242新增：severity 连续化（0.5规模分位+0.3缺货率+0.2缺货频率）
     //   与 urgency 相关性仅 0.14（Pearson）/0.20（Spearman）——信息独立，非重复计数
     dims.sevScore = _sevScoreOf(_ms2);
-    // 维度3 需求偏离度（月度·SKU×RDC）：v242 改用进度偏差 |完成率−时间进度|，偏离 50pt 封顶
-    dims.deviation = Math.min(Math.abs(comp - _timeProg) / 0.5, 1);
+    // 维度3 需求偏离度（月度·SKU×RDC）：v271 只取「正向(超销/超前)」部分计入上调分——滞后(dev<0)是下调信号，不在本维加分（下调由独立规则判定）
+    dims.deviation = Math.min(Math.max(comp - _timeProg, 0) / 0.5, 1);
     // 维度4 总仓可用度（时点·SKU）：总仓受限时，多RDC缺货数/6 封顶
     dims.dcAvail = _cdcShort2 ? Math.min(_rdcShortCnt2 / 6, 1) : 0;
     // 维度5 长期高严重度水平（跨月·SKU）v242新增：0.5×分型 + 0.3×收缩值 + 0.2×连续月数
@@ -18072,9 +18075,11 @@ function buildPlanOptimAdvice() {
       if (_miss) { try { localStorage.setItem('optWeights_v' + DB_VERSION, JSON.stringify(window._optWeights)); } catch(e){} }
     })();
     var W = window._optWeights;
-    var WSUM = (W.urgency + W.sevScore + W.deviation + W.dcAvail + W.ltSev + W.ltTrend + W.slowRisk) || 100;
+    // v271: 综合分 = 纯「上调意向强度」——只由上调信号(缺货紧迫/缺货严重度/需求偏离正部/总仓可用/长期趋势)加权。
+    //   长期高严重度(ltSev)、慢动风险(slowRisk) 是护栏/反向因子，不计入上调分（ltSev≥0.6 仅拦截下调、slow 仅支撑减配），故从计分核剔除。
+    var WSUM = (W.urgency + W.sevScore + W.deviation + W.dcAvail + W.ltTrend) || 100;
     var score = (dims.urgency * W.urgency + dims.sevScore * W.sevScore + dims.deviation * W.deviation +
-                 dims.dcAvail * W.dcAvail + dims.ltSev * W.ltSev + dims.ltTrend * W.ltTrend + dims.slowRisk * W.slowRisk) / WSUM * 100;
+                 dims.dcAvail * W.dcAvail + dims.ltTrend * W.ltTrend) / WSUM * 100;
 
     // ---- 方向 + 时间窗 + 原因 ----
     var direction = '保持观察';
@@ -18357,7 +18362,8 @@ function renderPlanAdvice() {
   // 筛选 / 工具条（权重面板 + 筛选栏合并为单行紧凑布局）
   if (!window._optWeights) { try { window._optWeights = JSON.parse(localStorage.getItem('optWeights_v' + DB_VERSION)); } catch(e){} if (!window._optWeights || typeof window._optWeights !== 'object') window._optWeights = OPT_W_DEFAULT(); }
   const _w = window._optWeights;
-  const _wsum = (_w.urgency + _w.sevScore + _w.deviation + _w.dcAvail + _w.ltSev + _w.ltTrend + _w.slowRisk) || 100;
+  // v271: 权重和仅含上调意向 5 维
+  const _wsum = OPT_W_KEYS.reduce(function(s, k){ return s + (_w[k] || 0); }, 0) || 100;
   html += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--bg-card);border-radius:12px;margin-bottom:14px">';
   html += '<span style="font-size:12px;font-weight:600;color:var(--text-primary)">⚙️ 权重</span>';
   html += '<button class="btn-export" onclick="toggleOptWeightPanel()" style="padding:4px 10px;font-size:11px">'+(window._optWeightOpen?'收起':'调整')+'</button>';
@@ -18398,8 +18404,8 @@ function renderPlanAdvice() {
   // 权重展开面板（收起时隐藏）
   if (window._optWeightOpen) {
     html += '<div class="card" style="margin-bottom:14px;padding:14px 18px"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">';
-    // v242: 5 维 → 7 维，每个维度标注其时间尺度（时点 / 月度 / 跨月），便于理解三层纵深
-    [['urgency','缺货紧迫度','时点·1天'],['sevScore','缺货严重度','月度·30天'],['deviation','需求偏离度','月度·30天'],['dcAvail','总仓可用度','时点·1天'],['ltSev','长期高严重度','跨月·9个月'],['ltTrend','长期趋势方向','跨月·9个月'],['slowRisk','慢动风险','静态']].forEach(function(p){
+    // v271: 权重面板仅列「上调意向」5 维（ltSev/slowRisk 为护栏因子，不计入上调分）
+    [['urgency','缺货紧迫度','时点·1天'],['sevScore','缺货严重度','月度·30天'],['deviation','需求偏离度','月度·30天'],['dcAvail','总仓可用度','时点·1天'],['ltTrend','长期趋势方向','跨月·9个月']].forEach(function(p){
       html += '<div style="display:flex;flex-direction:column;gap:4px;min-width:132px"><span style="font-size:11px;font-weight:600">'+p[1]+'<span style="font-weight:400;color:var(--text-secondary)"> · '+p[2]+'</span></span><input type="range" min="0" max="50" value="'+_w[p[0]]+'" oninput="setOptWeight(\''+p[0]+'\',this.value)" onchange="renderPlanMonitor()" style="width:132px"><span style="font-size:10px;color:var(--text-secondary)">权重 '+_w[p[0]]+'</span></div>';
     });
     html += '<button class="btn-export" onclick="resetOptWeights()" style="padding:4px 10px;font-size:11px;align-self:flex-end">重置默认</button>';
@@ -18415,41 +18421,10 @@ function renderPlanAdvice() {
   else if (fScore === 'low') _list = _list.filter(function(r){ return r.score < 40; });
   // v244: 品牌过滤支持「（未分类）」哨兵值 __none__
   if (fBrand !== 'all') _list = _list.filter(function(r){ return fBrand === '__none__' ? !r.brand : r.brand === fBrand; });
-  // v269: KPI 卡片下钻筛选（点击 KPI 卡片后按维度过滤）
-  var _kpiFilter = window._planAdviceKpi || '';
-  if (_kpiFilter === 'shortage') _list = _list.filter(function(r){ return r.shortQty > 0; });
-  else if (_kpiFilter === 'cdcShort') _list = _list.filter(function(r){ return r.cdcShort; });
-  else if (_kpiFilter === 'bigOrder') _list = _list.filter(function(r){ return r.bigOrder; });
-  else if (_kpiFilter === 'structUp') _list = _list.filter(function(r){ return r.timeWindow === 'mid' && r.direction === '上调分仓计划'; });
-  else if (_kpiFilter === 'overForecast') _list = _list.filter(function(r){ return r.timeWindow === 'mid' && r.direction === '下调分仓计划'; });
-  else if (_kpiFilter === 'adjustAll') _list = _list.filter(function(r){ return r.direction !== '保持观察'; });
+  // v271: 已删除 KPI 卡片下钻筛选（因素改在每行 SKU 行内打勾展示，见下方 planAdviceFactorChips）
   _list.sort(function(a,b){ return b.score - a.score; });
 
-  // v232: KPI 卡片 —— 一行 6 个置于最上方（收窄卡宽），卡3 改为「疑似临时大单」单独列示（v232 大单识别）
-  //   v234: KPI 改为随筛选联动（_list）——此前用全量 all，用户选了筛选后 KPI"不动"像失灵；
-  //   现在全页口径统一：筛选什么，KPI/图表/清单就统计什么。
-  const _midUp = _list.filter(function(r){ return r.timeWindow === 'mid' && r.direction === '上调分仓计划'; });
-  const _midDown = _list.filter(function(r){ return r.timeWindow === 'mid' && r.direction === '下调分仓计划'; });
-  const _bigOrders = _list.filter(function(r){ return r.bigOrder; });
-  const _total = _list.filter(function(r){ return r.direction !== '保持观察'; }).length;
-  const _kpi = [
-    { label:'本月紧急补货', val: _list.filter(function(r){ return r.shortQty > 0; }).length, color:'#DC2626', sub:'有真实缺货', key:'shortage' },
-    { label:'总仓缺货', val: _list.filter(function(r){ return r.cdcShort; }).length, color:'#B91C1C', sub:'总仓受限波及', key:'cdcShort' },
-    { label:'疑似临时大单', val:_bigOrders.length, color:'#B45309', sub:'先核实再定，不自动上调', key:'bigOrder' },
-    { label:'结构性加配', val:_midUp.length, color:'#15803D', sub:'超销且订单分散，下月上调', key:'structUp' },
-    { label:'需求高估待减配', val:_midDown.length, color:'#2563EB', sub:'滞后无缺货，下月下调', key:'overForecast' },
-    { label:'本月需调整总数', val:_total, color:'#475569', sub:'上调+下调合计', key:'adjustAll' }
-  ];
-  html += '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">';
-  _kpi.forEach(function(k){
-    html += '<div class="kpi-card" onclick="window._planAdviceKpi=\''+k.key+'\';renderPlanMonitor()" style="border-left:4px solid '+k.color+';padding:10px 12px;cursor:pointer;border-radius:6px;transition:background 0.15s" onmouseenter="this.style.background=\'var(--bg-card)\'" onmouseleave="this.style.background=\'\'"><div class="kpi-label" style="font-size:11px">'+k.label+' <span style="font-size:9px;color:var(--text-secondary)">🔍点击下钻</span></div><div class="kpi-value" style="color:'+k.color+';font-size:22px">'+k.val+'</div><div style="font-size:10px;color:var(--text-secondary)">'+k.sub+'</div></div>';
-  });
-  html += '</div>';
-  // v269: KPI 下钻激活时显示清除按钮
-  if (window._planAdviceKpi) {
-    var _activeKpi = _kpi.find(function(k){ return k.key === window._planAdviceKpi; });
-    html += '<div style="margin-bottom:14px;padding:6px 12px;background:#FEF3C7;border-radius:6px;font-size:11px;display:flex;align-items:center;gap:8px"><span>🔍 当前 KPI 下钻：<b>'+(_activeKpi?_activeKpi.label:'')+'</b>（仅展示该维度 SKU）</span><span style="cursor:pointer;color:#DC2626;font-weight:600;margin-left:auto" onclick="window._planAdviceKpi=\x27\x27;renderPlanMonitor()">✕ 清除下钻</span></div>';
-  }
+  // v271: 已删除 6 个 KPI 卡片——各因素改为「每行 SKU 行内打勾」展示（planAdviceFactorChips），与纯上调分天然对应，不再有卡片总数对不上的困惑
 
   // v231: 结构分析图表区（3张并排 echarts）——解决"全是数字表格"问题，让计划员一眼看清全局结构
   html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">';
@@ -18523,7 +18498,23 @@ function renderPlanAdvice() {
   const _shown = _list.slice(0, _topN);
   const _rest = _list.length - _shown.length;
   window._adviceShown = _shown; // v231: 行展开用
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">🎯 重点建议清单（Top '+Math.min(_topN,_list.length)+'，评分降序）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">显示 '+Math.min(_topN,_list.length)+' / 共 '+_list.length+' 条'+(fBrand!=='all' ? ' · <a style="color:#DC2626;cursor:pointer;text-decoration:underline;font-weight:600" onclick="window._planAdviceBrand=\'all\';renderPlanMonitor()">已筛选：'+_fBrandLabel+' ✕ 恢复全部</a>' : '')+'｜点击行展开七维评分明细</span></div>';
+  // v271: 行内「影响因素」打勾——替代已删除的 KPI 卡片。命中的因子彩色✓、未命中灰色留空；与纯上调分天然对应
+  function planAdviceFactorChips(r) {
+    var _fac = [
+      { t:'真实缺货', on:(r.shortQty > 0), c:'#DC2626', ab:'缺' },
+      { t:'总仓受限', on:!!r.cdcShort, c:'#B91C1C', ab:'仓' },
+      { t:'疑似大单', on:!!r.bigOrder, c:'#B45309', ab:'单' },
+      { t:'结构性超销', on:(r.comp > 1.1 && !r.bigOrder), c:'#15803D', ab:'超' },
+      { t:'进度滞后>50pt', on:(r.dev < -0.5 && r.shortQty === 0), c:'#2563EB', ab:'滞' },
+      { t:'慢动品', on:!!r.slow, c:'#64748B', ab:'慢' },
+      { t:'长期高严重度', on:(r.ltSev >= 0.6), c:'#6D28D9', ab:'长' }
+    ];
+    return _fac.map(function(x){
+      return '<span title="'+x.t+(x.on?'：命中':'：未命中')+'" style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 3px;border-radius:4px;font-size:10px;font-weight:700;margin:1px;'+(x.on?('background:'+x.c+';color:#fff'):'background:#F1F5F9;color:#CBD5E1')+'">'+x.ab+'</span>';
+    }).join('');
+  }
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="card-title">🎯 重点建议清单（Top '+Math.min(_topN,_list.length)+'，评分降序）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">显示 '+Math.min(_topN,_list.length)+' / 共 '+_list.length+' 条'+(fBrand!=='all' ? ' · <a style="color:#DC2626;cursor:pointer;text-decoration:underline;font-weight:600" onclick="window._planAdviceBrand=\'all\';renderPlanMonitor()">已筛选：'+_fBrandLabel+' ✕ 恢复全部</a>' : '')+'｜点击行展开五维评分明细</span></div>';
+  html += '<div style="padding:2px 14px 6px;font-size:10px;color:var(--text-secondary)">影响因素图例：<b style="color:#DC2626">缺</b>=真实缺货 <b style="color:#B91C1C">仓</b>=总仓受限 <b style="color:#B45309">单</b>=疑似大单 <b style="color:#15803D">超</b>=结构性超销 <b style="color:#2563EB">滞</b>=进度滞后 <b style="color:#64748B">慢</b>=慢动 <b style="color:#6D28D9">长</b>=长期高严重度（彩色=命中，灰=未命中）</div>';
   html += '<div style="padding:8px 14px">';
   if (!_shown.length) {
     html += '<div style="text-align:center;padding:40px;color:var(--text-secondary)">当前筛选条件下无调整建议</div>';
@@ -18557,14 +18548,15 @@ function renderPlanAdvice() {
       html += '<div style="text-align:center;min-width:60px"><div style="font-size:18px;font-weight:800;color:'+scoreColor(r.score)+'">'+r.score+'</div><div style="font-size:10px;color:var(--text-secondary)">综合分</div></div>';
       html += '<div style="text-align:center;min-width:110px"><span style="display:inline-block;padding:2px 9px;border-radius:6px;font-size:11px;font-weight:700;background:'+_dm.bg+';color:'+_dm.color+'">'+_ar+' '+r.direction+'</span><div style="font-size:10px;color:var(--text-secondary);margin-top:2px">'+_tw+'</div>'+(r.bigOrder ? '<div style="margin-top:3px"><span style="padding:1px 6px;border-radius:5px;font-size:10px;font-weight:700;background:#FEF3C7;color:#B45309">疑似大单</span></div>' : '')+'</div>';
       html += '<div style="text-align:center;min-width:90px;font-size:11px"><div>调整 '+_adj+'</div><div>建议 '+formatNum(r.suggestedPlan)+'</div></div>';
+      html += '<div style="min-width:120px;text-align:center">'+planAdviceFactorChips(r)+'</div>';
       html += '<div style="min-width:200px;flex:2;font-size:11px;color:var(--text-secondary)">'+r.reasons.join('；')+'</div>';
       html += '</div>';
       // v231: 行展开明细——五维评分贡献度条 + 原始信号（解决"只给总分不给构成"的可解释性问题）
       html += '<div id="pa-detail-'+i+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-card)">';
-      html += '<div style="font-size:11px;font-weight:600;color:var(--text-primary);margin-bottom:6px">七维评分构成（权重：'+OPT_W_KEYS.map(function(k){ return OPT_W_LABEL[k] + _w[k]; }).join('　')+'）</div>';
-      // v250: 语义澄清——综合分是「关注优先级」，不是缺货严重性分；方向由独立规则链判定（用户疑问：慢动为何加分 / 下调是否按评分）
-      html += '<div style="font-size:10.5px;color:var(--text-secondary);margin:0 0 7px;line-height:1.55">ℹ️ 综合分 = <b>需要计划员关注的优先级</b>，非「缺货严重性分」：缺货/严重度/偏离/总仓/长期为<b>正向</b>信号，慢动为<b style="color:#B45309">反向</b>信号（只支撑减配、不支撑加量）。上调/下调<b>不按本分</b>，由独立规则链判定：真实缺货 &gt; 月度严重度 &gt; 结构性超销 &gt; 进度滞后 &gt; 慢动 &gt; 长期顽疾。</div>';
-      [['urgency','缺货紧迫度','#DC2626'],['sevScore','缺货严重度','#2563EB'],['deviation','需求偏离度','#D97706'],['dcAvail','总仓可用度','#B91C1C'],['ltSev','长期高严重度','#7C3AED'],['ltTrend','长期趋势方向','#A855F7'],['slowRisk','慢动风险 ⬇反向','#64748B']].forEach(function(_dmeta){
+      html += '<div style="font-size:11px;font-weight:600;color:var(--text-primary);margin-bottom:6px">五维评分构成（上调意向，权重：'+OPT_W_KEYS.map(function(k){ return OPT_W_LABEL[k] + _w[k]; }).join('　')+'）</div>';
+      // v271: 语义澄清——综合分 = 上调意向强度，ltSev/slowRisk 为护栏因子不计入
+      html += '<div style="font-size:10.5px;color:var(--text-secondary);margin:0 0 7px;line-height:1.55">ℹ️ 综合分 = <b>上调意向强度</b>：仅由上调信号加权（缺货紧迫/缺货严重度/需求偏离正部/总仓可用/长期趋势），<b style="color:#64748B">长期高严重度</b>与<b style="color:#64748B">慢动</b>为护栏/反向因子，<b>不计入上调分</b>。下调由独立规则判定（未命中任何上调 且 进度滞后&gt;50pt 且无真实缺货），故下调SKU分数≈0。</div>';
+      [['urgency','缺货紧迫度','#DC2626'],['sevScore','缺货严重度','#2563EB'],['deviation','需求偏离度','#D97706'],['dcAvail','总仓可用度','#B91C1C'],['ltTrend','长期趋势方向','#A855F7']].forEach(function(_dmeta){
         var _dv = (r.dims && r.dims[_dmeta[0]]) || 0;
         var _contrib = (_dv * _w[_dmeta[0]] / (_wsum || 100)) * 100;
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="width:76px;font-size:11px;color:var(--text-secondary);flex-shrink:0">'+_dmeta[1]+'</span><div style="flex:1;height:10px;background:#F1F5F9;border-radius:5px;overflow:hidden"><div style="width:'+Math.min(100,_dv*100).toFixed(0)+'%;height:100%;background:'+_dmeta[2]+'"></div></div><span style="width:150px;font-size:11px;color:var(--text-secondary)">维度分 '+(_dv*100).toFixed(0)+'/100 → 贡献 '+_contrib.toFixed(1)+' 分</span></div>';
@@ -18681,7 +18673,6 @@ function resetPlanAdviceFilters() {
   window._planAdviceDir = 'all';
   window._planAdviceScore = 'all';
   window._planAdviceBrand = 'all';
-  window._planAdviceKpi = '';
   window._planAdviceShowAll = false;
   renderPlanMonitor();
 }
@@ -18727,15 +18718,14 @@ function renderPlanAdviceLogic() {
   if (!window._optWeights) { try { window._optWeights = JSON.parse(localStorage.getItem('optWeights_v' + DB_VERSION)); } catch(e){} if (!window._optWeights || typeof window._optWeights !== 'object') window._optWeights = OPT_W_DEFAULT(); }
   const _w = window._optWeights;
 
-  // ── 1. 方向判定流程（优先级从上到下，命中即停）──
+  // ── 1. 方向判定流程（v271：上调优先链命中即停 → 否则进入下调兜底 → 否则保持）──
   const _flow = [
-    { q:'本RDC有真实缺货？', yes:{ d:'↑ 上调 · 本周内', c:'#DC2626', note:'总仓同时受限 → 先协调上游供给，再上调本仓计划；否则直接追计划补货' } },
-    { q:'当月严重度进 P90 前10%？', yes:{ d:'↑ 上调 · 本周内', c:'#DC2626', note:'四象限严重度评分进入紧急档，立即补货/调拨' } },
-    { q:'完成率 > 110%（超销）？', yes:{ d:'看订单形态分流 →', c:'#B45309', note:'单日尖峰≥3× 或 单笔占月≥25% → 疑似临时大单，保持观察先核实；订单分散 → 结构性需求低估，下月上调' } },
-    { q:'进度滞后 > 50pt 且无真实缺货？', yes:{ d:'看长期严重度分流 →', c:'#2563EB', note:'v268：滞后阈值从 20pt 收紧到 50pt——完成率比时间进度低 50pt 以上（即完成率<50%）才判下调，滞后但非严重过量（完成率50%~80%）不再判下调。与「时间进度」（已过工作日÷全月工作日）比，不与 100% 比——月初不会误杀。长期高严重度 ltSev≥0.6 → 禁止下调，改建议调安全库存参数；否则下调最多 −30%' } },
-    { q:'命中慢动品？', yes:{ d:'→ 保持 · 转慢动诊断', c:'#7C3AED', note:'结合慢动品诊断模块决定是否减量' } },
-    { q:'长期高严重度 ltSev ≥ 0.6？', yes:{ d:'→ 保持 · 建议调参数', c:'#7C3AED', note:'连续数月进 P75 的结构性缺货：加量无效，要调安全库存 / 补货点' } },
-    { q:'以上都不满足', yes:{ d:'→ 保持观察', c:'#64748B', note:'无调整信号' } }
+    { q:'【阶段一·上调】本RDC有真实缺货？', yes:{ d:'↑ 上调 · 本周内', c:'#DC2626', note:'总仓同时受限 → 先协调上游供给，再上调本仓计划；否则直接追计划补货' } },
+    { q:'【阶段一·上调】当月严重度进 P90 前10%？', yes:{ d:'↑ 上调 · 本周内', c:'#DC2626', note:'四象限严重度评分进入紧急档，立即补货/调拨（慢动守卫：慢动+无缺货→改保持，先核实需求真实性）' } },
+    { q:'【阶段一·上调】完成率 > 110%（超销）？', yes:{ d:'看订单形态分流 →', c:'#B45309', note:'单日尖峰≥3× 或 单笔占月≥25% → 疑似临时大单，保持观察先核实；订单分散 → 结构性需求低估，下月上调' } },
+    { q:'【阶段二·下调】未命中上调 且 进度滞后>50pt 且无真实缺货 且 (计划≥50或有出货)？', yes:{ d:'看长期严重度分流 →', c:'#2563EB', note:'v268：完成率比时间进度低 50pt 以上（完成率<50%）才判下调。ltSev≥0.6 → 禁止下调，改建议调安全库存参数；否则下调最多 −30%' } },
+    { q:'【阶段二·下调】长尾(计划<50 且 整月0出货)？', yes:{ d:'→ 保持观察', c:'#64748B', note:'v267：无真实需求，下调毫无操作意义，保持观察把精力留给中长尾' } },
+    { q:'慢动品 / 长期高严重度 ltSev≥0.6 / 计划=0 / 其他？', yes:{ d:'→ 保持观察', c:'#64748B', note:'慢动→参考慢动诊断；ltSev≥0.6→结构性缺货调参数；计划=0→无下调空间；均无信号→保持' } }
   ];
   html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🧭 调整方向怎么判（按顺序命中即停）</span></div><div style="padding:12px 16px">';
   _flow.forEach(function(f, i){
@@ -18750,17 +18740,15 @@ function renderPlanAdviceLogic() {
 
   // ── 2. 综合分怎么算（权重环图 + 五维表）──
   html += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:16px">';
-  html += '<div class="card"><div class="card-header"><span class="card-title">🍰 七维权重（当前值）</span></div><div id="logic-weight-donut" style="height:260px"></div><div style="text-align:center;font-size:11px;color:var(--text-secondary);padding-bottom:10px">可在「优化建议」Tab ⚙️ 权重面板实时调整</div></div>';
-  html += '<div class="card"><div class="card-header"><span class="card-title">📐 七个维度在量什么</span></div><div style="padding:6px 14px 14px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-card)"><th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-card)">维度</th><th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-card)">计算口径</th><th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-card)">说明</th></tr></thead><tbody>'
+  html += '<div class="card"><div class="card-header"><span class="card-title">🍰 上调意向权重（5 维）</span></div><div id="logic-weight-donut" style="height:260px"></div><div style="text-align:center;font-size:11px;color:var(--text-secondary);padding-bottom:10px">可在「优化建议」Tab ⚙️ 权重面板实时调整</div></div>';
+  html += '<div class="card"><div class="card-header"><span class="card-title">📐 五个维度在量什么（均为上调信号）</span></div><div style="padding:6px 14px 14px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-card)"><th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-card)">维度</th><th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-card)">计算口径</th><th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-card)">说明</th></tr></thead><tbody>'
     + '<tr style="border-bottom:1px solid var(--border-card)"><td style="padding:7px 8px;font-weight:600;color:#DC2626">缺货紧迫度<span style="font-weight:400;color:var(--text-secondary)"> · 时点</span></td><td style="padding:7px 8px;font-family:monospace">min(缺货箱数×(1−完成率)/1000, 1)</td><td style="padding:7px 8px;color:var(--text-secondary)">最新缺货日截面：现在缺多少（覆盖率仅 4.4%，但命中即高优先）</td></tr>'
-    + '<tr style="border-bottom:1px solid var(--border-card);background:#EFF6FF"><td style="padding:7px 8px;font-weight:600;color:#2563EB">缺货严重度<span style="font-weight:400;color:var(--text-secondary)"> · 月度</span> <span style="font-size:10px;background:#2563EB;color:#fff;padding:1px 5px;border-radius:3px">v242新</span></td><td style="padding:7px 8px;font-family:monospace">0.7×min(sev/P90,1) + 0.3×分档</td><td style="padding:7px 8px;color:var(--text-secondary)">整月累计：规模分位+缺货率+频率；覆盖率 38.9%，与紧迫度相关性仅 0.14（信息独立，非重复计数）</td></tr>'
-    + '<tr style="border-bottom:1px solid var(--border-card)"><td style="padding:7px 8px;font-weight:600;color:#D97706">需求偏离度<span style="font-weight:400;color:var(--text-secondary)"> · 月度</span></td><td style="padding:7px 8px;font-family:monospace">min(|完成率−时间进度|/50pt, 1)</td><td style="padding:7px 8px;color:var(--text-secondary)">v242 改为与「时间进度」比：月初完成率天然低（曾致 93.7% 误判下调），不再误杀</td></tr>'
+    + '<tr style="border-bottom:1px solid var(--border-card);background:#EFF6FF"><td style="padding:7px 8px;font-weight:600;color:#2563EB">缺货严重度<span style="font-weight:400;color:var(--text-secondary)"> · 月度</span></td><td style="padding:7px 8px;font-family:monospace">0.7×min(sev/P90,1) + 0.3×分档</td><td style="padding:7px 8px;color:var(--text-secondary)">整月累计：规模分位+缺货率+频率；与紧迫度相关性仅 0.14（信息独立，非重复计数）</td></tr>'
+    + '<tr style="border-bottom:1px solid var(--border-card)"><td style="padding:7px 8px;font-weight:600;color:#D97706">需求偏离度<span style="font-weight:400;color:var(--text-secondary)"> · 月度</span></td><td style="padding:7px 8px;font-family:monospace">min(max(完成率−时间进度,0)/50pt, 1)</td><td style="padding:7px 8px;color:var(--text-secondary)">v271：只取正向(超销/超前)部分计入上调分；滞后(dev&lt;0)是下调信号，不在本维加分</td></tr>'
     + '<tr style="border-bottom:1px solid var(--border-card)"><td style="padding:7px 8px;font-weight:600;color:#B91C1C">总仓可用度<span style="font-weight:400;color:var(--text-secondary)"> · 时点</span></td><td style="padding:7px 8px;font-family:monospace">受限时 = 缺货RDC数/6</td><td style="padding:7px 8px;color:var(--text-secondary)">总仓受限波及越多 RDC，越要协调上游</td></tr>'
-    + '<tr style="border-bottom:1px solid var(--border-card);background:#F5F3FF"><td style="padding:7px 8px;font-weight:600;color:#7C3AED">长期高严重度<span style="font-weight:400;color:var(--text-secondary)"> · 跨月</span> <span style="font-size:10px;background:#7C3AED;color:#fff;padding:1px 5px;border-radius:3px">v242新</span></td><td style="padding:7px 8px;font-family:monospace">0.5×分型 + 0.3×收缩值 + 0.2×连续月数</td><td style="padding:7px 8px;color:var(--text-secondary)">这个产品是不是结构性顽疾（水平维度）；覆盖率 91.1%，且 ≥0.6 时禁止下调</td></tr>'
-    + '<tr style="border-bottom:1px solid var(--border-card);background:#F5F3FF"><td style="padding:7px 8px;font-weight:600;color:#7C3AED">长期趋势方向<span style="font-weight:400;color:var(--text-secondary)"> · 跨月</span> <span style="font-size:10px;background:#7C3AED;color:#fff;padding:1px 5px;border-radius:3px">v242改</span></td><td style="padding:7px 8px;font-family:monospace">0.5 + (lsi − 收缩均值)×3</td><td style="padding:7px 8px;color:var(--text-secondary)">&gt;0.5 恶化 / &lt;0.5 缓解：区分「高水平恶化要动参数」与「高水平缓解可观察」</td></tr>'
-    + '<tr><td style="padding:7px 8px;font-weight:600;color:#64748B">慢动风险<span style="font-weight:400;color:var(--text-secondary)"> · 静态</span></td><td style="padding:7px 8px;font-family:monospace">命中慢动 = 1</td><td style="padding:7px 8px;color:var(--text-secondary)">反向信号：卖不动就别加计划</td></tr>'
+    + '<tr style="border-bottom:1px solid var(--border-card);background:#F5F3FF"><td style="padding:7px 8px;font-weight:600;color:#A855F7">长期趋势方向<span style="font-weight:400;color:var(--text-secondary)"> · 跨月</span></td><td style="padding:7px 8px;font-family:monospace">0.5 + (lsi − 收缩均值)×3</td><td style="padding:7px 8px;color:var(--text-secondary)">&gt;0.5 恶化 / &lt;0.5 缓解：持续恶化→加量关注</td></tr>'
     + '</tbody></table>';
-  html += '<div style="margin-top:10px;padding:10px 12px;background:#F1F5F9;border-radius:8px;font-size:12px;color:var(--text-primary)">综合分 = Σ(维度分 × 权重) ÷ Σ权重 × 100　→　<span style="color:#DC2626;font-weight:600">P0 紧急 ≥70</span>　<span style="color:#B45309;font-weight:600">P1 关注 40-69</span>　<span style="color:#64748B;font-weight:600">P2 观察 <40</span></div>';
+  html += '<div style="margin-top:10px;padding:10px 12px;background:#F1F5F9;border-radius:8px;font-size:12px;color:var(--text-primary)">综合分（<b>上调意向强度</b>）= Σ(上调信号维度分 × 权重) ÷ Σ权重 × 100　→　<span style="color:#DC2626;font-weight:600">P0 紧急 ≥70</span>　<span style="color:#B45309;font-weight:600">P1 关注 40-69</span>　<span style="color:#64748B;font-weight:600">P2 观察 <40</span>。下调SKU（未命中上调且滞后&gt;50pt）分数≈0，落在 P2。</div>';
   html += '</div></div>';
 
   // ── 3. 调整幅度公式 ──
@@ -18787,22 +18775,20 @@ function renderPlanAdviceLogic() {
     c.setOption({
       tooltip: { trigger: 'item', formatter: '{b}: {c} 权重 ({d}%)' },
       legend: { bottom: 0, textStyle: { fontSize: 10 } },
-      color: ['#DC2626', '#D97706', '#B91C1C', '#7C3AED', '#64748B'],
+      color: ['#DC2626', '#2563EB', '#D97706', '#B91C1C', '#A855F7'],
       series: [{ type: 'pie', radius: ['42%', '68%'], center: ['50%', '44%'], label: { fontSize: 10, formatter: '{b}\n{c}' }, data: [
         { name:'缺货紧迫度', value:_w.urgency },
         { name:'缺货严重度', value:_w.sevScore },
         { name:'需求偏离度', value:_w.deviation },
         { name:'总仓可用度', value:_w.dcAvail },
-        { name:'长期高严重度', value:_w.ltSev },
-        { name:'长期趋势方向', value:_w.ltTrend },
-        { name:'慢动风险', value:_w.slowRisk }
+        { name:'长期趋势方向', value:_w.ltTrend }
       ] }]
     });
   })();
 }
 window.renderPlanAdviceLogic = renderPlanAdviceLogic;
 
-// v231: 优化建议行展开/收起（七维评分明细）
+// v231: 优化建议行展开/收起（五维评分明细）
 function toggleAdviceDetail(i) {
   var el = document.getElementById('pa-detail-' + i);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
