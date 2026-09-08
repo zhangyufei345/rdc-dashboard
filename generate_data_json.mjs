@@ -365,11 +365,12 @@ function main() {
       //   四个 sheet 落进「未分类」警告后直接丢弃 → 转储数据（2026-07~08，与 transship.json 的
       //   2026-01~06 互补、零重叠）和拉回数据（本轮新增 1763 行）在拆分后彻底丢失。
       //   现在五路全量落盘：core(首屏) / master(首屏·产品主数据) / plan(按需) / extra(按需) / status(按需)
-      const CORE_SHEETS = ['订单满足率', '2026周转', '2025周转', '库存金额', '库存覆盖', '7月库存覆盖数据'];
+      // v276: 8月库存全量更新——窗口平移（8月=当前月，7月=上一月，6月=再上一月），5月退出活跃解析
+      const CORE_SHEETS = ['订单满足率', '2026周转', '2025周转', '库存金额', '库存覆盖', '7月库存覆盖数据', '8月库存覆盖数据'];
       const MASTER_SHEETS = ['基础数据'];
       const PLAN_SHEETS = ['分仓计划'];
-      const EXTRA_SHEETS = ['拉回数据', '转储数据', '5月库存覆盖数据', '6月库存覆盖数据'];
-      const STATUS_SHEETS = ['5月库存状态分析', '6月库存状态分析', '7月库存状态分析'];
+      const EXTRA_SHEETS = ['拉回数据', '转储数据', '6月库存覆盖数据'];
+      const STATUS_SHEETS = ['6月库存状态分析', '7月库存状态分析', '8月库存状态分析'];
       const coreSheets = {}, masterSheets = {}, planSheets = {}, extraSheets = {}, statusSheets = {};
       let coreRows = 0, masterRows = 0, planRows = 0, extraRows = 0, statusRows = 0;
       wb.SheetNames.forEach(name => {
