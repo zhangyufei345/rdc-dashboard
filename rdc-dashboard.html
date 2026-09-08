@@ -14298,12 +14298,14 @@ function parseInventoryExcel(rawData, merge) {
       const C_INTRANSIT = colIdx('在途库存（元）') >= 0 ? colIdx('在途库存（元）') : colIdx('在途');
       // 数量字段：7月"可用库存"出现两次（金额版在前/数量版在后），取最后一次出现 = 数量版
       const C_QTY_AVAIL = colIdx('可用库存（个）') >= 0 ? colIdx('可用库存（个）') : colLastIdx('可用库存');
-      // 未来需求: cov06..cov13 = 2026-06..2027-01（按列名匹配；5月 06-11、6月 07-12、7月 08-13 各 6 个月）
+      // 未来需求: cov06..cov14 = 2026-06..2027-02（按列名匹配；5月 06-11、6月 07-12、7月 08-13、8月 09-14 各 6 个月）
       // 注意：不能只用 split('-')[1] 取月份，否则 2027-01 会映射到 cov01 而不是 cov13。
+      // v289: 加 cov14=2027-02（sheet 实际有 2027-02 列,旧代码漏读,845万支数据被丢）。
       const C_DEMAND = {};
       const COV_MONTH_MAP = {
         '2026-06':'cov06','2026-07':'cov07','2026-08':'cov08','2026-09':'cov09',
-        '2026-10':'cov10','2026-11':'cov11','2026-12':'cov12','2027-01':'cov13'
+        '2026-10':'cov10','2026-11':'cov11','2026-12':'cov12','2027-01':'cov13',
+        '2027-02':'cov14'
       };
       Object.keys(COV_MONTH_MAP).forEach((n) => {
         C_DEMAND[COV_MONTH_MAP[n]] = colIdx(n);
