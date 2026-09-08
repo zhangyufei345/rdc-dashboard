@@ -20,7 +20,7 @@ const shRaw = all['缺货汇总'] || [];
 const COL = { date: 0, sku: 1, name: 2, brand: 3, abc: 5, dcSupply: 7, transit: 11 };
 const RDC = { '华北RDC': 13, '西南RDC': 15, '东北RDC': 17, '华中RDC': 19, '华南RDC': 21, '西北RDC': 25 };
 const shortage = [];
-for (let i = 2; i < shRaw.length; i++) {
+for (let i = 0; i < shRaw.length; i++) {
   const r = shRaw[i]; if (!r || r[COL.sku] == null) continue;
   const o = { dateStr: sd(r[COL.date]), materialCode: String(r[COL.sku]).trim(), materialName: r[COL.name], brand: r[COL.brand], abcClass: r[COL.abc] || 'C', dcSupply: r[COL.dcSupply] || '', rdcTransitTotal: Number(r[COL.transit]) || 0 };
   Object.keys(RDC).forEach(n => { o[n] = Number(r[RDC[n]]) || 0; });
@@ -55,7 +55,7 @@ console.log('window 60d:', sixtyStr, '~', latestDate, '| 7d:', sevenStr, '| 14d:
 
 const odRaw = all['订单明细'] || [];
 const demandMap = {};
-for (let i = 1; i < odRaw.length; i++) {
+for (let i = 0; i < odRaw.length; i++) {
   const r = odRaw[i]; if (!r) continue;
   const dateStr = sd(r[0]);
   if (dateStr < sixtyStr || dateStr > latestDate) continue;
