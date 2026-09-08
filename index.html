@@ -10839,6 +10839,21 @@ function renderInventoryTurnover() {
     '</div>';
 
   if (isForecast) {
+    // v289: 年末库存预测 9月需求优先用 planBySkuRdc（与分仓计划监控同源），必须在数据就绪后才能计算
+    if (!window._invPlanReady && typeof ensureInventoryPlan === 'function') ensureInventoryPlan();
+    if (!window._invPlanReady) {
+      // 轮询等待 planBySkuRdc 加载（最多 30×1s=30s），与 plan-monitor 同模式
+      if (!window._forecastPlanRetry) window._forecastPlanRetry = 0;
+      if (window._forecastPlanRetry < 30) {
+        window._forecastPlanRetry++;
+        const _pbN = dataStore.inventory && dataStore.inventory.planBySkuRdc ? Object.keys(dataStore.inventory.planBySkuRdc).length : 0;
+        page.innerHTML = tabBar + '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📋</div><div style="font-size:var(--font-size-lg)">分仓计划数据加载中…</div><div style="font-size:12px;margin-top:8px;color:#f59e0b">正在拉取最新分仓计划表（第'+window._forecastPlanRetry+'次轮询）</div><div style="font-size:11px;margin-top:4px;color:var(--text-muted)">planBySkuRdc SKU数='+_pbN+' , _invPlanReady='+!!window._invPlanReady+'</div></div>';
+        setTimeout(function(){ renderInventoryTurnover(); }, 1000);
+        return;
+      }
+      console.warn('[renderInventoryForecast] 分仓计划始终未就绪，将全部 fallback 到 cov7.d.covXX（口径与分仓计划监控不一致）');
+    }
+    window._forecastPlanRetry = 0;
     renderInventoryForecast(page, tabBar);
     return;
   }
