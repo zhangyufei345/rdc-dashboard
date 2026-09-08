@@ -11425,7 +11425,7 @@ function renderInventoryForecast(page, tabBar) {
     '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header"><span class="card-title">当前库存 vs 未来需求覆盖分析（8 月末）</span></div>' +
       '<div class="table-wrap" id="table-forecast-cover"></div>' +
-      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">覆盖月数 = 用 8 月末库存量逐月扣减未来 6 个月（8月-次年1月）需求，得出库存能消化到几月。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">v289: 覆盖月数 = 用 8 月末库存量逐月扣减未来 6 个月（<b>9 月-次年 2 月</b>）需求，得出库存能消化到几月。「9 月需求」用 planBySKU Rdc 优先（与分仓计划监控同源），planBySkuRdc 缺值回退到 8月库存覆盖数据 cov09-cov14。&gt;2 个月冗余，1–2 个月偏高，0.5–1 个月正常，&lt;0.5 个月偏瘦（缺货风险）。</div>' +
     '</div>' +
 
     '<div class="card">' +
