@@ -39,9 +39,10 @@ analyze_diff.js
 heat_surgery.py
 remove_shortage_matrix.py
 *_vs_*.csv
-# 回放/校验用的临时数据快照与语法检查产物（不入库）
+# 回放/校验用的临时数据快照与语法检查产物（不入库）。
+# 注意：data-2026-*.json 已被 git 追踪，不受 data_*.json 规则影响；
+# manifest.json 已被 git 追踪（v290 部署补回），所以这两类不要从规则里删。
 data_*.json
 inv_plan.json
-manifest.json
 lt_check.js
 _check*.js
