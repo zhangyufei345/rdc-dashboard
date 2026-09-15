@@ -783,7 +783,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 347; // v347: 补货调整跟踪下钻联动 —— ①归因表点击行→跳转「调整明细」并筛选该类型+标题带筛选摘要 ②两图 tooltip 增加缺货条的跨维度分布（类型图看RDC、RDC图看类型）。纯展示层。v346: 「按 RDC」堆叠图新增缺货率(条)折线。v344: 「按调整类型归因」卡片（详见上方注释）
+const BUILD_VERSION = 348; // v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」的记录（与表内「缺货条数」分子同口径），带可取消的筛选徽标。纯展示层。v347: 归因表点击行→跳转「调整明细」+两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。v344: 「按调整类型归因」卡片（详见上方注释）
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -17503,7 +17503,7 @@ const ADJ_QUADRANTS = {
   C: { key: 'C', label: '判断有效', desc: '少补也没缺，人工判断准，计划员环节应当保留', cls: 'qc' },
   D: { key: 'D', label: '规则无感', desc: '少补无影响，放了不痛，适合做规则松绑试点', cls: 'qd' }
 };
-window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all' };
+window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all', short: 'all' };
 // v347: 归因表点击行 → 置位本标志；renderAdjustTrack 渲染完成后滚动到「调整明细」并高亮（一次性消费）
 window._adjJumpDetail = false;
 
@@ -17613,6 +17613,9 @@ function _adjFiltered(computed) {
     if (st.hainan === 'yes' && !_adjIsH(r.sku)) return false;
     if (st.hainan === 'no' && _adjIsH(r.sku)) return false;
     if (st.quadrant !== 'all' && r.quadrant !== st.quadrant) return false;
+    // v348: 归因表下钻专用 —— 只看「走完后真的缺了」的记录。
+    //   口径与归因表「缺货条数」分子逐字一致 = 扣减(cut>0) 且 窗口已走完(status==='已完成') 且 缺货量>0。
+    if (st.short === 'yes' && !(r.cut > 0 && r.status === '已完成' && r.shortBoxes > 0)) return false;
     return true;
   });
 }
@@ -17733,7 +17736,7 @@ function renderAdjustTrack() {
   html += '<div style="padding:0 14px 12px;font-size:11px;color:var(--text-secondary)">只有 B（无谓损失）才是规则本身的代价；A 类是总量问题，放开规则也救不了。进行中窗口 ' + entered.filter(function(r) { return r.status !== '已完成'; }).length + ' 条暂不入象限。</div></div>';
 
   // ---- v317（方案A）：按调整类型归因表：扣减量 → 窗口内缺货 ----
-  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">按调整类型归因：扣减量 → 窗口内缺货</span><span style="font-size:11px;color:var(--text-secondary)">按「B 象限·无谓损失」降序 · <b>点击行下钻到下方「调整明细」</b>（自动筛选该类型）</span></div>';
+  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">按调整类型归因：扣减量 → 窗口内缺货</span><span style="font-size:11px;color:var(--text-secondary)">按「B 象限·无谓损失」降序 · <b>点击行下钻到下方「调整明细」</b>（自动筛选该类型，且只列走完后有缺货的记录）</span></div>';
   html += '<div style="padding:0 14px 4px;font-size:11px;color:var(--text-secondary);line-height:1.8">缺货率(条) = 窗口内缺货条数 ÷ 窗口已走完条数，只统计「扣减且窗口已走完」的记录。<b>供给类（总仓缺货）的缺货率存在定义循环</b>——四象限判定"大仓紧张"用的就是该类型，不可与规则/人工类横向比大小。</div>';
   html += '<div class="table-wrap" style="margin:0 14px 12px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' + ['调整类型', '性质', '扣减条数', '扣减量(箱)', '已走完', '缺货条数', '缺货率(条)', '缺货量(箱)', 'B象限(条/箱)', '结论'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
   typeAgg.forEach(function(o) {
@@ -17750,7 +17753,9 @@ function renderAdjustTrack() {
     else verdict = '<span style="color:#15803D">未见代价</span>';
     // v347: 点击行 → 筛选该调整类型 + 渲染后滚动到「调整明细」（下钻到具体 SKU 行）；
     //   再次点击同一行 = 取消筛选，此时不跳转（避免"取消筛选却把页面甩到最下面"）
-    html += '<tr onclick="var nt=window._adjState.type===\'' + o.type + '\'?\'all\':\'' + o.type + '\';window._adjState.type=nt;window._adjJumpDetail=(nt!==\'all\');renderAdjustTrack()" style="cursor:pointer' + (active ? ';background:#EFF6FF' : '') + '">' +
+    // v348: 下钻同时打开 short 筛选 —— 明细只列「扣减且走完后有缺货」的记录，与该行「缺货条数」逐条对应
+    //   （用户反馈：下钻后看到的是该类型全部记录，对不上表里的缺货条数）。取消筛选时一并复位。
+    html += '<tr onclick="var nt=window._adjState.type===\'' + o.type + '\'?\'all\':\'' + o.type + '\';window._adjState.type=nt;window._adjState.short=(nt!==\'all\')?\'yes\':\'all\';window._adjJumpDetail=(nt!==\'all\');renderAdjustTrack()" style="cursor:pointer' + (active ? ';background:#EFF6FF' : '') + '">' +
       '<td style="text-align:left' + (o.bBoxes > 0 ? ';font-weight:600' : '') + '">' + o.type + '</td>' +
       '<td style="text-align:left"><span class="badge" style="background:' + kind.bg + ';color:' + kind.fg + '">' + kind.label + '</span></td>' +
       '<td style="text-align:left">' + o.cuts + '</td>' +
@@ -17776,7 +17781,9 @@ function renderAdjustTrack() {
   // 明细表
   // v347: 归因表 / 四象限的下钻落点。带「筛选后 SKU 汇总」徽标，避免用户从图表跳下来不知道筛了什么。
   html += '<div class="card" id="adj-detail-card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">调整明细（点击行查看扣减 vs 缺货因果图）</span>';
-  if (st.type !== 'all' || st.rdc !== 'all' || st.batch !== 'all' || st.hainan !== 'all' || st.quadrant !== 'all') {
+  // v348: 下钻时默认只列「走完后有缺货」的条（与归因表「缺货条数」同口径），并给出可点击取消的徽标 —— 否则用户
+  //   看到的是该类型全部记录（含走完没缺、窗口没走完的），对不上表里的数字。
+  if (st.type !== 'all' || st.rdc !== 'all' || st.batch !== 'all' || st.hainan !== 'all' || st.quadrant !== 'all' || st.short === 'yes') {
     const fSku = {}; filtered.forEach(function(r) { fSku[r.sku] = 1; });
     const fCuts = filtered.filter(function(r) { return r.cut > 0; });
     const fShort = fCuts.filter(function(r) { return r.shortBoxes > 0; });
@@ -17784,6 +17791,7 @@ function renderAdjustTrack() {
     badge += fShort.length ? (' · 窗口缺货 <b style="color:#DC2626">' + fShort.length + ' 条 / ' + _adjFmtNum(fShort.reduce(function(s, r) { return s + r.shortBoxes; }, 0)) + ' 箱</b>') : ' · 窗口缺货 0 条';
     badge += '</span>';
     html += badge;
+    if (st.short === 'yes') html += ' <span class="badge" style="background:#FEF2F2;color:#B91C1C;cursor:pointer" title="只看窗口已走完且真的缺了的记录；点此恢复该类型全部记录" onclick="window._adjState.short=\'all\';renderAdjustTrack()">仅看走完后有缺货 ✕</span>';
   }
   html += '</div>';
   html += '<div class="table-wrap" style="max-height:520px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' +
@@ -17808,7 +17816,7 @@ function renderAdjustTrack() {
       '<td style="text-align:left">' + (r.explain != null ? r.explain + '%' : '—') + '</td>' +
       '</tr>';
   });
-  if (!rows.length) html += '<tr><td colspan="13" style="text-align:left;color:var(--text-secondary);padding:24px">当前筛选条件下无记录</td></tr>';
+  if (!rows.length) html += '<tr><td colspan="13" style="text-align:left;color:var(--text-secondary);padding:24px">' + (st.short === 'yes' ? '当前筛选下没有「走完后有缺货」的记录（该类型的观察窗口可能尚未走完）' : '当前筛选条件下无记录') + '</td></tr>';
   html += '</tbody></table></div></div>';
 
   // 功能2（v239 落地）：砍量冗余验证 —— 扣减量的正向影响（避免压货折算）+ 窗口后7天缺货复现跟踪
