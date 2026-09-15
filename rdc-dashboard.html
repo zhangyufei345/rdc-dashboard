@@ -783,7 +783,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 348; // v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」的记录（与表内「缺货条数」分子同口径），带可取消的筛选徽标。纯展示层。v347: 归因表点击行→跳转「调整明细」+两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。v344: 「按调整类型归因」卡片（详见上方注释）
+const BUILD_VERSION = 349; // v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -14022,6 +14022,8 @@ async function ensureInventoryPlan() {
     //   plan 就绪后不重算 → 刚进页面就导出时 Sheet2 条数与稳态(262)不一致。此处补 replenishment 分支。
     //   renderReplenishment 从 window._replRdc 读 RDC 筛选，重算不会丢用户已选的 RDC。
     if (cur === 'replenishment' && typeof renderReplenishment === 'function') renderReplenishment();
+    // v349: 补货调整跟踪的砍量冗余折算依赖分仓需求（planBySkuRdc 优先）→ 就绪后重渲染本页
+    if (cur === 'adjust-track' && typeof renderAdjustTrack === 'function') renderAdjustTrack();
     // ⚠️ 遗留（本版未改，行为零变化）：下面这行 renderPage() 漏传 page 参数 → switch(undefined) 不命中任何
     //    分支 → 实际是空操作。当前 plan-monitor / inventory-structure 各自有轮询自愈（1500ms×30），
     //    所以未暴露。是否修成 renderPage(cur) 待用户确认，不擅自改这两页行为。
@@ -17469,8 +17471,13 @@ function buildPlanSkuAgg() {
 //   观察窗口 = [到货日, 到货日+4)（2026-09-06 张宇飞确认：RDC 补货间隔 3-4 天，5 天会吃到下个补货日的在途）；
 //   窗口缺货量 = 订单明细「首日缺货量」(支) ÷ 箱规 = 箱，按天聚合。
 //   ⚠️ 缺货汇总 sheet 的「缺货箱数」不是首日缺货口径（差 24~57 倍），严禁用于本页归因。
-// v239: 砍量冗余验证 —— 冗余天数 = 扣减量(箱)×箱规 ÷ 到货前30天日均出货(orderQty口径,推算值非库存观测)；
+// v239: 砍量冗余验证 —— 冗余天数 = 扣减量(箱)×箱规 ÷ 到货后未来日均分仓需求；
 //   复现跟踪 = 窗口结束后7天内再发生首日缺货；A/B 类不计冗余（A 砍不砍都到不了货，B 是缺口不是冗余）。
+// v349（用户 2026-09-15 裁决）：折算分母由「到货前 30 天日均出货(orderQty)」改为「到货日起未来 60 天的日均分仓需求」。
+//   原因：到货前那段窗口常常正是断货期，出货被压到 0 附近，用它会严重低估消耗速度 → 冗余天数虚高
+//   （实测 09710·华中 旧口径 890 天 vs 新口径约 22 天；20880·东北 262 天 vs 约 7 天）。
+//   需求来源与「分仓计划监控」同源：分仓计划 planBySkuRdc 优先 → 8月库存覆盖 cov09~cov14 回退。
+const ADJ_FUT_DAYS = 60;   // 冗余折算的未来需求窗口（天），从到货日起算
 const ADJ_TRANSPORT = { '华中': 4, '华南': 4, '华北': 5, '东北': 5, '西北': 5, '西南': 7, '华东': 1 };
 const ADJ_WINDOW_DAYS = 4;
 const ADJ_RDC_FULL = { '华中': '华中RDC', '华南': '华南RDC', '华北': '华北RDC', '东北': '东北RDC', '西北': '西北RDC', '西南': '西南RDC' };
@@ -17516,14 +17523,43 @@ function _adjFmtNum(v) { return Math.round(v || 0).toLocaleString('zh-CN'); }
 function _adjBoxSpec(sku) { const bs = window._boxSpec && window._boxSpec[String(sku)]; return (bs && bs > 0) ? bs : null; }
 function _adjIsH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); }
 
+// v349: 分仓需求索引（SKU×RDC×月，单位：支）——与「分仓计划监控」getPlanDemand / 年末库存预测同源：
+//   分仓计划 planBySkuRdc 优先（源表实际只有 2026-08 / 2026-09 两个月）
+//   → 8月库存覆盖表 cov09~cov14（= 2026-09 ~ 2027-02）回退。
+//   实测 2026-09：分仓计划与覆盖表 312 条可比记录逐条完全一致（合计 3,983,677 支），两边取谁都一样。
+const ADJ_COV_MONTH = { '2026-09': 'cov09', '2026-10': 'cov10', '2026-11': 'cov11', '2026-12': 'cov12', '2027-01': 'cov13', '2027-02': 'cov14' };
+function _adjBuildDemandIndex(pb) {
+  const cov = {};
+  ((dataStore.inventory || {}).cov7 || []).forEach(function(d) { if (d && d.rdc && d.sku) cov[d.rdc + '|' + d.sku] = d; });
+  return { pb: pb || {}, cov: cov };
+}
+// 单月分仓需求（支）；返回 null = 无该月数据（区别于「有数据但为 0」）
+function _adjMonthDemand(idx, sku, rdcFull, ym) {
+  const p = idx.pb[sku] && idx.pb[sku][rdcFull] && idx.pb[sku][rdcFull][ym];
+  if (p != null && !isNaN(p) && p > 0) return Number(p);
+  const d = idx.cov[rdcFull + '|' + sku];
+  const f = ADJ_COV_MONTH[ym];
+  if (d && f) return d[f] || 0;
+  return null;
+}
+// 某天的未来需求（支/天）= 当月分仓需求 ÷ 当月自然日数（按月内线性摊平）
+function _adjDayDemand(idx, sku, rdcFull, day) {
+  const ym = day.slice(0, 7);
+  const m = _adjMonthDemand(idx, sku, rdcFull, ym);
+  if (m == null) return null;
+  const dim = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).getUTCDate();
+  return m / dim;
+}
+
 // 窗口归因计算（带缓存：数据规模或箱规表变化时重算）
 function buildAdjComputed() {
   const recs = dataStore.adjustRecords || [];
   if (!recs.length) return null;
-  const sig = (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '|' + recs.length + '|' + (window._boxSpec ? Object.keys(window._boxSpec).length : 0);
+  const _pbCur = (dataStore.inventory && dataStore.inventory.planBySkuRdc) || {};
+  // v349: sig 纳入 planBySkuRdc 规模——分仓计划是按需加载的，加载完成前后结果会不同（缓存必须失效重算）
+  const sig = (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '|' + recs.length + '|' + (window._boxSpec ? Object.keys(window._boxSpec).length : 0) + '|pb' + Object.keys(_pbCur).length;
   if (window._adjCache && window._adjCache.sig === sig) return window._adjCache;
   const shortMap = {};
-  const dayShip = {};   // v239: dateStr|sku|RDC全名 → orderQty(支)，用于日均出货/砍量冗余天数折算
   let maxOrd = '';
   (dataStore.orderDetail || []).forEach(function(d) {
     if (!d.dateStr) return;
@@ -17531,8 +17567,8 @@ function buildAdjComputed() {
     if (!isWorkday(d.dateStr)) return; // v292: 非工作日（双休日+法定节假日）放行订单——RDC 不排单，首日缺货量≈订单量，计入会虚增窗口缺货；与四象限/长期高严重度 buildMonthlyShortageProfile 同口径（用户 9/9 规则：所有首日未满足都不含非工作日放行订单）
     const k = d.dateStr + '|' + d.skuCode + '|' + d.warehouse;
     if (d.firstDayShort) shortMap[k] = (shortMap[k] || 0) + d.firstDayShort;
-    if (d.orderQty) dayShip[k] = (dayShip[k] || 0) + d.orderQty;
   });
+  const demandIdx = _adjBuildDemandIndex(_pbCur);
   const list = recs.map(function(r, idx) {
     const full = ADJ_RDC_FULL[r.rdc] || ((r.rdc || '') + 'RDC');
     const t = ADJ_TRANSPORT[r.rdc];
@@ -17561,21 +17597,21 @@ function buildAdjComputed() {
       const dcTight = r.adjType === '总仓缺货';
       quadrant = shortBoxes > 0 ? (dcTight ? 'A' : 'B') : (dcTight ? 'D' : 'C');
     }
-    // v239: 砍量冗余验证 —— 扣减量折库存天数（到货前30天日均出货口径）+ 窗口后7天缺货复现跟踪
-    let avgDaily = null, redundantDays = null;
+    // v349: 砍量冗余验证 —— 扣减量折库存天数 = 扣减量(支) ÷ 到货日起未来 ADJ_FUT_DAYS 天的日均分仓需求
+    //   旧口径「到货前 30 天日均出货」已废弃（断货期出货被压低 → 冗余天数虚高，09710·华中 曾算出 890 天）。
+    let futDaily = null, futDemand = null, redundantDays = null;
     if (cut > 0 && winStart) {
       const sp0 = spec || 1;
-      const refEnd = _adjDateAdd(winStart, -1);           // 到货日前一天
-      const refStart = _adjDateAdd(refEnd, -29);          // 近30个自然日
-      let shipSum = 0;
-      for (let i = 0; i < 30; i++) {
-        const day = _adjDateAdd(refStart, i);
-        if (day > maxOrd) break;
-        shipSum += (dayShip[day + '|' + r.sku + '|' + full] || 0);
+      let demSum = 0, demDays = 0;
+      for (let i = 0; i < ADJ_FUT_DAYS; i++) {
+        const v = _adjDayDemand(demandIdx, r.sku, full, _adjDateAdd(winStart, i));
+        if (v == null) continue;   // 该月无需求数据 → 跳过（不计入分母，避免因数据边界夸大冗余）
+        demSum += v; demDays++;
       }
-      if (shipSum > 0) {
-        avgDaily = Math.round(shipSum / 30 * 10) / 10;
-        redundantDays = Math.round(cut * sp0 / avgDaily * 10) / 10;
+      if (demDays > 0 && demSum > 0) {
+        futDemand = Math.round(demSum);
+        futDaily = Math.round(demSum / demDays * 100) / 100;
+        redundantDays = Math.round(cut * sp0 / futDaily * 10) / 10;
       }
     }
     let reproDays = 0, reproBoxes = 0, reproCovered = 0;
@@ -17596,7 +17632,7 @@ function buildAdjComputed() {
       cut: cut, direction: cut > 0 ? '扣减' : (cut < 0 ? '加量' : '未调'),
       spec: spec, status: status, coveredDays: coveredDays,
       shortBoxes: shortBoxes, dailyShort: dailyShort, quadrant: quadrant, explain: explain,
-      avgDaily: avgDaily, redundantDays: redundantDays,
+      futDaily: futDaily, futDemand: futDemand, redundantDays: redundantDays,
       reproDays: reproDays, reproBoxes: reproBoxes, reproCovered: reproCovered
     });
   });
@@ -17623,6 +17659,10 @@ function _adjFiltered(computed) {
 function renderAdjustTrack() {
   setTitle('补货调整跟踪');
   const page = document.getElementById('page-adjust-track');
+  // v349: 冗余折算的分母要分仓需求（分仓计划优先）——本页不会自动触发按需加载，进页即拉起；
+  //   加载完成后 ensureInventoryPlan 会自动重渲染本页（其 adjust-track 分支），buildAdjComputed 的
+  //   sig 已纳入 planBySkuRdc 规模 → 缓存自动失效重算。
+  if (!window._invPlanReady && typeof ensureInventoryPlan === 'function') ensureInventoryPlan();
   const recs = dataStore.adjustRecords || [];
   if (!recs.length) {
     page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔁</div><div style="font-size:var(--font-size-lg)">暂无补货调整记录</div><div style="font-size:12px;margin-top:8px;line-height:2">数据源：《RDC补货调整记录.xlsx》（计划员手工维护）<br>更新方式：把最新记录表放到桌面「更新部署」文件夹 → 通知 WorkBuddy「更新补货调整记录」→ 自动解析部署</div></div>';
@@ -17831,33 +17871,34 @@ function renderAdjustTrack() {
   html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">✂️ 砍量冗余验证：扣减的正向影响（避免压货）</span><span style="font-size:11px;color:var(--text-secondary)">仅统计「扣减且窗口已走完」的 ' + doneCuts.length + ' 条</span></div>';
   html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:4px 14px 10px">';
   html += '<div class="kpi-card"><div class="kpi-label">砍对（C/D）记录</div><div class="kpi-value" style="color:#15803D">' + doneCD.length + '<span class="kpi-unit">条</span></div><div style="font-size:11px;color:var(--text-secondary)">窗口走完且未缺货</div></div>';
-  html += '<div class="kpi-card"><div class="kpi-label">避免压货</div><div class="kpi-value" style="color:#15803D">' + _adjFmtNum(savedBoxes) + '<span class="kpi-unit">箱</span></div><div style="font-size:11px;color:var(--text-secondary)">' + (avgRed != null ? ('折库存天数简单平均 ≈ ' + avgRed + ' 天') : '待出货数据折算') + '</div></div>';
+  html += '<div class="kpi-card"><div class="kpi-label">避免压货</div><div class="kpi-value" style="color:#15803D">' + _adjFmtNum(savedBoxes) + '<span class="kpi-unit">箱</span></div><div style="font-size:11px;color:var(--text-secondary)">' + (avgRed != null ? ('按未来 60 天需求折算 ≈ 平均 ' + avgRed + ' 天') : '待需求数据折算') + '</div></div>';
   html += '<div class="kpi-card"><div class="kpi-label">砍后 7 天复现缺货</div><div class="kpi-value" style="color:' + (reproHit.length ? '#B45309' : 'var(--text-primary)') + '">' + reproHit.length + '<span class="kpi-unit">/ ' + reproTrackable.length + ' 条</span></div><div style="font-size:11px;color:var(--text-secondary)">复现 = 砍多了预警；未覆盖不计</div></div>';
   html += '<div class="kpi-card"><div class="kpi-label">误砍（B 象限）</div><div class="kpi-value" style="color:#B91C1C">' + quad.B.length + '<span class="kpi-unit">条</span></div><div style="font-size:11px;color:var(--text-secondary)">砍掉的是真缺口，非冗余</div></div>';
   html += '</div>';
   html += '<div style="padding:0 14px 6px">';
   if (rdVals.length) {
-    html += '<div style="font-size:13px;font-weight:600;margin:4px 0 2px">砍对记录冗余天数 Top10（折算库存天数，条数 = 避免压货程度）</div>';
+    html += '<div style="font-size:13px;font-weight:600;margin:4px 0 2px">砍对记录冗余天数 Top10（按未来 60 天分仓需求折算，条数 = 避免压货程度）</div>';
     html += '<div id="adj-chart-redund" style="height:300px"></div>';
   } else {
     html += '<div style="text-align:center;padding:22px;color:var(--text-secondary);font-size:12px">当前所有砍量记录的观察窗口尚未走完（最早窗口 ' + (computed.list.length ? computed.list.reduce(function(m, r) { return r.winStart && r.winStart < m ? r.winStart : m; }, '9999-99-99') : '-') + ' 开始）—— 冗余折算与复现跟踪将随缺货数据日更自动点亮。</div>';
   }
   html += '</div>';
   html += '<details style="margin:0 14px 12px"><summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);padding:6px 0">口径与局限（点开查看）</summary><div style="font-size:12px;color:var(--text-secondary);line-height:2;padding-bottom:6px">';
-  html += '① <b>冗余天数</b> = 扣减量(箱)×箱规 ÷ 该 SKU×RDC 到货前 30 天日均出货（订单明细 orderQty 口径，自然日含无出货天）。含义：若不砍，这些量到货后 ≈ 多压约 X 天才能卖完——是<b>推算值而非实际库存观测</b>（看板无 RDC 库存日流水）。<br>';
+  html += '① <b>冗余天数</b> = 扣减量(箱)×箱规 ÷ <b>到货日起未来 60 天的日均分仓需求</b>（分仓计划优先 → 8月库存覆盖 cov09~cov14 回退，按月内自然日线性摊平，与分仓计划监控同源）。含义：若不砍，这些量到货后 ≈ 多压约 X 天才能卖完——是<b>推算值而非实际库存观测</b>（看板无 RDC 库存日流水）。<br>';
+  html += '①-补 <b>为什么不用历史日均出货</b>：到货前那段窗口常常正是断货期，出货被压到 0 附近，会把消耗速度严重低估 → 冗余天数虚高（实测 09710·华中 旧口径 890 天 vs 新口径约 22 天；20880·东北 262 天 vs 约 7 天）。压货看的是「未来能不能卖掉」，所以分母取未来需求。<br>';
   html += '② <b>复现跟踪</b> = 观察窗口结束后 7 天内该 SKU×RDC 再发生首日缺货。复现说明砍量偏多（缺口真实存在）；持续未复现则冗余判断更扎实。<br>';
   html += '③ A 类（大仓缺货时砍量）不计入：大仓没货砍不砍都到不了货，无冗余可言；B 类是误砍，砍掉的是缺口也不是冗余。<br>';
   html += '④ 升级方向：若后续能提供 RDC 每日/每周库存快照（如 MB52 日导出），可升级为「到货后库存天数曲线」的真实冗余观测，替代本页推算口径。';
   html += '</div></details>';
   if (doneCD.length) {
-    html += '<div class="table-wrap" style="max-height:300px;margin:0 14px 14px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' + ['补货日期', 'RDC', 'SKU编码', 'SKU名称', '调整类型', '扣减量(箱)', '日均出货(支)', '冗余天数', '砍后7天复现'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
+    html += '<div class="table-wrap" style="max-height:300px;margin:0 14px 14px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' + ['补货日期', 'RDC', 'SKU编码', 'SKU名称', '调整类型', '扣减量(箱)', '未来日均需求(支)', '冗余天数', '砍后7天复现'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
     doneCD.forEach(function(r) {
-      const rdTxt = r.redundantDays != null ? '<b>' + r.redundantDays + ' 天</b>' : '<span style="color:var(--text-secondary)">—（近30天无出货）</span>';
+      const rdTxt = r.redundantDays != null ? '<b>' + r.redundantDays + ' 天</b>' : '<span style="color:var(--text-secondary)">—（无未来需求数据）</span>';
       let rpTxt;
       if (r.reproCovered === 0) rpTxt = '<span style="color:var(--text-secondary)">待数据覆盖</span>';
       else if (r.reproDays > 0) rpTxt = '<span style="color:#B45309;font-weight:600">⚠ 复现 ' + r.reproDays + ' 天 / ' + _adjFmtNum(r.reproBoxes) + ' 箱</span>';
       else rpTxt = '<span style="color:#15803D">未复现</span>';
-      html += '<tr onclick="window._openAdjModal(' + r.idx + ')" style="cursor:pointer"><td style="text-align:left">' + r.date + '</td><td style="text-align:left">' + r.rdc + '</td><td style="text-align:left">' + r.sku + '</td><td style="text-align:left">' + (r.skuName || '') + '</td><td style="text-align:left">' + (r.adjType || '') + '</td><td style="text-align:left">' + _adjFmtNum(r.cut) + '</td><td style="text-align:left">' + (r.avgDaily != null ? r.avgDaily : '—') + '</td><td style="text-align:left">' + rdTxt + '</td><td style="text-align:left">' + rpTxt + '</td></tr>';
+      html += '<tr onclick="window._openAdjModal(' + r.idx + ')" style="cursor:pointer"><td style="text-align:left">' + r.date + '</td><td style="text-align:left">' + r.rdc + '</td><td style="text-align:left">' + r.sku + '</td><td style="text-align:left">' + (r.skuName || '') + '</td><td style="text-align:left">' + (r.adjType || '') + '</td><td style="text-align:left">' + _adjFmtNum(r.cut) + '</td><td style="text-align:left">' + (r.futDaily != null ? r.futDaily : '—') + '</td><td style="text-align:left">' + rdTxt + '</td><td style="text-align:left">' + rpTxt + '</td></tr>';
     });
     html += '</tbody></table></div>';
   }
@@ -17993,7 +18034,7 @@ function renderAdjustTrack() {
     if (ch4) ch4.setOption({
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(ps) {
         const p = ps[0]; const r = top10[p.dataIndex];
-        return r.sku + ' ' + (r.skuName || '') + '<br>' + r.rdc + 'RDC · ' + (r.adjType || '') + '<br>扣减 ' + _adjFmtNum(r.cut) + ' 箱 ÷ 日均 ' + r.avgDaily + ' 支 ≈ <b>' + r.redundantDays + ' 天</b><br>砍后7天：' + (r.reproCovered === 0 ? '待数据覆盖' : (r.reproDays > 0 ? ('复现 ' + r.reproDays + ' 天/' + _adjFmtNum(r.reproBoxes) + ' 箱') : '未复现'));
+        return r.sku + ' ' + (r.skuName || '') + '<br>' + r.rdc + 'RDC · ' + (r.adjType || '') + '<br>扣减 ' + _adjFmtNum(r.cut) + ' 箱 ÷ 未来日均需求 ' + r.futDaily + ' 支（未来 60 天共 ' + _adjFmtNum(r.futDemand) + ' 支）≈ <b>' + r.redundantDays + ' 天</b><br>砍后7天：' + (r.reproCovered === 0 ? '待数据覆盖' : (r.reproDays > 0 ? ('复现 ' + r.reproDays + ' 天/' + _adjFmtNum(r.reproBoxes) + ' 箱') : '未复现'));
       } },
       grid: { left: 130, right: 50, top: 10, bottom: 24 },
       xAxis: { type: 'value', name: '天' },
@@ -18070,9 +18111,9 @@ window._openAdjModal = function(idx) {
   if (r.cut > 0 && r.status === '已完成' && (r.quadrant === 'C' || r.quadrant === 'D')) {
     inner += '<div style="margin-top:10px;border:1px solid #BBF7D0;background:#F0FDF4;border-radius:8px;padding:10px 12px;font-size:12px;color:#166534;line-height:1.9"><b>✂ 砍量冗余验证</b><br>';
     if (r.redundantDays != null) {
-      inner += '砍掉的 ' + _adjFmtNum(r.cut) + ' 箱（' + (r.spec || 1) + '支/箱）按到货前 30 天日均出货 ' + r.avgDaily + ' 支/天折算 ≈ <b>' + r.redundantDays + ' 天库存</b> —— 若不砍，这些量到货后约多压 ' + r.redundantDays + ' 天（推算值，口径见跟踪页说明）。';
+      inner += '砍掉的 ' + _adjFmtNum(r.cut) + ' 箱（' + (r.spec || 1) + '支/箱）按到货日起未来 60 天日均分仓需求 ' + r.futDaily + ' 支/天折算 ≈ <b>' + r.redundantDays + ' 天库存</b> —— 若不砍，这些量到货后约多压 ' + r.redundantDays + ' 天（推算值，口径见跟踪页说明）。';
     } else {
-      inner += '到货前 30 天该 SKU×RDC 无出货记录，无法折算库存天数（无消耗速率参考）。';
+      inner += '该 SKU×RDC 在未来 60 天内无分仓需求数据，无法折算库存天数。';
     }
     if (r.reproCovered === 0) {
       inner += '<br>砍后 7 天复现跟踪：尚未进入数据覆盖，待缺货数据日更。';

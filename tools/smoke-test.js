@@ -559,6 +559,20 @@ try {
   log('warn', 'R18: 无法校验 ensureInventoryPlan 触发点（' + e.message + '）');
 }
 
+// R18b: v349 —— 砍量冗余折算的分母改用「未来分仓需求」，renderAdjustTrack 也必须触发 ensureInventoryPlan
+//        （否则先进本页的用户永远停在覆盖表回退口径；两口径目前数值一致，但优先级必须与分仓计划监控一致）
+try {
+  const nf2 = (idx) => { const m = html.slice(idx + 10).search(/\nfunction [A-Za-z_$]/); return m < 0 ? html.length : idx + 10 + m; };
+  const at = html.indexOf('function renderAdjustTrack(');
+  const atBody = at >= 0 ? html.slice(at, nf2(at)) : '';
+  const inAt = /ensureInventoryPlan\s*\(/.test(atBody);
+  const sigOk = /pb' \+ Object\.keys\(_pbCur\)\.length|'pb' \+/.test(html);   // 缓存 sig 纳入 plan 规模
+  if (inAt && sigOk) log('ok', 'R18b: renderAdjustTrack 触发 ensureInventoryPlan + 缓存 sig 纳入 planBySkuRdc 规模');
+  else log('err', 'R18b: ' + (!inAt ? 'renderAdjustTrack 未触发 ensureInventoryPlan' : '缓存 sig 未纳入 planBySkuRdc（plan 加载后不会重算）'));
+} catch (e) {
+  log('warn', 'R18b: 无法校验（' + e.message + '）');
+}
+
 // R19: bootLoad 不得无条件 clearIDB —— 「每次部署都全量重拉 42MB」的根因
 //      允许的形式：clearIDB() 被 DB_VERSION 判断包住（needClear 之类），不允许 flag!==generatedAt 直接调 clearIDB
 try {
