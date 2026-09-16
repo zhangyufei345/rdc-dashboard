@@ -783,7 +783,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 352; // v352: 销售进度按真实分仓需求重算——buildPlanSkuAgg 改为按 sku|rdc 双键，单仓行(缺货分析/归因/长期按RDC视图/导出)显示该仓计划量与完成率，不再把6个RDC的9月计划量求和(修复 09698 华中行显示 1,971,429 实为6仓合计、华中单仓仅 328,571)；SKU 总览视图保留跨 RDC 合计。DB_VERSION=232 不动。v351: 未放行订单量并入「缺货量(未清量)」派生层 shortQty（粒度A：仅限该 SKU×RDC 当月有已放行首日缺货证据；不跨月；首日未满足数量/缺货天数/SF/订单量/触发判定保持已放行口径不变）。DB_VERSION=232 不动。v350: 清理 4 个死函数（全库含字符串统计均 0 调用点，纯减法、零功能影响）：getHainanAdjustedAmount / findInvArr / sumRdcsHainan / renderInventoryRootCause，共删 503 行。由来：v276 库存窗口右移后「海南花露水」金额筛选已改走 amountAt 的块间相减（amountTrendBlocks 4 个透视块 = 海南(全部/否) × 状态(全部/非风险)，逐 RDC×月相减），旧链路 findInvArr→getHainanAdjustedAmount 整条失效成孤岛（其体内 monthIdx===4→cov5/5→cov6 仍是 v276 前旧语义，但从不执行）；sumRdcsHainan 亦零调用；renderInventoryRootCause（5-6月库存变化根因）从未接入 renderPage 任何 case。验证：tools/syntax-check.mjs 通过 + tools/e2e-pages-sweep.js 15 页 0 报错。DB_VERSION=232 不动。v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
+const BUILD_VERSION = 353; // v353: 未放行量同步并入分母（用户 9/16 指正：分子加了未放行订单、分母也必须加）——新增 addUnreleasedToShortAndOrder 单一入口，把同一笔未放行未清量同时并入 shortQty(分子) 与 orderQty(分母)：缺货率恒 ≤100%（修复 89025 雅霜80g·华中 2026-09 = 25,020 ÷ 8,122 = 308.1% → 现 25,020 ÷ 32,422 = 77.2%）；并留存已放行口径快照（unrelQty / orderQtyRel / shortQtyRel），「首日满足率」改回自身定义（首日满足支数 ÷ 已放行订单量，不被未放行稀释、保持跨月可比），KPI 标签/率频说明/表头 tooltip/口径说明全部改为「分子分母同口径」。覆盖三处画像：月度 SKU×RDC、长期 SKU×月、长期 SKU×RDC（滚动30天口径本就不含未放行，未动）。DB_VERSION=232 不动。 ｜ v352: 销售进度按真实分仓需求重算——buildPlanSkuAgg 改为按 sku|rdc 双键，单仓行(缺货分析/归因/长期按RDC视图/导出)显示该仓计划量与完成率，不再把6个RDC的9月计划量求和(修复 09698 华中行显示 1,971,429 实为6仓合计、华中单仓仅 328,571)；SKU 总览视图保留跨 RDC 合计。DB_VERSION=232 不动。v351: 未放行订单量并入「缺货量(未清量)」派生层 shortQty（粒度A：仅限该 SKU×RDC 当月有已放行首日缺货证据；不跨月；首日未满足数量/缺货天数/SF/订单量/触发判定保持已放行口径不变）。DB_VERSION=232 不动。v350: 清理 4 个死函数（全库含字符串统计均 0 调用点，纯减法、零功能影响）：getHainanAdjustedAmount / findInvArr / sumRdcsHainan / renderInventoryRootCause，共删 503 行。由来：v276 库存窗口右移后「海南花露水」金额筛选已改走 amountAt 的块间相减（amountTrendBlocks 4 个透视块 = 海南(全部/否) × 状态(全部/非风险)，逐 RDC×月相减），旧链路 findInvArr→getHainanAdjustedAmount 整条失效成孤岛（其体内 monthIdx===4→cov5/5→cov6 仍是 v276 前旧语义，但从不执行）；sumRdcsHainan 亦零调用；renderInventoryRootCause（5-6月库存变化根因）从未接入 renderPage 任何 case。验证：tools/syntax-check.mjs 通过 + tools/e2e-pages-sweep.js 15 页 0 报错。DB_VERSION=232 不动。v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -4933,11 +4933,18 @@ function isWeekendDate(ds) {
 }
 
 // === v351：未放行订单 → 缺货量(未清量) 并入（粒度A：SKU×RDC 同仓证据）===
-// 铁律（用户 9/16 拍板）：
-//  ① 首日未满足数量 firstDayShort 永远按已放行订单口径，绝不变（缺货天数/缺货频率SF/订单量/触发判定均不动）；
-//  ② 只在「缺货量（未清量）」派生层 shortQty 并入未放行量（仅限该 SKU×RDC 当月有已放行首日缺货证据）；
-//  ③ 不跨月：未放行只并入其创建月；不修改 orderDetail 本身、不污染满足率/订单量/shortDays。
-// 实现：在三个缺货画像「派生指标」前，把未放行量加进 shortQty（mr/shortBoxes/severity 下游自动跟随）；
+// === v353：分子并入未放行后，分母（订单量）同步并入同一笔未放行量 ===
+// 铁律（v351 用户 9/16 拍板 / v353 同日指正）：
+//  ① 首日未满足数量 firstDayShort 永远按已放行订单口径，绝不变（缺货天数/缺货频率SF/触发判定均不动）；
+//  ② 「缺货量（未清量）」派生层 shortQty 并入未放行量（仅限该 SKU×RDC 当月有已放行首日缺货证据）；
+//  ③ 【v353】分子加了未放行，分母也必须加——订单量 orderQty 同步并入同一笔未放行量。
+//     否则 缺货率 = (已放行缺货 + 未放行未清量) ÷ 已放行订单量，分子含未放行、分母不含 → 必然突破 100%
+//     （实测 89025 雅霜80g·华中 2026-09 = 25,020 ÷ 8,122 = 308.1%，只看已放行口径仅 8.9%）。
+//     同步并入后分子分母同源，缺货率恒 ≤ 100%，「订单量」列可与「缺货量」列直接互相校验。
+//  ④ 「首日满足率」保持自身定义（首日满足支数 ÷ 已放行订单量），不受未放行并入影响——
+//     它是要跨月可比的业务承诺口径，不能因未放行并入被稀释（v351~v352 期间曾用 1−率 派生，v353 起改回自身口径）。
+//  ⑤ 不跨月：未放行只并入其创建月；不修改 orderDetail 本身、不污染 shortDays / SF / 趋势类指标。
+// 实现：在三个缺货画像「派生指标」前，把未放行量**同时**加进 shortQty 与 orderQty（mr/shortBoxes/severity 下游自动跟随）；
 //      未放行量取 openQty（未清量·基本单位=支），证据取 orderDetail 中同 SKU×RDC×月 的 firstDayShort>0（workday 过滤，与画像同口径）。
 var _unrelShortAggCache = null, _evidSkuRdcMonthCache = null;
 function getUnreleasedShortAgg() {
@@ -4973,11 +4980,23 @@ function getEvidSkuRdcMonth() {
   _evidSkuRdcMonthCache = m;
   return m;
 }
-// 月度 / byRdc（q 含 sku/rdc/month）：仅同 SKU×RDC×月 有已放行缺货证据，才把未放行并入 shortQty
+// v353: 并入未放行量的唯一入口——分子(shortQty) 与分母(orderQty) MUST 同步并入同一笔量。
+//   同时留存「已放行口径」快照（orderQtyRel/shortQtyRel），供「首日满足率」等需跨月可比的指标使用。
+function addUnreleasedToShortAndOrder(q, amt) {
+  if (!q || !(amt > 0)) return;
+  if (q.unrelQty == null) { q.orderQtyRel = q.orderQty || 0; q.shortQtyRel = q.shortQty || 0; }
+  q.unrelQty = (q.unrelQty || 0) + amt;
+  q.shortQty = (q.shortQty || 0) + amt;   // 分子：缺货量（未清量）
+  q.orderQty = (q.orderQty || 0) + amt;   // 分母：订单量（v353 同步并入 → 率恒 ≤ 100%）
+}
+// 已放行口径取值器：无未放行并入时等于原值
+function relOrderQty(q) { return (q && q.orderQtyRel != null) ? q.orderQtyRel : ((q && q.orderQty) || 0); }
+function relShortQty(q) { return (q && q.shortQtyRel != null) ? q.shortQtyRel : ((q && q.shortQty) || 0); }
+// 月度 / byRdc（q 含 sku/rdc/month）：仅同 SKU×RDC×月 有已放行缺货证据，才把未放行并入 shortQty + orderQty
 function injectUnreleasedIntoShortQty(q, urMap, evMap) {
   if (!q || !q.sku || !q.rdc || !q.month) return;
   var k = q.sku + '|' + q.rdc + '|' + q.month;
-  if (evMap[k] && urMap[k]) q.shortQty += urMap[k];
+  if (evMap[k] && urMap[k]) addUnreleasedToShortAndOrder(q, urMap[k]);
 }
 
 function buildMonthlyShortageProfile() {
@@ -5210,7 +5229,7 @@ function buildLongTermProfile(targetMonth) {
         var _kL = q.sku + '|' + _rd + '|' + ym2;
         if (_evL[_kL] && _urL[_kL]) _addL += _urL[_kL];
       }
-      if (_addL > 0) q.shortQty += _addL;
+      if (_addL > 0) addUnreleasedToShortAndOrder(q, _addL); // v353：分子+分母同步并入（原 v351 只并入 shortQty）
       q.shortDayCnt = Object.keys(q.shortDays).length;
       q.orderDayCnt = Object.keys(q.orderDays).length;
       q.mr = q.orderQty > 0 ? q.shortQty / q.orderQty : 0;
@@ -6104,13 +6123,16 @@ function renderShortageMonthly() {
   // 各 RDC 同口径对照：绝对数会被大仓（组合基数大）主导，必须同时看占本仓有效组合比
   const rdcMap = {};
   function rdcSlot(rdc) {
-    if (!rdcMap[rdc]) rdcMap[rdc] = { rdc: rdc, valid: 0, hi: 0, noise: 0, order: 0, short: 0 };
+    if (!rdcMap[rdc]) rdcMap[rdc] = { rdc: rdc, valid: 0, hi: 0, noise: 0, order: 0, short: 0, orderRel: 0, shortRel: 0 };
     return rdcMap[rdc];
   }
   allFiltered.forEach(p => {
     const r = rdcSlot(p.rdc);
     r.order += p.orderQty;
     r.short += p.shortQty;
+    // v353: 已放行口径单独累计——「首日满足率」必须用它（不能被未放行未清量稀释，否则跨月不可比）
+    r.orderRel += relOrderQty(p);
+    r.shortRel += relShortQty(p);
   });
   // 有缺货的组合再按「有单工作日」分流：≥4 天进有效组合（参与双高判定），<4 天计入噪声剔除
   withShort.forEach(p => {
@@ -6123,7 +6145,12 @@ function renderShortageMonthly() {
     }
   });
   const rdcList = Object.values(rdcMap)
-    .map(r => { r.hiPct = r.valid > 0 ? r.hi / r.valid : 0; r.mr = r.order > 0 ? r.short / r.order : 0; return r; })
+    .map(r => {
+      r.hiPct = r.valid > 0 ? r.hi / r.valid : 0;
+      r.mr = r.order > 0 ? r.short / r.order : 0;              // 缺货率（含未放行，分子分母同口径）
+      r.mrRel = r.orderRel > 0 ? r.shortRel / r.orderRel : 0; // v353: 已放行口径缺货率 → 首日满足率 = 1 − 它
+      return r;
+    })
     .sort((a, b) => b.hiPct - a.hiPct);
 
   // v168: 「严重度高占比」色条改「跨 RDC 分位数」驱动，与严重度评分 P75/P90 同源
@@ -6204,7 +6231,7 @@ function renderShortageMonthly() {
   //   红 = sev ≥ P75（紧急升级）、黄 = sev ≥ P50 但 < P75（严重度高）、灰 = sev < P50（不急）
   //   这样「红色 = 严重」在任何象限都醒目，纠正 v151 之前"红色只聚集在 Q1"造成的视觉误导
   const mapPt = p => ({ value: [p.sf, p.mr, p.shortQty], sku: p.sku, nm: p.name, rdc: p.rdc,
-    q: p.shortQty, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf, sev: p.severity });
+    q: p.shortQty, oq: p.orderQty, un: p.unrelQty || 0, sd: p.shortDayCnt, od: p.orderDayCnt, mr: p.mr, sf: p.sf, sev: p.severity });
   const sevHighPts = valid.filter(p => p.severity >= SEV_HIGH).map(mapPt);
   const sevMidPts  = valid.filter(p => p.severity >= SEV_DOUBLE && p.severity < SEV_HIGH).map(mapPt);
   const sevLowPts  = valid.filter(p => p.severity < SEV_DOUBLE).map(mapPt);
@@ -6334,7 +6361,7 @@ function renderShortageMonthly() {
       '<td style="text-align:right;color:var(--text-secondary)">' + (r.noise > 0 ? r.noise : '<span style="color:#CBD5E1">—</span>') + '</td>' +
       '<td style="text-align:right;color:var(--color-red);font-weight:600">' + r.hi + '</td>' +
       '<td style="text-align:right;font-weight:600">' + (r.hiPct * 100).toFixed(1) + '%</td>' +
-      '<td style="text-align:right;color:' + (r.mr > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</td>' +
+      '<td style="text-align:right;color:' + (r.mrRel > 0.15 ? 'var(--color-red)' : 'var(--text-primary)') + '" title="首日满足率 = 首日满足支数 ÷ 已放行订单量（已放行口径）">' + ((1 - r.mrRel) * 100).toFixed(1) + '%</td>' +
       '</tr>';
   }).join('');
 
@@ -6376,7 +6403,7 @@ function renderShortageMonthly() {
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--text-primary)">${wd || '—'}</div><div style="font-size:11px;color:var(--text-secondary)">有效工作日</div></div>
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-orange)">${formatNum(withShort.length)}</div><div style="font-size:11px;color:var(--text-secondary)">有首日缺货的 SKU×RDC</div></div>
       <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-red)">${formatNum(hi.length)}</div><div style="font-size:11px;color:var(--text-secondary)">严重度高 · 重点跟进</div></div>
-      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-blue)">${(monthMr * 100).toFixed(1)}%</div><div style="font-size:11px;color:var(--text-secondary)">月度首日缺货率（整体）</div></div>
+      <div class="card" style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--color-blue)">${(monthMr * 100).toFixed(1)}%</div><div style="font-size:11px;color:var(--text-secondary)" title="分子分母同口径：月累计缺货量（含未放行未清量）÷ 月累计订单量（已放行 + 同一笔未放行）。未放行只并入其创建月，且仅限有已放行首日缺货的 SKU×RDC。">月度首日缺货率（整体 · 含未放行）</div></div>
     </div>
 
     <!-- v144-1：四象限「率」「频」含义文字解释段（红框位置：KPI 卡与 row-2 之间） -->
@@ -6384,8 +6411,8 @@ function renderShortageMonthly() {
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div style="flex:1;min-width:240px">
           <span style="font-weight:600;color:#1F2937">「率」(MR · 首日缺货率)</span><span style="color:#94A3B8;margin-left:4px">= 强度，按「量」算</span><br>
-          <span style="color:#64748B">分子：窗口内累计首日缺货量</span>　÷　<span style="color:#64748B">分母：窗口内累计订单量</span><br>
-          <span style="font-size:11px;color:#94A3B8">例：8000 支订单里 5000 支首日没排上 → MR = 5000/8000 = 62.5%</span>
+          <span style="color:#64748B">分子：窗口内累计首日缺货量（含未放行未清量）</span>　÷　<span style="color:#64748B">分母：窗口内累计订单量（已放行 + 同一笔未放行）</span><br>
+          <span style="font-size:11px;color:#94A3B8">例：8000 支订单里 5000 支首日没排上 → MR = 5000/8000 = 62.5%。分子分母同口径 → 恒 ≤ 100%（v353 起；此前分子含未放行、分母不含，曾出现 308.1%）</span>
         </div>
         <div style="flex:1;min-width:240px;border-left:1px solid #E5E7EB;padding-left:16px">
           <span style="font-weight:600;color:#1F2937">「频」(SF · 缺货频率)</span><span style="color:#94A3B8;margin-left:4px">= 持续性，按「天」算</span><br>
@@ -6403,7 +6430,7 @@ function renderShortageMonthly() {
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#A32D2D">规模</b> = 缺货量在有效组合中的分位排名（0~1）　<span style="color:#64748B">// 缺最多=1.0</span></div>
-            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#1E40AF">率</b> = 窗口内首日缺货量 ÷ 订单量　<span style="color:#64748B">// 100%=1.0</span></div>
+            <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#1E40AF">率</b> = 窗口内首日缺货量 ÷ 订单量（含未放行，分子分母同口径）　<span style="color:#64748B">// 100%=1.0</span></div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#92400E">频</b> = 缺货工作日 ÷ 有单工作日　<span style="color:#64748B">// 100%=1.0</span></div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#185FA5">为什么规模不压缩</b>：缺货量本身是长尾（最大是中位数的 50 倍），用分位排名<span style="color:#64748B">保留原始排序</span>，前 25% 的 SKU 能覆盖约 77% 的缺货量</div>
             <div style="background:#FAFBFC;padding:8px 10px;border-radius:4px"><b style="color:#791F1F">规模下限保险（v163 几何平均 + 软衰减）</b>：hardFloor = <b>${dynTh.hardFloor.toLocaleString()} 支</b> = 缺货量的<b>几何平均</b>（对数正态中心）。缺货量 &lt; hardFloor 时 sizePct <b>软衰减</b> ×(缺货量/hardFloor)，不是硬归零。<br><span style="color:#64748B">· 为什么几何平均：缺货量是长尾分布（偏度 3.64，标准差 &gt; 均值），对偏态分布几何平均才是"中心趋势"的正确度量<br>· 淡旺季实测：长尾 0.83x / <b>淡季双峰 1.34x（P50 会被小 SKU 拉太低，几何平均稳）</b> / 旺季 1.06x / 均匀 0.79x<br>· 软衰减示例：缺 72 支 →×0.14（几乎归零）；缺 432 支 →×0.84（接近保留）；缺 555 支 →×1.00</span></div>
@@ -6497,9 +6524,10 @@ function renderShortageMonthly() {
           ${rdcList.length > 0 ? rdcList.map(r => {
             // v168: 严重度高占比 = 跨 RDC 分位驱动（红 ≥P75 / 黄 ≥P50 / 绿 <P50），颜色已在 rdcList 预置为 r.hiPctColor
             //       首日满足率 = 业务硬阈值 90%/80%（v162 业务自定义，v168 修正 v162 漏改的 85%/78%）
+            // v353: 首日满足率回归自身定义 = 首日满足支数 ÷ 已放行订单量（不受未放行并入影响）
             var fillColor = r.hiPctColor || '#10B981';
-            var satisfyColor = (1 - r.mr) >= 0.90 ? '#10B981' : (1 - r.mr) >= 0.80 ? '#F59E0B' : '#EF4444';
-            var satisfyWidth = Math.max(2, Math.min(100, (1 - r.mr) * 100));
+            var satisfyColor = (1 - r.mrRel) >= 0.90 ? '#10B981' : (1 - r.mrRel) >= 0.80 ? '#F59E0B' : '#EF4444';
+            var satisfyWidth = Math.max(2, Math.min(100, (1 - r.mrRel) * 100));
             var rdcAttr = String(r.rdc).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
             return '<div data-rdc="' + rdcAttr + '" ' +
               'style="cursor:pointer;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:8px;padding:14px;transition:transform 0.15s,box-shadow 0.15s" ' +
@@ -6517,7 +6545,7 @@ function renderShortageMonthly() {
               '</div>' +
               '<div data-rdc-drill="rdc-all:' + rdcAttr + '" style="cursor:pointer" title="点击下钻该仓全部缺货组合（含有效+噪声）">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#6B7280;margin-bottom:4px">' +
-                  '<span>首日满足率</span><span style="font-weight:600;color:' + satisfyColor + '">' + ((1 - r.mr) * 100).toFixed(1) + '%</span>' +
+                  '<span>首日满足率</span><span style="font-weight:600;color:' + satisfyColor + '" title="首日满足支数 ÷ 已放行订单量（已放行口径，不含未放行未清量）— 与缺货率不同口径：缺货率含未放行且分子分母同口径恒 ≤100%，本列保持跨月可比的业务承诺口径">' + ((1 - r.mrRel) * 100).toFixed(1) + '%</span>' +
                 '</div>' +
                 '<div style="background:#F3F4F6;height:6px;border-radius:3px;overflow:hidden"><div style="background:' + satisfyColor + ';height:100%;width:' + satisfyWidth.toFixed(1) + '%"></div></div>' +
               '</div>' +
@@ -6553,8 +6581,8 @@ function renderShortageMonthly() {
             <th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left" title="来自产品主数据「产品列表」sheet 的「供应链品类」列（常规品/促销装/非卖品），与缺货报告「产品分类」同源；查不到显示 —">供应链品类</th>
             <th style="text-align:center" title="长期高严重度分型（SKU 层判定，跨 1–${ltProf.months.length} 月）：顽固型=长期问题 / 反复型=中长期反复 / 新发型=样本不足待查证 / 已缓解=曾进 P75 但本月不在 / 偶发。点击查看完整长期分析。&#10;&#10;⚠️ 口径差异：本列的 P75 是「各月独立计算」（${ltProf.effectiveCurMonth === ltProf.curMonth ? '本月' : '本月 '+ltProf.curMonth+' 数据不足，回退到 '+ltProf.effectiveCurMonth}有效 SKU ${ltProf.monthMeta[ltProf.effectiveCurMonth] ? ltProf.monthMeta[ltProf.effectiveCurMonth].validCnt : 0} 个，P75=${ltProf.monthMeta[ltProf.effectiveCurMonth] ? ltProf.monthMeta[ltProf.effectiveCurMonth].sevP75.toFixed(3) : '—'}），而本清单的入选用的是「跨月全局 P75」。两者不完全一致，所以少数行会出现「已缓解」——含义是：该 SKU 按「本月自身的前 25%」标准已经掉出，但按跨月标准仍在本清单里。">长期标记</th>
             <th style="text-align:left">RDC</th>
-            <th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>
-            <th style="text-align:right;color:var(--color-red)">首日缺货率</th>
+            <th style="text-align:right" title="月累计订单量 = 已放行订单量 + 同一笔未放行未清量（v353 起与「缺货量」分子同口径，两列可直接互相校验）">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>
+            <th style="text-align:right;color:var(--color-red)" title="缺货率 = 月累计缺货量（含未放行未清量）÷ 月累计订单量（已放行 + 同一笔未放行）。分子分母同口径 → 恒 ≤ 100%（v353 起；此前分母不含未放行，曾出现 308.1%）。单元格 tooltip 给出已放行口径对照。">首日缺货率</th>
             <th style="text-align:right;color:var(--color-purple)">缺货天数</th><th style="text-align:right">有单天数</th>
             <th style="text-align:right;color:var(--color-purple)">缺货频率</th>
             <th style="text-align:left" title="缺货报告（shortage）最新一日的 dcSupply 字段——总仓是否正常供应">总仓供应</th>
@@ -6616,7 +6644,7 @@ function renderShortageMonthly() {
                   '<td style="text-align:left">' + p.rdc + '</td>' +
                   '<td style="text-align:right">' + p.orderQty.toLocaleString() + '</td>' +
                   '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.shortQty.toLocaleString() + '</td>' +
-                  '<td style="text-align:right;color:var(--color-red)">' + (p.mr * 100).toFixed(1) + '%</td>' +
+                  '<td style="text-align:right;color:var(--color-red)" title="' + (p.mr * 100).toFixed(1) + '% = 缺货量 ' + p.shortQty.toLocaleString() + ' ÷ 订单量 ' + p.orderQty.toLocaleString() + '（分子分母同口径 → 恒 ≤ 100%）' + (p.unrelQty ? '\n其中未放行未清量 ' + p.unrelQty.toLocaleString() + ' 支已同时计入分子与分母\n只看已放行口径 = ' + ((relShortQty(p) / Math.max(1, relOrderQty(p))) * 100).toFixed(1) + '%（缺货 ' + relShortQty(p).toLocaleString() + ' ÷ 订单 ' + relOrderQty(p).toLocaleString() + '）' : '') + '">' + (p.mr * 100).toFixed(1) + '%</td>' +
                   '<td style="text-align:right;color:var(--color-purple);font-weight:600">' + p.shortDayCnt + '</td>' +
                   '<td style="text-align:right">' + p.orderDayCnt + '</td>' +
                   '<td style="text-align:right;color:var(--color-purple)">' + (p.sf * 100).toFixed(0) + '%</td>' +
@@ -6631,7 +6659,7 @@ function renderShortageMonthly() {
                   })() + '</td>' +
                   '<td style="text-align:left;min-width:160px;line-height:1.4;vertical-align:top">' + spHtml + '</td>' +
                   (function(){
-                    var _d = sp.dev;
+                    var _d = sp ? sp.dev : null; // v353fix: v352 改 per-RDC 键后 sp 可能为 undefined（该仓无计划无出货），原先直接读 sp.dev 会 TypeError 打断整页渲染
                     if (_d == null) return '<td style="font-family:monospace;font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap" title="完成率与自然日时间进度偏差：\n该 SKU 计划/出货口径无数据或完成率=∞，无法计算偏差"><div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><span style="display:inline-block;width:12px;text-align:left"></span><span style="color:#CBD5E1">—</span></div></td>';
                     var _pt = _d * 100;
                     var _clr = _pt >= 5 ? '#15803D' : (_pt <= -5 ? '#DC2626' : '#64748B');
@@ -6660,8 +6688,8 @@ function renderShortageMonthly() {
       而长期标记判断「本月是否在 P75」用的是「<strong>${ltProf.effectiveCurMonth === ltProf.curMonth ? '各月独立' : '回退到 '+ltProf.effectiveCurMonth+' 的'}P75</strong>」<span style="color:#A32D2D">（${ltProf.effectiveCurMonth === ltProf.curMonth ? '本月' : ltProf.effectiveCurMonth} ${(ltProf.monthMeta[ltProf.effectiveCurMonth] || {}).validCnt || 0} 个有效 SKU，P75 = ${(ltProf.monthMeta[ltProf.effectiveCurMonth] || {}).sevP75 != null ? ltProf.monthMeta[ltProf.effectiveCurMonth].sevP75.toFixed(3) : '—'}）</span>${ltProf.effectiveCurMonth !== ltProf.curMonth ? '<br>⚠ 本月 '+ltProf.curMonth+' 数据不足（有效 SKU < '+LT_PARAMS.MIN_VALID_CNT_MONTH+' 个），「本月在 P75」判定已自动回退到 '+ltProf.effectiveCurMonth+'（'+ltProf.monthMeta[ltProf.effectiveCurMonth].validCnt+' 个有效 SKU）' : ''}。
       所以少数行会显示「已缓解」——含义是：该 SKU 按「本月自身前 25%」的标准已掉出，但按跨月标准仍留在本清单内。<br>
       · 已剔除非工作日（双休日+法定节假日）——非工作日 RDC 不排单，首日缺货量≈订单量（实测 8/08、8/22 首日满足率仅 0.3%），计入会虚增缺货量并制造虚假缺货组合。<br>
-      · <strong>缺货率 MR</strong> = 月累计缺货量（含未放行）÷ 月累计订单量，衡量缺货强度。<strong>缺货量</strong>已并入「有已放行首日缺货的 SKU×RDC」的未放行订单量（仅限创建当月、不跨月）；<strong>首日缺货天数 / 缺货频率 SF 仍按已放行订单口径，不变</strong>。<br>
-      · <strong>缺货量口径变更（v351）</strong>：未放行订单量计入「缺货量（未清量）」层，仅限该 SKU×RDC 当月有已放行首日缺货证据（无证据的不猜）；首日未满足数量 firstDayShort / 订单满足率 / 调整跟踪窗口缺货均不受影响。<br>
+      · <strong>缺货率 MR</strong> = 月累计缺货量（含未放行未清量）÷ 月累计订单量（<strong>已放行 + 同一笔未放行</strong>），衡量缺货强度；<strong>分子分母同口径 → 恒 ≤ 100%</strong>（v353 起）。<strong>首日缺货天数 / 缺货频率 SF 仍按已放行订单口径，不变</strong>。<br>
+      · <strong>未放行并入口径（v351 并入缺货量 → v353 同步并入订单量）</strong>：仅限该 SKU×RDC 当月有已放行首日缺货证据（无证据的不猜）、只并入未放行订单的创建月。首日未满足数量 firstDayShort / 调整跟踪窗口缺货均不受影响；<strong>「首日满足率」仍按已放行订单口径</strong>（首日满足支数 ÷ 已放行订单量，跨月可比，不被未放行稀释）。<br>
       · <strong>缺货频率 SF</strong> = 首日缺货工作日数 ÷ <u>该 SKU 有单工作日数</u>（非当月工作日），衡量持续性；用有单天数为分母可避免低频次下单 SKU 的频率上限被压死，且月中小月数据不全时不会被系统性稀释。<br>
       · <strong>「严重度高」入选</strong> = 严重度评分 ≥ ${SEV_DOUBLE_TXT}（本月 P75，即前 25%，按当月数据自适应）。<br>
       · <strong>补货紧急升级</strong> = 严重度评分 ≥ ${SEV_HIGH_TXT}（本月 P75，按当月数据自适应）。<br>
@@ -6678,7 +6706,8 @@ function renderShortageMonthly() {
         return '<strong>' + o.sku + ' ' + o.nm + '</strong><br>' + o.rdc +
           '<hr style="border:none;border-top:1px solid #eee;margin:4px 0">' +
           '首日缺货量：' + o.q.toLocaleString() + ' 支<br>' +
-          '首日缺货率：' + (o.mr * 100).toFixed(1) + '%<br>' +
+          '订单量：' + o.oq.toLocaleString() + ' 支' + (o.un ? '（含未放行未清量 ' + o.un.toLocaleString() + ' 支）' : '') + '<br>' +
+          '首日缺货率：' + (o.mr * 100).toFixed(1) + '%' + (o.un ? '（分子分母同口径，恒 ≤ 100%）' : '') + '<br>' +
           '缺货频率：' + (o.sf * 100).toFixed(0) + '%（' + o.sd + '/' + o.od + ' 天）<br>' +
           '<span style="color:#3B82F6">点击散点可下钻该 SKU 跨 RDC 明细</span>';
       }
@@ -7358,8 +7387,8 @@ function renderDrillTableBody(items) {
   return '<div class="table-wrap"><table class="data-table" style="font-size:11px">' +
     '<thead><tr>' +
     '<th style="text-align:left">品牌</th><th style="text-align:left">SKU编码</th><th style="text-align:left">SKU名称</th><th style="text-align:left">RDC</th>' +
-    '<th style="text-align:right">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>' +
-    '<th style="text-align:right">缺货率（含未放行）</th><th style="text-align:right">缺货天数/有单天数</th><th style="text-align:right">缺货频率</th>' +
+    '<th style="text-align:right" title="已放行订单量 + 同一笔未放行未清量（与「首日缺货量」同口径）">订单量</th><th style="text-align:right;color:var(--color-red)">首日缺货量</th>' +
+    '<th style="text-align:right" title="缺货量（含未放行未清量）÷ 订单量（已放行 + 同一笔未放行）——分子分母同口径，恒 ≤ 100%">缺货率（含未放行）</th><th style="text-align:right">缺货天数/有单天数</th><th style="text-align:right">缺货频率</th>' +
     '<th style="text-align:right" title="综合严重度：0.4×规模(log10) + 0.3×率 + 0.2×频 + 0.1×持续天数,≥0.55 入选双高,≥0.65 触发补货升级">严重度</th>' +
     '<th style="text-align:center">标记</th>' +
     '</tr></thead><tbody>' +
@@ -10986,7 +11015,7 @@ function renderReplenishment() {
     '<thead><tr>' +
     '<th style="width:30px"></th>' +
     '<th>SKU编码</th><th>物料名称</th><th>品牌</th><th>ABC</th><th>RDC</th>' +
-    '<th title="本月累计缺货量（含未放行）÷ 本月累计订单量（已剔除双休日）— 衡量缺货强度，分子为「缺货量」含未放行订单（仅限有已放行缺货的SKU），非全月缺货">缺货率（含未放行）</th>' +
+    '<th title="本月累计缺货量（含未放行未清量）÷ 本月累计订单量（已放行 + 同一笔未放行，已剔双休日/节假日）— 分子分母同口径，恒 ≤ 100%。未放行仅限有已放行首日缺货的 SKU×RDC，且只并入其创建月">缺货率（含未放行）</th>' +
     '<th title="本月首日缺货的工作日天数 ÷ 有订单的工作日天数">缺货天数</th>' +
     '<th title="缺货频率 = 缺货工作日 ÷ 有单工作日，衡量持续性">缺货频率</th>' +
     '<th>今日缺口(箱)</th><th title="近60天日均出货，单位「支」（与分仓计划/订单明细同源）">近60天日均(支)</th><th>满足率</th><th title="建议补货量 = MAX(0, 日均需求(支/天) × 4 − 总仓库存 − 在途数量)，单位「支」">建议补货(支)</th>' +
