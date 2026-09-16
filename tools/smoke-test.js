@@ -495,6 +495,15 @@ if (realExposures.length === 1) {
 //      v202 事故：v201 首版拆分只定义 CORE/MASTER/PLAN，把 拉回数据/转储数据/5·6月覆盖/状态分析
 //      落进「未分类」警告后直接丢弃 → 转储数据(2026-07~08，与 transship.json 的 2026-01~06 互补零重叠)
 //      与拉回数据(本轮 +1763 行) 彻底丢失，且不会有任何报错，属静默数据回归。
+//      v350.1（用户 2026-09-16 裁决「加窗口白名单把它静音」）：引入**动态窗口白名单**。
+//        背景：窗口是滚动的（v202 f8bde51 建窗 5/6/7月 → v276 0be4145 右移到 6/7/8月），旧月份被**有意**踢出解析，
+//        于是 R16 每次预检都报「5月库存状态分析 / 5月库存覆盖数据 未落入输出 JSON」= 误报，害处是狼来了效应
+//        （真丢失混在常驻假警报里被忽略）。
+//        为什么不做成硬编码白名单：窗口会继续右移（9/10/11…），写死「5月」下次又过期，又要人来改，同样腐化。
+//        正解 = 从输出 JSON 反推**当前活跃窗口最老月** minActive，凡早于它的未覆盖**月度** sheet 判为「已出窗」静音；
+//        而 ①活跃窗口内的月度 sheet 未覆盖 ②比活跃窗口更新的月份 ③月份无法识别的未知 sheet —— **照旧报 err**，
+//        以保住 R16 的本职：捕捉「新月份数据到了、但 generate_data_json.mjs 白名单没同步加」这类真丢失（B 场景）。
+//        自证有效：当前 minActive=6月，5月两 sheet 被静音；若数据源出现「9月库存覆盖数据」而生成脚本未加，仍会如实在 lost 里报出。
 try {
   const XLSX = require('C:/Users/zhangyufei1/.workbuddy/binaries/node/workspace/node_modules/xlsx');
   const wb = XLSX.read(fs.readFileSync(path.resolve(__dirname, '..', 'inventory.xlsx')), { type: 'array' });
@@ -505,11 +514,23 @@ try {
     if (!fs.existsSync(p)) return;
     (JSON.parse(fs.readFileSync(p, 'utf8')).sheetNames || []).forEach(n => covered.add(n));
   });
-  const lost = wb.SheetNames.filter(n => !covered.has(n));
+  // v350.1 动态窗口白名单：月度 sheet 早于「活跃窗口最老月」= 窗口右移后的有意出窗 → 静音
+  const _monthOf = (n) => { const m = /^(\d{1,2})月(库存状态分析|库存覆盖数据)$/.exec(n); return m ? Number(m[1]) : null; };
+  const activeMonths = wb.SheetNames.filter(n => covered.has(n)).map(_monthOf).filter(v => v !== null);
+  const minActive = activeMonths.length ? Math.min(...activeMonths) : null; // 反推不出来时置 null → 全部保守报 err
+  const outOfWindow = [], lost = [];
+  wb.SheetNames.filter(n => !covered.has(n)).forEach(n => {
+    const mm = _monthOf(n);
+    if (mm !== null && minActive !== null && mm < minActive) outOfWindow.push(n);
+    else lost.push(n);
+  });
+  const muteNote = outOfWindow.length
+    ? '；已静音 ' + outOfWindow.length + ' 个窗口外旧月度 sheet：' + outOfWindow.join('、') + '（当前活跃窗口最老 = ' + minActive + ' 月，由输出 JSON 反推）'
+    : '';
   if (lost.length === 0) {
-    log('ok', 'R16: inventory.xlsx 全部 ' + wb.SheetNames.length + ' 个 sheet 均已落入输出 JSON（无静默丢失）');
+    log('ok', 'R16: inventory.xlsx 全部 ' + wb.SheetNames.length + ' 个 sheet 均已落入输出 JSON 或属窗口外旧月份（无静默丢失）' + muteNote);
   } else {
-    log('err', 'R16: inventory.xlsx 有 sheet 未落入任何输出 JSON（会被静默丢弃）：' + lost.join(', '));
+    log('err', 'R16: inventory.xlsx 有 sheet 未落入任何输出 JSON（会被静默丢弃）：' + lost.join(', ') + muteNote);
   }
 } catch (e) {
   log('warn', 'R16: 无法校验 inventory 拆分完整性（' + e.message + '）');
