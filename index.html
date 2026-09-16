@@ -783,7 +783,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 351; // v351: 未放行订单量并入「缺货量(未清量)」派生层 shortQty（粒度A：仅限该 SKU×RDC 当月有已放行首日缺货证据；不跨月；首日未满足数量/缺货天数/SF/订单量/触发判定保持已放行口径不变）。DB_VERSION=232 不动。v350: 清理 4 个死函数（全库含字符串统计均 0 调用点，纯减法、零功能影响）：getHainanAdjustedAmount / findInvArr / sumRdcsHainan / renderInventoryRootCause，共删 503 行。由来：v276 库存窗口右移后「海南花露水」金额筛选已改走 amountAt 的块间相减（amountTrendBlocks 4 个透视块 = 海南(全部/否) × 状态(全部/非风险)，逐 RDC×月相减），旧链路 findInvArr→getHainanAdjustedAmount 整条失效成孤岛（其体内 monthIdx===4→cov5/5→cov6 仍是 v276 前旧语义，但从不执行）；sumRdcsHainan 亦零调用；renderInventoryRootCause（5-6月库存变化根因）从未接入 renderPage 任何 case。验证：tools/syntax-check.mjs 通过 + tools/e2e-pages-sweep.js 15 页 0 报错。DB_VERSION=232 不动。v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
+const BUILD_VERSION = 352; // v352: 销售进度按真实分仓需求重算——buildPlanSkuAgg 改为按 sku|rdc 双键，单仓行(缺货分析/归因/长期按RDC视图/导出)显示该仓计划量与完成率，不再把6个RDC的9月计划量求和(修复 09698 华中行显示 1,971,429 实为6仓合计、华中单仓仅 328,571)；SKU 总览视图保留跨 RDC 合计。DB_VERSION=232 不动。v351: 未放行订单量并入「缺货量(未清量)」派生层 shortQty（粒度A：仅限该 SKU×RDC 当月有已放行首日缺货证据；不跨月；首日未满足数量/缺货天数/SF/订单量/触发判定保持已放行口径不变）。DB_VERSION=232 不动。v350: 清理 4 个死函数（全库含字符串统计均 0 调用点，纯减法、零功能影响）：getHainanAdjustedAmount / findInvArr / sumRdcsHainan / renderInventoryRootCause，共删 503 行。由来：v276 库存窗口右移后「海南花露水」金额筛选已改走 amountAt 的块间相减（amountTrendBlocks 4 个透视块 = 海南(全部/否) × 状态(全部/非风险)，逐 RDC×月相减），旧链路 findInvArr→getHainanAdjustedAmount 整条失效成孤岛（其体内 monthIdx===4→cov5/5→cov6 仍是 v276 前旧语义，但从不执行）；sumRdcsHainan 亦零调用；renderInventoryRootCause（5-6月库存变化根因）从未接入 renderPage 任何 case。验证：tools/syntax-check.mjs 通过 + tools/e2e-pages-sweep.js 15 页 0 报错。DB_VERSION=232 不动。v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -5758,7 +5758,7 @@ function buildHiAttribution(hi, period) {
     //   修复「销售进度显示>100%却归为D（需重点排查）」的口径冲突：
     //   之前归因用 cov7[cov08]（系统预测需求）算完成率，而表格销售进度列用分仓计划表计划量，
     //   两套计划量来源不同 → 同一行完成率对不上。现统一用销售进度完成率判定超销。
-    var sp = spAgg[p.sku];
+    var sp = spAgg[normSkuCode(p.sku) + '|' + normalizeRdcName(p.rdc)];
     var spComp = null; // null = 无销售进度数据（回退 cov7）
     if (sp) {
       if (sp.plan > 0) spComp = sp.comp;
@@ -6561,7 +6561,7 @@ function renderShortageMonthly() {
             <th style="text-align:right" title="当月缺货报告里 dcSupply 含「整体缺货」或「供应紧张」的天数">总仓异常天数</th>
             <th style="text-align:center" title="总仓异常天数 vs SKU×RDC 缺货天数对比——判定是总仓卡死还是 RDC 内部问题">补货瓶颈</th>
             <th style="text-align:center" title="v198 归因分析：总仓供应状态 × 分仓完成率交叉判定（A1总仓卡死 / A2部分紧张 / C1结构性超销 / C2偶发大单 / D需排查）。点击卡片行上方筛选按归因过滤">归因</th>
-            <th style="text-align:left" title="销售进度（v185，目标月 ${window._planSkuAggMonth || '—'}）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;订单量 = 已放行 + 未放行（订单号去重）；计划量 = 「分仓计划」表当月值优先、覆盖表计划字段兜底；完成率重新计算。&#10;状态按聚合后的完成率判定：v316 状态改自然日口径——完成率 &lt; 当月已过自然日(T-1)/当月总自然日 → 滞后；&gt;100% → 超额；其余正常（与 _classify L18420 _timeProg 同公式，不再用整月 70%/110% 硬阈值；早月天然偏滞后问题缓解）。&#10;显示「—」= 该 SKU 在目标月无计划量（v206 如实注记：v199 起已无任何品类剔除，促销装/新品/无需求 SKU 全部纳入计算）。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
+            <th style="text-align:left" title="销售进度（v352，目标月 ${window._planSkuAggMonth || '—'}）：按 单仓(SKU×RDC) 口径——计划量=该仓当月分仓计划(分仓计划表优先、覆盖表计划字段兜底)，完成率=该仓订单量÷该仓计划量；「SKU 总览」视图才显示跨 RDC 合计。口径与「分仓计划监控」一致。&#10;订单量 = 已放行 + 未放行（订单号去重）；计划量 = 「分仓计划」表当月值优先、覆盖表计划字段兜底；完成率重新计算。&#10;状态按聚合后的完成率判定：v316 状态改自然日口径——完成率 &lt; 当月已过自然日(T-1)/当月总自然日 → 滞后；&gt;100% → 超额；其余正常（与 _classify L18420 _timeProg 同公式，不再用整月 70%/110% 硬阈值；早月天然偏滞后问题缓解）。&#10;显示「—」= 该 SKU 在目标月无计划量（v206 如实注记：v199 起已无任何品类剔除，促销装/新品/无需求 SKU 全部纳入计算）。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
             <th style="text-align:right;white-space:nowrap" title="v316 新增：完成率 − 当月时间进度(自然日 T-1/当月总自然日，如 9/10=9/30=30%) 的偏差。&#10;正数=超前日历、负数=落后日历。颜色：≤-5pt 红 / (-5pt, +5pt) 灰 / ≥+5pt 绿。&#10;与 _classify 的 _dev (L18420) 同口径——'该 SKU 相对日历是快是慢'。&#10;与左列状态(label)互补：状态是'绝对偏前/偏后'、本列是'偏多少 pt'。">距时间进度</th>
           </tr></thead>
           <tbody>
@@ -6578,7 +6578,7 @@ function renderShortageMonthly() {
                   '<span style="color:' + (dcs.dcShortDayCnt >= p.shortDayCnt ? 'var(--color-red)' : '#92400E') + ';font-weight:600">' + dcs.dcShortDayCnt + '</span>' +
                   '<span style="font-size:10px;color:var(--text-secondary)"> / ' + p.shortDayCnt + '</span>';
                 // v213fix: 销售进度单元格 —— 区分三种情况：①无数据 ②有出货但计划=0(超销) ③正常
-                var sp = skuAgg[p.sku];
+                var sp = skuAgg[normSkuCode(p.sku) + '|' + normalizeRdcName(p.rdc)];
                 var spHtml;
                 if (!sp) {
                   // 尝试从 shipMap 直接查（覆盖「分仓计划有但cov7无」的 SKU，如09862）
@@ -6867,13 +6867,14 @@ function renderShortageLongTerm() {
     const t = LT_TIER[p.tier] || LT_TIER.none;
     const scc = skuSupplyChainCat(p.sku);
     // v184: 销售进度（buildPlanSkuAgg 自建，与分仓计划监控同口径、顺序无关；无计划数据显示 —）
-    const sp = _skuAgg[p.sku];
+    // v352: 按 RDC 拆分视图 → 单仓分仓需求(out[sku|rdc])；SKU 总览视图 → 跨 RDC 合计(out[sku])
+    const sp = _useByRdc ? _skuAgg[normSkuCode(p.sku) + '|' + normalizeRdcName(p.rdc || _selectedRdc)] : _skuAgg[p.sku];
     const spHas = !!(sp && sp.plan > 0);
     const statColor = !spHas ? '#CBD5E1' : (sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : '#D97706'));
     const statBg = !spHas ? 'transparent' : (sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB'));
     const spTip = !spHas
       ? ('销售进度：该 SKU 在库存覆盖表（' + (window._planSkuAggMonth || '') + '）中当月计划量为 0，故无销售进度。可在「分仓计划监控」切换目标月后回看。')
-      : ('销售进度（' + (window._planSkuAggMonth || '') + '）：同 SKU 跨 RDC 聚合，口径与「分仓计划监控」一致。&#10;' +
+      : ('销售进度（' + (window._planSkuAggMonth || '') + '）：' + (_useByRdc ? '按 RDC 拆分视图 → 单仓分仓需求（计划量=该仓当月分仓计划、完成率=该仓订单÷该仓计划）。' : 'SKU 总览视图 → 跨 RDC 合计（计划量=各仓分仓计划之和）。') + '口径与「分仓计划监控」一致。&#10;' +
          '订单量 = 已放行订单 + 未放行订单（订单号去重），仅统计目标月；&#10;' +
          '计划量 = 「分仓计划」表当月值优先、覆盖表计划字段兜底；&#10;' +
          '完成率 = 订单量 ÷ 计划量（按聚合值重算，不是逐 RDC 均值）；&#10;' +
@@ -7077,7 +7078,9 @@ function exportLongTermCSV() {
   const _skuAgg = buildPlanSkuAgg();
   const rows = list.map(function(p) {
     // v184: 销售进度取值（保持与表体同源；无计划量时空字符串，避免误导）
-    const sp = _skuAgg && _skuAgg[p.sku] && _skuAgg[p.sku].plan > 0 ? _skuAgg[p.sku] : null;
+    // v352: 按 RDC 拆分视图(_rdc 非空) → 单仓分仓需求；SKU 总览视图 → 跨 RDC 合计(out[p.sku])
+    const _spKey = _rdc ? (normSkuCode(p.sku) + '|' + normalizeRdcName(_rdc)) : p.sku;
+    const sp = _skuAgg && _skuAgg[_spKey] && _skuAgg[_spKey].plan > 0 ? _skuAgg[_spKey] : null;
     const base = [
       esc(p.brand), esc(p.sku), esc(p.name), esc(skuSupplyChainCat(p.sku)),
       esc((LT_TIER[p.tier] || LT_TIER.none).label),
@@ -7187,7 +7190,8 @@ function exportShortageFocusListCSV() {
   const skuAggExport = buildPlanSkuAgg();
   const skuMonthExport = window._planSkuAggMonth || '';
   const rows = list.map(function(r){
-    const sp = skuAggExport[r.sku];
+    // v352: 该导出行为 SKU×RDC 单仓行 → 取分仓需求(out[sku|rdc])
+    const sp = skuAggExport[normSkuCode(r.sku) + '|' + normalizeRdcName(r.rdc)];
     return [
       esc(r.brand), esc(r.sku), esc(r.name), esc(r.scc), esc(r.rdc),
       esc((LT_TIER[r.tier] || LT_TIER.none).label),
@@ -16927,7 +16931,8 @@ function releasedOrderNoSet() {
 //      v183 那样做会出现「订单 13,212 / 计划 5,904 → 223.8% 却显示『滞后』」的自相矛盾
 //      （某个 RDC 滞后，但 SKU 整体早已超额）。
 function buildPlanSkuAgg() {
-  const out = {}; // sku -> { plan, shipped, comp, status, rdcCnt }
+  const out = {}; // 键 "sku|rdc" → 该仓真实分仓需求 { plan, shipped, comp, status, dev, rdcCnt }
+                   //     键 "sku"     → 跨 RDC 合计（仅「SKU 总览」视图使用，单仓视图须用 sku|rdc）
   const inv = dataStore.inventory || {};
   const covSource = inv.cov7 ? 'cov7' : (inv.cov6 ? 'cov6' : 'cov5');
   const cov7 = inv[covSource] || [];
@@ -16969,39 +16974,51 @@ function buildPlanSkuAgg() {
     accumulate(normSkuCode(d.skuCode || ''), rdc, d.orderQty || 0); // v227: 同上normSkuCode
   });
 
+  // v352: 改为按 sku|rdc 双键——per-RDC 条目存「真实分仓需求」（该仓计划/出货/完成率），
+  //   同时保留 out[sku]（跨 RDC 合计）供「SKU 总览」视图使用。
+  //   修复：此前 out 仅按 sku 聚合，导致「单仓」行（缺货分析/归因/长期按RDC视图）显示的“计划”
+  //   是 6 个 RDC 的 9月计划量之和（如 09698 华中行显示 1,971,429，实为 6 仓合计；华中单仓仅 328,571）。
+  //   建/查键统一 normSkuCode + normalizeRdcName，与 shipMap 一致（v227 教训：格式不匹配会查 miss）。
   cov7.forEach(function(d) {
     const _pd = getPlanDemand(d.sku, d.rdc, targetField);
     const plan = (_pd !== undefined) ? _pd : (d[targetField] || 0);
     const rdc = d.rdc;
     const sku = d.sku || '';
     if (!sku) return;
-    const shipped = shipMap[normSkuCode(sku) + '|' + rdc] || 0;
+    const rdcN = normalizeRdcName(rdc);
+    const kRdc = normSkuCode(sku) + '|' + rdcN;
+    const shipped = shipMap[kRdc] || 0;
+    if (!out[kRdc]) out[kRdc] = { plan: 0, shipped: 0, rdcCnt: 1 };
+    out[kRdc].plan += plan;
+    out[kRdc].shipped += shipped;
+    // SKU 总览合计（仅 all 视图使用，本视图才应显示跨 RDC 合计）
     if (!out[sku]) out[sku] = { plan: 0, shipped: 0, rdcCnt: 0 };
     out[sku].plan += plan;
     out[sku].shipped += shipped;
     out[sku].rdcCnt += 1;
   });
-  // v213fix: 补充「分仓计划有但cov7无」的 SKU（如09862不在cov7但在分仓计划有6RDC共90229计划量）
-  // 避免这些SKU因不走cov7迭代而 sp=undefined → 销售进度显示为"—"
+  // v213fix→v352: 补充「分仓计划有但cov7无」的 SKU×RDC（如09862不在cov7但在分仓计划有6RDC共90229计划量）
+  // 避免这些 SKU×RDC 因不走 cov7 迭代而 sp=undefined → 销售进度显示为"—"。
+  // 仅补 cov7 未覆盖的 sku|rdc（已覆盖的跳过，避免重复累加）；其计划量同步计入 out[sku] 总览合计。
   const _pb = (dataStore.inventory || {}).planBySkuRdc;
   if (_pb) {
     Object.keys(_pb).forEach(function(_sku) {
-      if (out[_sku]) return; // 已由cov7覆盖
       const _byRdc = _pb[_sku];
       if (!_byRdc) return;
-      let _totalPlan = 0, _totalShip = 0, _rcnt = 0;
       Object.keys(_byRdc).forEach(function(_rdc) {
         const _ymData = _byRdc[_rdc];
         if (!_ymData) return;
         const _p = _ymData[targetMonth];
         if (_p == null || isNaN(Number(_p))) return;
-        _totalPlan += Number(_p);
-        _totalShip += shipMap[normSkuCode(_sku) + '|' + _rdc] || 0;
-        _rcnt++;
+        const _kRdc = normSkuCode(_sku) + '|' + normalizeRdcName(_rdc);
+        if (out[_kRdc]) return; // 该 sku|rdc 已由 cov7 覆盖（含 getPlanDemand 回退），不再加
+        const _ship = shipMap[_kRdc] || 0;
+        out[_kRdc] = { plan: Number(_p), shipped: _ship, rdcCnt: 1 };
+        if (!out[_sku]) out[_sku] = { plan: 0, shipped: 0, rdcCnt: 0 };
+        out[_sku].plan += Number(_p);
+        out[_sku].shipped += _ship;
+        out[_sku].rdcCnt += 1;
       });
-      if (_rcnt > 0) {
-        out[_sku] = { plan: _totalPlan, shipped: _totalShip, rdcCnt: _rcnt };
-      }
     });
   }
   // v316 (方案A·用户裁决): status 判定改自然日口径——与 _classify L18420 的 _timeProg 同公式（_lastOrdDay/_daysInMonth）。
@@ -17020,6 +17037,7 @@ function buildPlanSkuAgg() {
     v.dev = isFinite(v.comp) ? (v.comp - _tpAgg) : null;   // v316: 距时间进度偏差(pt)
     v.status = !isFinite(v.comp) ? '超销' : (v.comp < _tpAgg ? '滞后' : (v.comp > 1.0 ? '超额' : '正常'));
   });
+  window._planSkuAgg = out; // 暴露给分仓计划优化建议等下游（键含 sku|rdc 与 sku 两种）
   return out;
 }
 
