@@ -788,7 +788,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 359; // v359: 新增「大仓直发」sheet 并入销售进度与每日补货建议（用户 9/18 裁定）——量大订单切换发货库位改由总仓直发，实际发货库位不是 RDC，但「实际在算销售进度的时候还是应该计入 RDC」。①解析：parseExcel 新增「大仓直发」段（列 RDC/创建日期/销售订单/物料/物料描述/未清箱数），单位是**箱**，×箱规折支存入 dataStore.directShip；箱规查表必须用**原始物料码**（window._boxSpec 键是 '09862' 这种带前导零的原样编码，去零会静默 miss）；与订单明细/未放行订单**同订单号的整单剔除**（订单号**先去前导零再比**——三表格式不同：订单明细/未放行 = '0500307216'，直发 = '500220806'，raw 字符串比对永不命中、去重会静默失效；实测当前数据 174 行/73 单与二者**零重叠**，去重为安全网）。②并入 4 个消费点：buildPlanSkuAgg（长期清单销售进度列）/ renderPlanMonitor（订单量·完成率·品牌矩阵·MTD曲线）/ buildPlanOptimAdvice（模块B 规则链）/ renderReplenishment（模块A 60 天需求窗口）；buildHiAttribution 无需改——其超销判定 v225 起已走 buildPlanSkuAgg，自动继承。③呈现（用户裁定「并入订单量列 + 构成提示」）：分仓计划监控「订单量」列内以「+直发 N」标注构成 + 页头披露本月直发笔数/支数与「始终计入」说明 + KPI 标签补「· 含直发」；说明页补口径段。④口径决策：计入**需求分母**、**不计入满足量分子**——源列「未清箱数」按本项目「未清 = 尚未交付/欠的量」语义（同 v358 对未放行量的处理），且直发表无满足量字段无从取值 → 视为 RDC 侧尚未交付部分；故模块A 满足率会相应下降（若要改为「视同总仓已交付」，把 q 同时加到 fulfill 即可，一行改动）。⚠️ 已实测推翻两个基于源表的错误推断：(a)「直发量 = 该单缺货量」——174 行中 164 行在缺货汇总里查不到同日同物料、能查到的 10 行数量也不等（600 vs 313、930 vs 939）；(b)「与订单明细有 4 单重叠」——去前导零归一化后仍为 0。⑤与「未放行」的差异：未放行受「订单放行」开关控制、只展示不参与计算；直发**始终计入**订单量与完成率（已确定由总仓发货，不属「待定」部分）。⑥取值出口统一为 _dsQty()（箱 × 当前箱规**惰性重算**，而非解析时快照）——根因：生产 JSON 路径按 fileOrderKey 排序（data.json=0 先于 inventory-*.json）箱规已就位，但**旧 xlsx 路径（autoLoadData）订单先于库存解析**，window._boxSpec 恒空 → 若在解析处按「缺箱规就 continue」会 174 行全部静默丢弃、用户侧表现为「完全没生效」。实测 2026-09 影响量级：华中 +19.9% / 东北 +10.4% / 华南 +1.6% / 华北 +1.3% / 合计 +9.5%（259,620 / 2,729,586 支）。⑦🔴 directShip **不进月度快照分片**（从 MONTH_SNAP_FIELDS / _capFields 移除，改随 current_data 持久化 + saveToIDB payload 补 directShip）——根因：大仓直发是**跨月混装且只出现在当月工作簿**的表（9 月工作簿的该 sheet 同时含 2026-03/07/08/09 四个月行），而历史月 data-YYYY-MM.json 没有这张 sheet；纳入分片后每次 append 历史月前 dropMonthRows 会按月删行、又无源补回，**运行态实测只剩 16 行 / 174 行（3/7/8 月全丢，8 月 195.9 万支被静默吞掉）**，导致分仓计划监控切到 8 月、补货建议 60 天窗口全部偏低。此坑只有真实浏览器运行态探针能发现（离线复算 data.json 是 174 行全在，完全看不出来）。DB_VERSION 232→233（新增持久化字段）。｜ v358: 未放行量的挂载门控由「有已放行首日缺货」改为「存在未清订单（总体未满足）」（用户 9/16 纠正：有未清订单才计入，不是有首日未清就计入）。顺带修复同域的缓存时序 bug —— getUnreleasedShortAgg / getUnsettledSkuRdcMonth 两个惰性缓存是「一次建成、永不复建」，且画像缓存键只看 orderDetail 长度 → 首屏（未放行订单尚未装载完）会把偏小结果永久缓存（实测首屏 25 条/未放行量 5,910 支 vs 稳定值 26 条/6,194 支），已给三处缓存加「数据规模」守卫（不可枚举 _n 属性）。判据取订单明细「总履约缺口」totalGap>0（workday 过滤，与画像同口径），函数 getEvidSkuRdcMonth → getUnsettledSkuRdcMonth；未放行量取值同步收紧为「未清量 openQty」本身、不再回退订单数量（未清=0 = 不欠量，不计入）。实测影响面（2026-09 全量 4,843 个 SKU×RDC×月 组合）：旧门控命中 650 组 → 新门控 148 组，且 148 ⊂ 650（「有总体未满足但无首日缺货」= 0 组）→ 纯收紧、不引入新组合；典型 89025 雅霜80g·华中 首日缺货 720 支但总履约缺口 0 → 其 24,300 支未放行量不再展示。口径仍为「只展示、不进分子分母」（v355 不变），DB_VERSION=232 不动。｜ v357: 措辞收口（承接 v356）——KPI tooltip / 计算口径帮助区 / RDC 卡片满足率 tooltip / 长期页与对比页表头 tooltip / 说明面板标题里残留的「未放行未清量」统一为「未放行量」，并注明只在「订单量」列标注。纯文案，判定逻辑零改动，DB_VERSION=232 不动。｜ v356: 措辞「未清」→「未放行」+ 未放行量只在「订单量」列显示（「首日缺货量」列不再显示——订单尚未放行/尚未发货，算不上首日缺货，用户 9/16 裁定）。纯展示层，判定逻辑与 v355 完全一致，DB_VERSION=232 不动。｜ v355: 缺货率回退为「纯已放行口径」+ 单元格展示未放行构成（用户 9/16 拍板）——「首日缺货率」MR = 已放行首日缺货 ÷ 已放行订单量（89025 雅霜80g·华中 2026-09 = 720÷8,122 = 8.9%，真·率恒 ≤100%）；未放行未清量 24,300 支改为**只展示、不参与任何计算**（不并入 shortQty/orderQty，不影响 mr/severity/缺货天数/SF；门控不变：仅同 SKU×RDC 当月有已放行首日缺货证据才展示）；「订单量」「首日缺货量」单元格内以「+未清 N」标出构成并给出 tooltip（用户要求：不用下钻订单号，只给总量）。根因：v351 只并入分子→308.1%，v353 分子分母同步并入→订单量列 32,422 ≠ 源数据 8,122（用户两次质疑），两轮均因「口径与源数据不同名同义」作废，v355 整体回退并改为展示构成。同时删除已死的 addUnreleasedToShortAndOrder / injectUnreleasedIntoShortQty / relOrderQty / relShortQty / orderQtyRel / shortQtyRel / mrRel（口径统一后 RDC 卡片「首日满足率」= 1 − 缺货率，天然自洽）。DB_VERSION=232 不动。 ｜ v354: 修复「严重度高重点跟进清单」计数与表体不一致 + 归因筛选无出口（用户 9/16 报：①选了华中显示「14 个」却只列出 2 行；②点归因卡片后无法退回）。根因：v198 归因筛选 _attrFilter 只作用于表体（L6303 sorted=hiAttrFiltered），标题/KPI「严重度高·重点跟进」/分页「共 N 个」三处仍用未筛选的 hi.length；且 RDC 下拉 onchange 只重置 _msDrill、不重置 _attrFilter → 切仓后归因筛选静默残留；清单区无任何「已按 X 筛选 / 返回」出口。线上探针实测（tools/probe-attrfocus-mismatch.cjs）：华中 归因=all 时 标题/KPI/共N个/表体 = 14/14/14/14 一致；归因=D 时表体 2 行但标题/KPI/共N个 恒为 14、可见出口数=0 —— 与用户截图逐项吻合。修法：①三处计数改用筛选后的数量（标题「N / 全部 M 个」、KPI、分页「共 N 个（全部 M 个）」）；②清单标题旁新增黄色筛选提示条 +「✕ 返回全部 M 个」按钮；③已选中的归因卡片加同色描边 +「✓ 已筛选（再点一次返回全部）」徽章，再点同一张卡片 = 取消筛选；④归因下拉切换一并复位页码。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。 ｜ v353: 未放行量同步并入分母（用户 9/16 指正：分子加了未放行订单、分母也必须加）——新增 addUnreleasedToShortAndOrder 单一入口，把同一笔未放行未清量同时并入 shortQty(分子) 与 orderQty(分母)：缺货率恒 ≤100%（修复 89025 雅霜80g·华中 2026-09 = 25,020 ÷ 8,122 = 308.1% → 现 25,020 ÷ 32,422 = 77.2%）；并留存已放行口径快照（unrelQty / orderQtyRel / shortQtyRel），「首日满足率」改回自身定义（首日满足支数 ÷ 已放行订单量，不被未放行稀释、保持跨月可比），KPI 标签/率频说明/表头 tooltip/口径说明全部改为「分子分母同口径」。覆盖三处画像：月度 SKU×RDC、长期 SKU×月、长期 SKU×RDC（滚动30天口径本就不含未放行，未动）。DB_VERSION=232 不动。 ｜ v352: 销售进度按真实分仓需求重算——buildPlanSkuAgg 改为按 sku|rdc 双键，单仓行(缺货分析/归因/长期按RDC视图/导出)显示该仓计划量与完成率，不再把6个RDC的9月计划量求和(修复 09698 华中行显示 1,971,429 实为6仓合计、华中单仓仅 328,571)；SKU 总览视图保留跨 RDC 合计。DB_VERSION=232 不动。v351: 未放行订单量并入「缺货量(未清量)」派生层 shortQty（粒度A：仅限该 SKU×RDC 当月有已放行首日缺货证据；不跨月；首日未满足数量/缺货天数/SF/订单量/触发判定保持已放行口径不变）。DB_VERSION=232 不动。v350: 清理 4 个死函数（全库含字符串统计均 0 调用点，纯减法、零功能影响）：getHainanAdjustedAmount / findInvArr / sumRdcsHainan / renderInventoryRootCause，共删 503 行。由来：v276 库存窗口右移后「海南花露水」金额筛选已改走 amountAt 的块间相减（amountTrendBlocks 4 个透视块 = 海南(全部/否) × 状态(全部/非风险)，逐 RDC×月相减），旧链路 findInvArr→getHainanAdjustedAmount 整条失效成孤岛（其体内 monthIdx===4→cov5/5→cov6 仍是 v276 前旧语义，但从不执行）；sumRdcsHainan 亦零调用；renderInventoryRootCause（5-6月库存变化根因）从未接入 renderPage 任何 case。验证：tools/syntax-check.mjs 通过 + tools/e2e-pages-sweep.js 15 页 0 报错。DB_VERSION=232 不动。v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
+const BUILD_VERSION = 360; // v360: 大仓直发**不再并入「每日补货建议」**（用户 9/18 二次裁定：「切到大仓的订单不计入订单满足率统计计算」；同轮明确「日均需求不含直发、回到原值」）——撤销 v359 对本模块的并入：renderReplenishment 的 demandMap 不再合并直发，辅助函数 directShipMapByDate() 一并删除（已无调用方），本页「满足率」「近60天日均需求」「建议补货量」全部回到 v358 口径。**分仓计划监控侧保持含直发**（用户同轮明确「都不剔除，都要算的」）→ 两侧口径**有意不同**：监控侧 = 销售进度（该区域卖了多少，含直发）；本页 = RDC 自身订单交付能力（不含直发）。DB_VERSION=233 不动（无新增/变更持久化字段，仅消费端口径变化，不值得让全体用户重拉一次）。｜ v359: 新增「大仓直发」sheet 并入销售进度与每日补货建议（用户 9/18 裁定）——量大订单切换发货库位改由总仓直发，实际发货库位不是 RDC，但「实际在算销售进度的时候还是应该计入 RDC」。①解析：parseExcel 新增「大仓直发」段（列 RDC/创建日期/销售订单/物料/物料描述/未清箱数），单位是**箱**，×箱规折支存入 dataStore.directShip；箱规查表必须用**原始物料码**（window._boxSpec 键是 '09862' 这种带前导零的原样编码，去零会静默 miss）；与订单明细/未放行订单**同订单号的整单剔除**（订单号**先去前导零再比**——三表格式不同：订单明细/未放行 = '0500307216'，直发 = '500220806'，raw 字符串比对永不命中、去重会静默失效；实测当前数据 174 行/73 单与二者**零重叠**，去重为安全网）。②并入 4 个消费点：buildPlanSkuAgg（长期清单销售进度列）/ renderPlanMonitor（订单量·完成率·品牌矩阵·MTD曲线）/ buildPlanOptimAdvice（模块B 规则链）/ renderReplenishment（模块A 60 天需求窗口）；buildHiAttribution 无需改——其超销判定 v225 起已走 buildPlanSkuAgg，自动继承。③呈现（用户裁定「并入订单量列 + 构成提示」）：分仓计划监控「订单量」列内以「+直发 N」标注构成 + 页头披露本月直发笔数/支数与「始终计入」说明 + KPI 标签补「· 含直发」；说明页补口径段。④口径决策：计入**需求分母**、**不计入满足量分子**——源列「未清箱数」按本项目「未清 = 尚未交付/欠的量」语义（同 v358 对未放行量的处理），且直发表无满足量字段无从取值 → 视为 RDC 侧尚未交付部分；故模块A 满足率会相应下降（若要改为「视同总仓已交付」，把 q 同时加到 fulfill 即可，一行改动）。⚠️ 已实测推翻两个基于源表的错误推断：(a)「直发量 = 该单缺货量」——174 行中 164 行在缺货汇总里查不到同日同物料、能查到的 10 行数量也不等（600 vs 313、930 vs 939）；(b)「与订单明细有 4 单重叠」——去前导零归一化后仍为 0。⑤与「未放行」的差异：未放行受「订单放行」开关控制、只展示不参与计算；直发**始终计入**订单量与完成率（已确定由总仓发货，不属「待定」部分）。⑥取值出口统一为 _dsQty()（箱 × 当前箱规**惰性重算**，而非解析时快照）——根因：生产 JSON 路径按 fileOrderKey 排序（data.json=0 先于 inventory-*.json）箱规已就位，但**旧 xlsx 路径（autoLoadData）订单先于库存解析**，window._boxSpec 恒空 → 若在解析处按「缺箱规就 continue」会 174 行全部静默丢弃、用户侧表现为「完全没生效」。实测 2026-09 影响量级：华中 +19.9% / 东北 +10.4% / 华南 +1.6% / 华北 +1.3% / 合计 +9.5%（259,620 / 2,729,586 支）。⑦🔴 directShip **不进月度快照分片**（从 MONTH_SNAP_FIELDS / _capFields 移除，改随 current_data 持久化 + saveToIDB payload 补 directShip）——根因：大仓直发是**跨月混装且只出现在当月工作簿**的表（9 月工作簿的该 sheet 同时含 2026-03/07/08/09 四个月行），而历史月 data-YYYY-MM.json 没有这张 sheet；纳入分片后每次 append 历史月前 dropMonthRows 会按月删行、又无源补回，**运行态实测只剩 16 行 / 174 行（3/7/8 月全丢，8 月 195.9 万支被静默吞掉）**，导致分仓计划监控切到 8 月、补货建议 60 天窗口全部偏低。此坑只有真实浏览器运行态探针能发现（离线复算 data.json 是 174 行全在，完全看不出来）。DB_VERSION 232→233（新增持久化字段）。｜ v358: 未放行量的挂载门控由「有已放行首日缺货」改为「存在未清订单（总体未满足）」（用户 9/16 纠正：有未清订单才计入，不是有首日未清就计入）。顺带修复同域的缓存时序 bug —— getUnreleasedShortAgg / getUnsettledSkuRdcMonth 两个惰性缓存是「一次建成、永不复建」，且画像缓存键只看 orderDetail 长度 → 首屏（未放行订单尚未装载完）会把偏小结果永久缓存（实测首屏 25 条/未放行量 5,910 支 vs 稳定值 26 条/6,194 支），已给三处缓存加「数据规模」守卫（不可枚举 _n 属性）。判据取订单明细「总履约缺口」totalGap>0（workday 过滤，与画像同口径），函数 getEvidSkuRdcMonth → getUnsettledSkuRdcMonth；未放行量取值同步收紧为「未清量 openQty」本身、不再回退订单数量（未清=0 = 不欠量，不计入）。实测影响面（2026-09 全量 4,843 个 SKU×RDC×月 组合）：旧门控命中 650 组 → 新门控 148 组，且 148 ⊂ 650（「有总体未满足但无首日缺货」= 0 组）→ 纯收紧、不引入新组合；典型 89025 雅霜80g·华中 首日缺货 720 支但总履约缺口 0 → 其 24,300 支未放行量不再展示。口径仍为「只展示、不进分子分母」（v355 不变），DB_VERSION=232 不动。｜ v357: 措辞收口（承接 v356）——KPI tooltip / 计算口径帮助区 / RDC 卡片满足率 tooltip / 长期页与对比页表头 tooltip / 说明面板标题里残留的「未放行未清量」统一为「未放行量」，并注明只在「订单量」列标注。纯文案，判定逻辑零改动，DB_VERSION=232 不动。｜ v356: 措辞「未清」→「未放行」+ 未放行量只在「订单量」列显示（「首日缺货量」列不再显示——订单尚未放行/尚未发货，算不上首日缺货，用户 9/16 裁定）。纯展示层，判定逻辑与 v355 完全一致，DB_VERSION=232 不动。｜ v355: 缺货率回退为「纯已放行口径」+ 单元格展示未放行构成（用户 9/16 拍板）——「首日缺货率」MR = 已放行首日缺货 ÷ 已放行订单量（89025 雅霜80g·华中 2026-09 = 720÷8,122 = 8.9%，真·率恒 ≤100%）；未放行未清量 24,300 支改为**只展示、不参与任何计算**（不并入 shortQty/orderQty，不影响 mr/severity/缺货天数/SF；门控不变：仅同 SKU×RDC 当月有已放行首日缺货证据才展示）；「订单量」「首日缺货量」单元格内以「+未清 N」标出构成并给出 tooltip（用户要求：不用下钻订单号，只给总量）。根因：v351 只并入分子→308.1%，v353 分子分母同步并入→订单量列 32,422 ≠ 源数据 8,122（用户两次质疑），两轮均因「口径与源数据不同名同义」作废，v355 整体回退并改为展示构成。同时删除已死的 addUnreleasedToShortAndOrder / injectUnreleasedIntoShortQty / relOrderQty / relShortQty / orderQtyRel / shortQtyRel / mrRel（口径统一后 RDC 卡片「首日满足率」= 1 − 缺货率，天然自洽）。DB_VERSION=232 不动。 ｜ v354: 修复「严重度高重点跟进清单」计数与表体不一致 + 归因筛选无出口（用户 9/16 报：①选了华中显示「14 个」却只列出 2 行；②点归因卡片后无法退回）。根因：v198 归因筛选 _attrFilter 只作用于表体（L6303 sorted=hiAttrFiltered），标题/KPI「严重度高·重点跟进」/分页「共 N 个」三处仍用未筛选的 hi.length；且 RDC 下拉 onchange 只重置 _msDrill、不重置 _attrFilter → 切仓后归因筛选静默残留；清单区无任何「已按 X 筛选 / 返回」出口。线上探针实测（tools/probe-attrfocus-mismatch.cjs）：华中 归因=all 时 标题/KPI/共N个/表体 = 14/14/14/14 一致；归因=D 时表体 2 行但标题/KPI/共N个 恒为 14、可见出口数=0 —— 与用户截图逐项吻合。修法：①三处计数改用筛选后的数量（标题「N / 全部 M 个」、KPI、分页「共 N 个（全部 M 个）」）；②清单标题旁新增黄色筛选提示条 +「✕ 返回全部 M 个」按钮；③已选中的归因卡片加同色描边 +「✓ 已筛选（再点一次返回全部）」徽章，再点同一张卡片 = 取消筛选；④归因下拉切换一并复位页码。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。 ｜ v353: 未放行量同步并入分母（用户 9/16 指正：分子加了未放行订单、分母也必须加）——新增 addUnreleasedToShortAndOrder 单一入口，把同一笔未放行未清量同时并入 shortQty(分子) 与 orderQty(分母)：缺货率恒 ≤100%（修复 89025 雅霜80g·华中 2026-09 = 25,020 ÷ 8,122 = 308.1% → 现 25,020 ÷ 32,422 = 77.2%）；并留存已放行口径快照（unrelQty / orderQtyRel / shortQtyRel），「首日满足率」改回自身定义（首日满足支数 ÷ 已放行订单量，不被未放行稀释、保持跨月可比），KPI 标签/率频说明/表头 tooltip/口径说明全部改为「分子分母同口径」。覆盖三处画像：月度 SKU×RDC、长期 SKU×月、长期 SKU×RDC（滚动30天口径本就不含未放行，未动）。DB_VERSION=232 不动。 ｜ v352: 销售进度按真实分仓需求重算——buildPlanSkuAgg 改为按 sku|rdc 双键，单仓行(缺货分析/归因/长期按RDC视图/导出)显示该仓计划量与完成率，不再把6个RDC的9月计划量求和(修复 09698 华中行显示 1,971,429 实为6仓合计、华中单仓仅 328,571)；SKU 总览视图保留跨 RDC 合计。DB_VERSION=232 不动。v351: 未放行订单量并入「缺货量(未清量)」派生层 shortQty（粒度A：仅限该 SKU×RDC 当月有已放行首日缺货证据；不跨月；首日未满足数量/缺货天数/SF/订单量/触发判定保持已放行口径不变）。DB_VERSION=232 不动。v350: 清理 4 个死函数（全库含字符串统计均 0 调用点，纯减法、零功能影响）：getHainanAdjustedAmount / findInvArr / sumRdcsHainan / renderInventoryRootCause，共删 503 行。由来：v276 库存窗口右移后「海南花露水」金额筛选已改走 amountAt 的块间相减（amountTrendBlocks 4 个透视块 = 海南(全部/否) × 状态(全部/非风险)，逐 RDC×月相减），旧链路 findInvArr→getHainanAdjustedAmount 整条失效成孤岛（其体内 monthIdx===4→cov5/5→cov6 仍是 v276 前旧语义，但从不执行）；sumRdcsHainan 亦零调用；renderInventoryRootCause（5-6月库存变化根因）从未接入 renderPage 任何 case。验证：tools/syntax-check.mjs 通过 + tools/e2e-pages-sweep.js 15 页 0 报错。DB_VERSION=232 不动。v349: 砍量冗余验证的折算分母由「到货前30天日均出货」改为「到货日起未来60天的日均分仓需求」（用户 9/15 裁决：避免压货应该用未来需求，历史出货在断货期会被压到 0 附近→严重高估冗余）。纯口径修正，DB_VERSION 不动。v348: 归因表下钻明细默认只显示「扣减 且 窗口已走完 且 缺货量>0」。v347: 归因表点击行下钻 + 两图 tooltip 跨维度分布。v346: 「按 RDC」堆叠图新增缺货率(条)折线。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -10635,31 +10635,17 @@ function renderReplenishment() {
     demandMap[dmKey].dailyVals[d.dateStr] += d.orderQty;
   });
 
-  // v359: 大仓直发并入本页 60 天需求窗口（用户 2026-09-18 裁定「销售进度 + 每日补货建议」）。
-  //   · 计入**分母（需求）**：直发订单的实际发货库位是总仓、不是 RDC，但业务上仍是该 RDC 的需求，
-  //     不计入会让「近60天日均需求」与「建议补货量（日均×4−总仓库存−在途）」系统性偏低。
-  //   · **不计入分子（满足量 fulfill）**：源列名「未清箱数」—— 本项目里「未清」= 尚未交付/欠的量
-  //     （同「未放行订单」的处理：v358 已把其口径收紧为「未清量 openQty 本身」，未清=0 即不欠量）。
-  //     直发表没有任何满足量字段，无从取值；按「未清=欠量」语义，它就是 RDC 侧尚未交付的部分。
-  //     → 合并后「满足率」会下降 —— 这是**口径选择**，不是取数错误；若要改为「视同总仓已交付」，
-  //       只需把 q 同时加到 fulfill（一行改动）。
-  //   ⚠️ 不要用「缺货量」去反推直发量（我曾据源表这样推断，已被实测推翻）：174 行中 164 行在
-  //     「缺货汇总」里查不到同日同物料，能查到的 10 行数量也不等（600 vs 313、930 vs 939）→
-  //     直发与缺货汇总是**两个独立来源**。
-  //   · 键必须用 raw skuCode + RDC 全名（见 directShipMapByDate 注释：candidates 侧是缺货汇总 materialCode + c.rdc）。
-  //   · 去重：与订单明细/未放行订单同订单号的直发行已在 parseExcel 阶段整单剔除，此处不会重复计。
-  var _dsDemand = directShipMapByDate(sixtyDaysAgoStr, latestDate);
-  var _dsDemandHit = { keys: 0, qty: 0, newKeys: 0 };
-  Object.keys(_dsDemand).forEach(function(_dk) {
-    var _dv = _dsDemand[_dk];
-    if (!demandMap[_dk]) { demandMap[_dk] = { total: 0, fulfill: 0, days: 0, dailyVals: {} }; _dsDemandHit.newKeys++; }
-    demandMap[_dk].total += _dv.total;
-    Object.keys(_dv.dailyVals).forEach(function(_dd) {
-      demandMap[_dk].dailyVals[_dd] = (demandMap[_dk].dailyVals[_dd] || 0) + _dv.dailyVals[_dd];
-    });
-    _dsDemandHit.keys++; _dsDemandHit.qty += _dv.total;
-  });
-  window._replDsDemand = _dsDemandHit; // 供排查「直发到底并进来多少」
+  // v360: 大仓直发**不并入本模块**（用户 2026-09-18 二次裁定，覆盖 v359 的并入决定）。
+  //   原话：「切到大仓的订单不计入订单满足率统计计算」。故本页的「满足率」列与「近60天日均需求」
+  //   （→ 建议补货量 = 日均×4 − 总仓库存 − 在途）**一律只取 RDC 自身订单口径**，与 v358 完全一致；
+  //   连带的 dailyVals（安全库存标准差用）也不含直发。
+  //   理由：这部分需求由总仓直发履约、不经 RDC 库存 —— 计入会让满足率系统性偏低
+  //   （实测 89025·华中 近60天满足率 82.0% → 49.5%、日均 13,116 → 21,736 支），
+  //   且建议补货量系统性偏高（RDC 补了也无从履约）。
+  //   ⚠️ 与「分仓计划监控」口径**有意不同**：那边把直发当作**销售进度**（该区域卖掉了多少，含直发）；
+  //   本页衡量的是 **RDC 自身的订单交付能力**（不含直发）。用户 9/18 对两侧的裁定分别是
+  //   「（监控侧）都不剔除，都要算的」与「（本页）不含直发，回到原值」。
+  //   → 因此辅助函数 directShipMapByDate() 已一并删除，本页不再保留任何直发取值路径。
 
   // Calculate 7-day vs previous 7-day shortage trend
   var sevenDaysAgo = new Date(latestDate);
@@ -16521,8 +16507,8 @@ function renderReplenishLogic() {
   s += '<div class="lf"><div class="lfi"><div class="ic">📋</div><div class="tt">缺货汇总</div><div class="dd">每日各RDC缺货箱数<br/>缺货原因标签</div></div>';
   s += '<div class="la">+</div><div class="lfi"><div class="ic">🚚</div><div class="tt">订单明细</div><div class="dd">近60天历史订单<br/>订单量 / 满足量</div></div>';
   s += '<div class="la">+</div><div class="lfi"><div class="ic">📅</div><div class="tt">时间窗口</div><div class="dd">缺货数据：最新一天<br/>订单数据：回溯60天</div></div></div>';
-  // v359: 大仓直发并入 60 天需求窗口的口径说明（用户 9/18 裁定）——说明页必须与实现同步，否则口径不可追溯
-  s += '<p style="font-size:12px;color:#0E7490">📌 <b>大仓直发</b>（v359 起并入）：量大订单切换发货库位、改由总仓直发。实际发货库位不是 RDC，但业务上仍是该 RDC 的需求 → 计入「近60天日均需求」与「建议补货量」的<b>分母</b>；其源列「未清箱数」在本项目中即「尚未交付/欠的量」语义，且直发表无满足量字段 → <b>不计入满足量</b> → 满足率会相应下降。与订单明细/未放行订单同订单号的直发行已在解析阶段整单剔除（订单号先去前导零再比，三表格式不同），不会重复计；实测当前数据与两者零重叠。</p>';
+  // v360: 大仓直发**不并入本模块**的口径说明（用户 9/18 二次裁定：切到大仓的订单不计入订单满足率统计计算）——说明页必须与实现同步，否则口径不可追溯
+  s += '<p style="font-size:12px;color:#0E7490">📌 <b>大仓直发</b>（<b>不并入本模块</b>）：量大订单切换发货库位、改由总仓直发，其履约不经 RDC 库存 → <b>不计入</b>本页的「近60天日均需求」「满足率」「建议补货量」（用户 2026-09-18 裁定：切到大仓的订单不计入订单满足率统计计算）。该部分量在「分仓计划监控」页作为<b>销售进度</b>计入（那边口径含直发）。</p>';
   s += '<p style="font-size:12px;color:var(--text-secondary)">⚠️ 总仓整体缺货且无在途的SKU会跳过（无法通过RDC补货解决）</p></div>';
 
   // Section 2: 每日建议流程
@@ -17158,29 +17144,6 @@ function directShipMapByKey(month) {
     if (!rdc) return;
     const k = normSkuCode(d.skuCode || '') + '|' + rdc;
     map[k] = (map[k] || 0) + _dsQty(d);
-  });
-  return map;
-}
-
-// v359: 大仓直发按【日期区间】聚合成 { 'rawSku|RDC全名': { total, dailyVals } }，
-//   供「每日补货建议」的 60 天需求窗口使用（该窗口跨月，不能像 directShipMapByKey 那样按月过滤）。
-//   ⚠ 键口径与 directShipMapByKey **相反**：此处**不做** normSkuCode / normalizeRdcName ——
-//   renderReplenishment 的 demandMap 与候选池（缺货汇总 materialCode + c.rdc）全用原始编码 + RDC 全名，
-//   normSkuCode 会把 '09805' 变成 '9805' 而与候选池 key 对不上（静默 miss、不报错）。
-//   dailyVals 与 total 必须成对写入：下游安全库存分析用 dailyVals 算标准差、用 total/analysisDays 算日均，
-//   只加 total 会破坏「sum(dailyVals) == total」不变量（cv 被系统性低估）。
-function directShipMapByDate(fromStr, toStr) {
-  const map = {};
-  (dataStore.directShip || []).forEach(function(d) {
-    if (!d.dateStr || !d.rdc) return;
-    if (fromStr && d.dateStr < fromStr) return;
-    if (toStr && d.dateStr > toStr) return;
-    const q = _dsQty(d);
-    if (!(q > 0)) return;
-    const k = (d.skuCode || '') + '|' + d.rdc;
-    if (!map[k]) map[k] = { total: 0, dailyVals: {} };
-    map[k].total += q;
-    map[k].dailyVals[d.dateStr] = (map[k].dailyVals[d.dateStr] || 0) + q;
   });
   return map;
 }
