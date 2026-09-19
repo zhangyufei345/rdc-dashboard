@@ -9,7 +9,7 @@ export_demand.py —— 从「订单部署」Excel 抽取「分仓需求」sheet
 
 新表格式（2026-09 起）
 ----------------------
-表头：产品 Code | 产品 Name | 计划仓 Name | 计划指标 | 2026-09 | 2026-10 | 2026-11
+表头：产品 Code | 产品 Name | 计划仓 Name | 供应链品类 | 生命周期标签 | 计划指标 | 2026-09 | 2026-10 | 2026-11
 同一个 SKU×仓有**两行**：
   · 计划指标 = 实际出货_数量  → 只在当月（2026-09）有数（这是"出货量"，已合并 已放行+未放行+大仓直发）
   · 计划指标 = DP_共识数量    → 当月+未来两月都有数（这是"计划/分仓计划"）
@@ -18,8 +18,9 @@ export_demand.py —— 从「订单部署」Excel 抽取「分仓需求」sheet
 {
   "generatedAt": "2026-09-18 ...",
   "source": "<xlsx 文件名>",
-  "plan":        { "09865": { "华北RDC": { "2026-09": 264, "2026-10": ..., "2026-11": ... } }, ... },
-  "actualShip":  { "09865": { "华北RDC": { "2026-09": 264 } }, ... }
+    "plan":        { "09865": { "华北RDC": { "2026-09": 264, "2026-10": ..., "2026-11": ... } }, ... },
+    "actualShip":  { "09865": { "华北RDC": { "2026-09": 264 } }, ... },
+    "meta":        { "09865": { "name": "美加净...", "cat": "常规品", "life": "成熟期" }, ... }  # 每 SKU 的品名/供应链品类/生命周期（来自 分仓需求 表头列）
 }
 
 用法
@@ -65,17 +66,18 @@ def main():
         sys.exit(1)
     hdr = rows[0]
     idx = {str(h).strip(): i for i, h in enumerate(hdr) if h is not None}
-    need = ["产品 Code", "产品 Name", "计划仓 Name", "计划指标"]
+    need = ["产品 Code", "产品 Name", "计划仓 Name", "供应链品类", "生命周期标签", "计划指标"]
     month_cols = [str(h).strip() for h in hdr if h is not None and __import__("re").match(r"^\d{4}-\d{2}$", str(h).strip())]
     for c in need:
         if c not in idx:
             print("❌ 缺列:", c, "表头=", list(idx.keys()))
             sys.exit(1)
-    ci, ni, ri, mi = idx["产品 Code"], idx["产品 Name"], idx["计划仓 Name"], idx["计划指标"]
+    ci, ni, ri, cati, lifei, mi = idx["产品 Code"], idx["产品 Name"], idx["计划仓 Name"], idx["供应链品类"], idx["生命周期标签"], idx["计划指标"]
     mc = {m: idx[m] for m in month_cols}
 
     plan = {}
     actualShip = {}
+    meta = {}          # sku -> {name, cat, life}（每 SKU 维度，与 DP_共识数量 同维度，整列一致）
     plan_rows = 0
     ship_rows = 0
     for r in rows[1:]:
@@ -86,6 +88,13 @@ def main():
         metric = str(r[mi]).strip()
         if not code or not rdc:
             continue
+        # 每 SKU 捕获一次主数据（品名/供应链品类/生命周期），优先取首个非空行
+        if code not in meta:
+            meta[code] = {
+                "name": str(r[ni]).strip() if r[ni] is not None else "",
+                "cat": str(r[cati]).strip() if r[cati] is not None else "",
+                "life": str(r[lifei]).strip() if r[lifei] is not None else "",
+            }
         if metric == PLAN_METRIC:
             plan_rows += 1
             d = plan.setdefault(code, {}).setdefault(rdc, {})
@@ -123,6 +132,7 @@ def main():
         "shipMonths": shipMonths,
         "plan": plan,
         "actualShip": actualShip,
+        "meta": meta,
     }
     out_dir = os.path.dirname(os.path.abspath(out))
     if not os.path.exists(out_dir):
