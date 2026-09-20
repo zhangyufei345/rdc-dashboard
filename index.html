@@ -788,7 +788,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 372; // v372: 分仓计划优化·下调动作阈值 0.60→0.55 降档；且下调仅计入 plan>0（有实质量），plan=0 未排计划排除为噪声（用户 9/19 裁决）
+const BUILD_VERSION = 373; // v373: 「每日补货建议」并入大仓直发（实际出货口径，分子分母同步计入）；「分仓需求优化建议」行内口径文案改为实际出货（值早已是实际出货，仅文案自相矛盾）；补货建议说明页口径同步（用户 9/20 裁决）
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -10760,17 +10760,34 @@ function renderReplenishment() {
     demandMap[dmKey].dailyVals[d.dateStr] += d.orderQty;
   });
 
-  // v360: 大仓直发**不并入本模块**（用户 2026-09-18 二次裁定，覆盖 v359 的并入决定）。
-  //   原话：「切到大仓的订单不计入订单满足率统计计算」。故本页的「满足率」列与「近60天日均需求」
-  //   （→ 建议补货量 = 日均×4 − 总仓库存 − 在途）**一律只取 RDC 自身订单口径**，与 v358 完全一致；
-  //   连带的 dailyVals（安全库存标准差用）也不含直发。
-  //   理由：这部分需求由总仓直发履约、不经 RDC 库存 —— 计入会让满足率系统性偏低
-  //   （实测 89025·华中 近60天满足率 82.0% → 49.5%、日均 13,116 → 21,736 支），
-  //   且建议补货量系统性偏高（RDC 补了也无从履约）。
-  //   ⚠️ 与「分仓计划监控」口径**有意不同**：那边把直发当作**销售进度**（该区域卖掉了多少，含直发）；
-  //   本页衡量的是 **RDC 自身的订单交付能力**（不含直发）。用户 9/18 对两侧的裁定分别是
-  //   「（监控侧）都不剔除，都要算的」与「（本页）不含直发，回到原值」。
-  //   → 因此辅助函数 directShipMapByDate() 已一并删除，本页不再保留任何直发取值路径。
+  // v373: 大仓直发**并入本模块**（用户 2026-09-20 裁定，覆盖 v360 的排除决定）。
+  //   用户原话：「分仓计划中的实际出货=订单。所以涉及分仓计划 V 实际订单的数据都要同步更新，
+  //   还包括每日补货建议，也涉及这块数据。」
+  //   口径：实际出货 = 已放行订单 + 未放行订单 + 大仓直发（与 demand.json「实际出货_数量」一致）。
+  //   🔴 关键：直发是**真实已发货** → total（需求）与 fulfill（满足量）必须**同步 +q**，
+  //      绝不能只加分母。v359 曾只加分母（=当成「发了货但不算满足」），
+  //      人为把 89025·华中 满足率从 82.3% 压到 48.8% —— v360 据此排除直发，
+  //      而那个「满足率会系统性虚低」的理由**是那个 bug 造的假象**。
+  //      正确写法实测（2026-09-20，60天窗口 07-20~09-18）：
+  //        · 89025·华中：82.3% → 89.5%（+7.2pt，因直发都是已发出的大批量整单）
+  //        · 全量 1,494 组合：97.49% → 97.82%（+0.33pt）
+  //        · 满足率下降 >10pt 的组合数 = 0，有任何变化者仅 22/1,494 → 改口径是安全的
+  //        · 直发规模：176 行 / 2,504,206 支（窗口内 159 行 / 2,435,946 支），约占 60 天需求 15%
+  //   ⚠️ 与「分仓计划监控」口径现已**一致**（那边也是"该区域卖掉了多少，含直发"）。
+  //   复核工具：tools/probe-repl-directship-impact.cjs、tools/probe-89025-directship.cjs
+  (dataStore.directShip || []).forEach(function(d) {
+    if (!d.dateStr || d.dateStr < sixtyDaysAgoStr || d.dateStr > latestDate) return;
+    var dsRdc = normalizeRdcName(d.rdc);
+    if (!dsRdc) return;
+    var dmKey = String(d.skuCode) + '|' + dsRdc;
+    var q = (typeof _dsQty === 'function') ? _dsQty(d) : (d.orderQty || 0);
+    if (!(q > 0)) return;
+    if (!demandMap[dmKey]) demandMap[dmKey] = { total: 0, fulfill: 0, days: 0, dailyVals: {} };
+    demandMap[dmKey].total += q;
+    demandMap[dmKey].fulfill += q;   // 🔴 同步计入分子：直发已发货即已满足
+    if (!demandMap[dmKey].dailyVals[d.dateStr]) demandMap[dmKey].dailyVals[d.dateStr] = 0;
+    demandMap[dmKey].dailyVals[d.dateStr] += q;
+  });
 
   // Calculate 7-day vs previous 7-day shortage trend
   var sevenDaysAgo = new Date(latestDate);
@@ -11301,7 +11318,7 @@ function renderReplenishment() {
     '<th title="本月累计首日缺货量 ÷ 本月累计订单量（分子分母均为已放行口径，已剔双休日/节假日）→ 真·率，恒 ≤ 100%（v355 起）。未放行量只作信息展示（标注在「订单量」列，且仅当该组合当月存在未清订单时展示），不参与本率">缺货率</th>' +
     '<th title="本月首日缺货的工作日天数 ÷ 有订单的工作日天数">缺货天数</th>' +
     '<th title="缺货频率 = 缺货工作日 ÷ 有单工作日，衡量持续性">缺货频率</th>' +
-    '<th>今日缺口(箱)</th><th title="近60天日均出货，单位「支」（与分仓计划/订单明细同源）">近60天日均(支)</th><th>满足率</th><th title="建议补货量 = MAX(0, 日均需求(支/天) × 4 − 总仓库存 − 在途数量)，单位「支」">建议补货(支)</th>' +
+    '<th>今日缺口(箱)</th><th title="近60天日均出货，单位「支」（与分仓计划/订单明细同源）">近60天日均(支)</th><th title="近60天满足率 = 满足量 ÷ 需求量（v373 起并入大仓直发：分子分母同步计入，与 demand.json「实际出货」同口径）">满足率</th><th title="建议补货量 = MAX(0, 日均需求(支/天) × 4 − 总仓库存 − 在途数量)，单位「支」">建议补货(支)</th>' +
     '<th>缺货原因</th><th>评分</th><th>紧急度</th></tr></thead><tbody>';
 
   if (displayList.length === 0) {
@@ -16814,8 +16831,8 @@ function renderReplenishLogic() {
   s += '<div class="lf"><div class="lfi"><div class="ic">📋</div><div class="tt">缺货汇总</div><div class="dd">每日各RDC缺货箱数<br/>缺货原因标签</div></div>';
   s += '<div class="la">+</div><div class="lfi"><div class="ic">🚚</div><div class="tt">订单明细</div><div class="dd">近60天历史订单<br/>订单量 / 满足量</div></div>';
   s += '<div class="la">+</div><div class="lfi"><div class="ic">📅</div><div class="tt">时间窗口</div><div class="dd">缺货数据：最新一天<br/>订单数据：回溯60天</div></div></div>';
-  // v360: 大仓直发**不并入本模块**的口径说明（用户 9/18 二次裁定：切到大仓的订单不计入订单满足率统计计算）——说明页必须与实现同步，否则口径不可追溯
-  s += '<p style="font-size:12px;color:#0E7490">📌 <b>大仓直发</b>（<b>不并入本模块</b>）：量大订单切换发货库位、改由总仓直发，其履约不经 RDC 库存 → <b>不计入</b>本页的「近60天日均需求」「满足率」「建议补货量」（用户 2026-09-18 裁定：切到大仓的订单不计入订单满足率统计计算）。该部分量在「分仓计划监控」页作为<b>销售进度</b>计入（那边口径含直发）。</p>';
+  // v373: 大仓直发**并入本模块**的口径说明（用户 2026-09-20 裁定，覆盖 v360 的排除决定）——说明页必须与实现同步，否则口径不可追溯
+  s += '<p style="font-size:12px;color:#0E7490">📌 <b>大仓直发</b>（<b>已并入本模块</b>）：量大订单切换发货库位、改由总仓直发，虽不经 RDC 库存，但<b>实际已发货</b> → <b>分子（满足量）与分母（需求量）同步计入</b>本页的「近60天日均需求」「满足率」「建议补货量」（用户 2026-09-20 裁定：「分仓计划中的实际出货=订单，涉及分仓计划 V 实际订单的数据都要同步更新」）。至此本页与「分仓计划监控」页口径<b>一致</b>。</p>';
   s += '<p style="font-size:12px;color:var(--text-secondary)">⚠️ 总仓整体缺货且无在途的SKU会跳过（无法通过RDC补货解决）</p></div>';
 
   // Section 2: 每日建议流程
@@ -20229,7 +20246,7 @@ function renderPlanAdvice() {
       const _rdcColor = { '华南RDC':'#DC2626', '华北RDC':'#EA580C', '东北RDC':'#7C3AED', '西北RDC':'#0D9488', '华中RDC':'#DB2777', '西南RDC':'#CA8A04' };
       // v273: 品类+生命周期用 nowrap 包裹确保同行；删除长期高严重度标签（图表已展示）
       html += '<div style="min-width:180px;flex:1"><div style="font-size:13.5px;font-weight:700;margin-bottom:3px;letter-spacing:0.2px"><span style="color:#64748B">'+r.sku+'</span> · <span style="color:#1D4ED8">'+r.brand+'</span> · <span style="color:'+(_rdcColor[r.rdc]||'#DC2626')+'">'+r.rdc+'</span></div><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="padding:1px 7px;border-radius:5px;font-size:10px;font-weight:700;background:'+_dm.bg+';color:'+_dm.color+'">'+_ar+'</span><span style="font-size:13px;font-weight:600;color:var(--text-primary)">'+(r.skuName||'')+'</span><span style="display:inline-flex;gap:4px;white-space:nowrap">'+_catChip+_lifeChip+'</span>'+_scChip+'</div></div>';
-      html += '<div style="font-size:11px;color:var(--text-secondary);text-align:center;min-width:90px" title="计划/订单口径（按 SKU×RDC 聚合，非全 RDC 合计）｜目标月 '+targetMonth+'（'+targetLabel+'）：计划=分仓计划 sheet「'+targetMonth+'」计划量；订单='+targetMonth+' 已放行订单支数累加（SAP 放行口径，非实际出库）。在途月完成率仅供参考"><div>计划 '+formatNum(r.plan)+'</div><div>订单 '+formatNum(r.shipped)+'</div><div>完成率 '+(r.comp*100).toFixed(0)+'% <span style="color:#94A3B8">/ 时间进度 '+(r.timeProg!=null?(r.timeProg*100).toFixed(0):'—')+'%</span></div>'+((r.dev!=null&&r.dev<-0.2)?'<div style="color:#2563EB">滞后 '+Math.abs(r.dev*100).toFixed(0)+'pt</div>':'')+'</div>';
+      html += '<div style="font-size:11px;color:var(--text-secondary);text-align:center;min-width:90px" title="计划/订单口径（按 SKU×RDC 聚合，非全 RDC 合计）｜目标月 '+targetMonth+'（'+targetLabel+'）：计划=分仓计划 sheet「'+targetMonth+'」计划量；订单='+targetMonth+' 实际出货支数（已放行+未放行+大仓直发，取「分仓需求」表实际出货_数量）。在途月完成率仅供参考"><div>计划 '+formatNum(r.plan)+'</div><div>订单 '+formatNum(r.shipped)+'</div><div>完成率 '+(r.comp*100).toFixed(0)+'% <span style="color:#94A3B8">/ 时间进度 '+(r.timeProg!=null?(r.timeProg*100).toFixed(0):'—')+'%</span></div>'+((r.dev!=null&&r.dev<-0.2)?'<div style="color:#2563EB">滞后 '+Math.abs(r.dev*100).toFixed(0)+'pt</div>':'')+'</div>';
       html += '<div style="text-align:center;min-width:110px"><span style="display:inline-block;padding:2px 9px;border-radius:6px;font-size:11px;font-weight:700;background:'+_dm.bg+';color:'+_dm.color+'">'+_ar+' '+r.direction+'</span><div style="font-size:10px;color:var(--text-secondary);margin-top:2px">'+_tw+'</div>'+(r.bigOrder ? '<div style="margin-top:3px"><span style="padding:1px 6px;border-radius:5px;font-size:10px;font-weight:700;background:#FEF3C7;color:#B45309">疑似大单</span></div>' : '')+'</div>';
       // v292: 得分列（仅上调/下调展示对应方向分数；保持观察展示双分便于核对）
       var _scoreCell = '';
@@ -20476,7 +20493,7 @@ function renderPlanAdviceLogic() {
   html += '<div class="card" style="margin-bottom:16px;border-left:4px solid #B45309"><div class="card-header"><span class="card-title">🔍 疑似临时大单怎么识别（不直接自动上调）</span></div><div style="padding:4px 16px 14px;font-size:12px;color:var(--text-secondary);line-height:1.9">超额（完成率>110%）且满足任一条件 → 判为疑似临时大单，<b style="color:#B45309">行内标注「先核实」并跳过结构性超销 fast-path② 的直接上调</b>；但仍可经 5 维主路径（upScore≥0.55）上调，最终方向由综合分决定（方案B 已移除大单软护栏 G4，不再因大单被扣分）：<br>① <b>单日尖峰</b>：最大单日订单量 ÷ 日订单量中位数 ≥ <b>3 倍</b>（当天突然来一票大的）；<br>② <b>单笔大单</b>：最大单笔订单 ÷ 当月总订单量 ≥ <b>25%</b>（一单占掉四分之一月销量）。<br>这类超销后续可能没有持续销售，直接上调计划会造成库存积压——先与销售核实是否一次性大单/促销，确认需求可持续后再转结构性上调（fast-path② 已为其留"先核实"通道，但仍服从综合分判定）。</div></div>';
 
   // ── 5. 数据来源与边界 ──
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🗂 数据来源与口径边界</span></div><div style="padding:4px 16px 14px;font-size:12px;color:var(--text-secondary);line-height:1.9">· 计划量：分仓计划表（目标月），与「计划监控」Tab 同源；<br>· 订单量：当月 SAP 放行订单（订单明细，含日度聚合，供尖峰识别；SAP 放行口径，非实际出库）；<br>· 真实缺货：缺货报告的「RDC缺货箱数」（当月任一天出现即计）；<br>· 总仓受限：缺货汇总中总仓「完全卡死/供应紧张」SKU 集合；<br>· 长期分型/慢动：分别来自长期严重度分层与慢动品诊断模块；<br>· 完成率 = 订单量 ÷ 计划，完成率口径与销售进度列同源（buildPlanSkuAgg）；<br>· <b>时间进度 = 当月已过自然日(T-1) ÷ 当月总自然日</b>（含周末，不作工作日剔除，与「分仓需求监控」monthElapsed 同口径）——判定「滞后」用「完成率 − 时间进度」，避免月初进度天然偏低被误判（v297 由工作日口径改为自然日口径，与需求监控 Tab 对齐）；<br>· 缺货严重度来自月度画像 severity（跨月统一分位 P50/P75/P90），长期分型与收缩值来自长期高严重度分析模块。</div></div>';
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">🗂 数据来源与口径边界</span></div><div style="padding:4px 16px 14px;font-size:12px;color:var(--text-secondary);line-height:1.9">· 计划量：分仓计划表（目标月），与「计划监控」Tab 同源；<br>· 订单量：当月<b>实际出货支数</b>（已放行 + 未放行 + 大仓直发；来自「分仓需求」表「实际出货_数量」，与 demand.json 同源）；订单明细另提供日度聚合，供尖峰识别用；<br>· 真实缺货：缺货报告的「RDC缺货箱数」（当月任一天出现即计）；<br>· 总仓受限：缺货汇总中总仓「完全卡死/供应紧张」SKU 集合；<br>· 长期分型/慢动：分别来自长期严重度分层与慢动品诊断模块；<br>· 完成率 = 订单量 ÷ 计划，完成率口径与销售进度列同源（buildPlanSkuAgg）；<br>· <b>时间进度 = 当月已过自然日(T-1) ÷ 当月总自然日</b>（含周末，不作工作日剔除，与「分仓需求监控」monthElapsed 同口径）——判定「滞后」用「完成率 − 时间进度」，避免月初进度天然偏低被误判（v297 由工作日口径改为自然日口径，与需求监控 Tab 对齐）；<br>· 缺货严重度来自月度画像 severity（跨月统一分位 P50/P75/P90），长期分型与收缩值来自长期高严重度分析模块。</div></div>';
 
   page.innerHTML = html;
 }
