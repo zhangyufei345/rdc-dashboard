@@ -8,10 +8,17 @@
 //   A  冷启动停在 overview：_demandReady() = false（复现前提）
 //   B  切到 advice 页后，**本页自身**触发 ensureDemandMerged（不再依赖别的页面）
 //   C  最终就绪：_demandReady() = true，actualShipBySkuRdc 有数据
-//   D  页面 81014·东北RDC 显示 89820（实际出货口径），非 38220
+//   D  页面数据源（buildPlanOptimAdvice，页面与导出同一入口）81014·东北RDC = 89820 / 59.3%
 //   E  导出 81014·东北RDC = 89820 / 59.3%
-//   F  就绪后无「回退值」警示条；未就绪时有（且含重试按钮）
+//   F  就绪后无「回退值」警示条；F2 未就绪（已失败态）时有警示条 + 🔄 重试按钮
 //   G  无运行时错误
+//
+// ⚠️ 断言口径教训（本文件两处踩过）：
+//   ① **不要用 DOM 文本搜 SKU 判断页面值** —— 分页/默认筛选下目标行不在可见区，
+//      会得到「既不含新值也不含旧值」的假失败。要断言「页面值」就读页面同源的数据函数
+//      （buildPlanOptimAdvice），它才是页面与导出的共同入口。
+//   ② 警示条有「⏳ 加载中」(merging=true，**无按钮**) 与「⚠ 未加载成功」(有重试按钮) 两态；
+//      要验证按钮必须显式构造失败态（_demandFail>0 且 merging=false）。
 const fs = require('fs'), path = require('path');
 const { chromium } = require('C:/Users/zhangyufei1/.workbuddy/binaries/node/workspace/node_modules/playwright-core');
 const LIVE = process.env.LIVE_URL || 'https://rdc-dashboard.pages.dev/';
@@ -39,7 +46,7 @@ const T = (n, ok, d) => { results.push({ n, ok }); console.log((ok ? '✅' : '�
   await page.waitForFunction(() => window._bootLoading === false, { timeout: 180000 });
 
   const bv = await page.evaluate(() => BUILD_VERSION);
-  T('版本号 = 375', bv === 375, 'BUILD_VERSION=' + bv);
+  T('版本号 ≥ 375（本修复引入版）', bv >= 375, 'BUILD_VERSION=' + bv);
 
   // ---- A 冷启动停在 overview ----
   const a = await page.evaluate(() => ({ cur: currentPage, ready: _demandReady(), shipSkus: Object.keys((dataStore.inventory && dataStore.inventory.actualShipBySkuRdc) || {}).length }));
@@ -59,19 +66,24 @@ const T = (n, ok, d) => { results.push({ n, ok }); console.log((ok ? '✅' : '�
 
   await page.waitForTimeout(3000);
 
-  // ---- D 页面显示值 ----
+  // ---- D 页面数据源（buildPlanOptimAdvice 是页面与导出的同一入口；
+  //         直接搜 DOM 文本不可靠 —— 分页/默认筛选下 81014 可能不在当前可见行） ----
   const d = await page.evaluate(() => {
     const pg = document.getElementById('page-plan-monitor');
-    if (!pg) return { err: 'no page' };
-    const rows = [];
-    pg.querySelectorAll('tr').forEach(tr => {
-      const t = (tr.innerText || '').replace(/\s+/g, ' ');
-      if (t.indexOf('81014') >= 0 && t.indexOf('东北') >= 0) rows.push(t);
-    });
-    return { banner: (pg.innerText || '').indexOf('订单口径回退值') >= 0, rows, has89820: (pg.innerText || '').indexOf('89820') >= 0, has38220: (pg.innerText || '').indexOf('38220') >= 0 };
+    const txt = pg ? pg.innerText : '';
+    const all = buildPlanOptimAdvice();
+    const h = all.filter(x => x.sku === '81014' && String(x.rdc).indexOf('东北') >= 0);
+    const row = h[0] || {};
+    return {
+      planMonthIdx: window._planMonthIdx,
+      shipSkus: Object.keys((dataStore.inventory && dataStore.inventory.actualShipBySkuRdc) || {}).length,
+      rowShipped: row.shipped, rowPlan: row.plan, rowComp: row.comp != null ? +(row.comp * 100).toFixed(1) : null,
+      banner: txt.indexOf('订单口径回退值') >= 0
+    };
   });
-  T('D 页面 81014·东北RDC 显示 89820（非 38220）', d.has89820 === true && d.has38220 === false, '含89820=' + d.has89820 + ' 含38220=' + d.has38220);
-  d.rows.slice(0, 2).forEach(r => console.log('      ' + r.slice(0, 180)));
+  T('D 页面数据源 81014·东北RDC 订单 = 89820 / 59.3%',
+    d.rowShipped === 89820 && d.rowComp === 59.3,
+    'cov月idx=' + d.planMonthIdx + ' 实际出货表SKU数=' + d.shipSkus + ' 计划=' + d.rowPlan + ' 订单=' + d.rowShipped + ' 完成率=' + d.rowComp);
 
   // ---- F 就绪后无警示条 ----
   T('F 就绪后无「回退值」警示条', d.banner === false, 'banner=' + d.banner);
@@ -93,19 +105,30 @@ const T = (n, ok, d) => { results.push({ n, ok }); console.log((ok ? '✅' : '�
       '计划=' + c[6] + ' 订单=' + c[7] + ' 完成率=' + c[8] + ' 总行数=' + (csv.split('\n').length - 1));
   }
 
-  // ---- F2 未就绪时警示条必须可见（人为打回） ----
-  const f2 = await page.evaluate(() => {
+  // ---- F2 未就绪时必须给出「可见出口」：加载中(⏳) 或 失败(⚠+重试按钮) 二者之一 ----
+  //   注意：renderPlanAdvice 头部现在会触发 ensureDemandMerged → 同步置 _demandMerging=true，
+  //   所以正常重试中看到的是 ⏳ 态（无按钮，符合设计）；要验证 ⚠+按钮态必须构造「僵死」态。
+  const f2a = await page.evaluate(() => {
     const bak = dataStore.inventory.actualShipBySkuRdc;
-    _demandMerged = false; window._demandMerging = false; window._demandFail = 0;
-    dataStore.inventory.actualShipBySkuRdc = {};
+    _demandMerged = false; dataStore.inventory.actualShipBySkuRdc = {};
+    window._demandMerging = true; window._demandMergingSince = Date.now();   // 正在合并
     renderPlanAdvice();
-    const pg = document.getElementById('page-plan-monitor');
-    const txt = pg ? pg.innerText : '';
-    const out = { banner: txt.indexOf('订单口径回退值') >= 0, retry: txt.indexOf('重试加载') >= 0 };
-    _demandMerged = true; dataStore.inventory.actualShipBySkuRdc = bak;
-    return out;
+    const txt = (document.getElementById('page-plan-monitor') || {}).innerText || '';
+    const outA = { banner: txt.indexOf('订单口径回退值') >= 0, loading: txt.indexOf('正在加载中') >= 0, retry: txt.indexOf('重试加载') >= 0 };
+    // 构造「僵死」态：merging 标记超 60s → 应放行并回到可重试/失败展示
+    window._demandMerging = true; window._demandMergingSince = Date.now() - 90000;
+    window._demandFail = 2;
+    window._demandMerging = false;   // 直接落失败态验证按钮
+    renderPlanAdvice();
+    const txt2 = (document.getElementById('page-plan-monitor') || {}).innerText || '';
+    const outB = { banner: txt2.indexOf('订单口径回退值') >= 0, retry: txt2.indexOf('重试加载') >= 0 };
+    _demandMerged = true; window._demandFail = 0; window._demandMergingSince = 0; dataStore.inventory.actualShipBySkuRdc = bak;
+    return { outA, outB };
   });
-  T('F2 未就绪时警示条 + 重试按钮可见', f2.banner === true && f2.retry === true, JSON.stringify(f2));
+  T('F2a 未就绪(合并中)时显示 ⏳ 加载中 + 回退值告知',
+    f2a.outA.banner === true && f2a.outA.loading === true, JSON.stringify(f2a.outA));
+  T('F2b 未就绪(失败态)时显示 ⚠ 警示条 + 🔄 重试按钮',
+    f2a.outB.banner === true && f2a.outB.retry === true, JSON.stringify(f2a.outB));
 
   T('G 无运行时错误', errs.length === 0, errs.length ? errs.slice(0, 4).join(' | ') : '0 条');
 

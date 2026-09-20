@@ -64,7 +64,7 @@ async function exportMine(page) {
   await loginAndBoot(page, port);
   const BV = await page.evaluate(() => (typeof BUILD_VERSION !== 'undefined' ? BUILD_VERSION : 'ERR'));
   console.log('BUILD_VERSION =', BV);
-  T('版本号 = 374', BV === 374, 'BUILD_VERSION=' + BV);
+  T('版本号 ≥ 374（本修复引入版）', BV >= 374, 'BUILD_VERSION=' + BV);
 
   // ---- T5 前置：_demandReady 并入前应为 false（此刻 boot 可能已并入，先看实际） ----
   const readyAtBoot = await page.evaluate(() => (typeof _demandReady === 'function') ? _demandReady() : 'NOFN');
