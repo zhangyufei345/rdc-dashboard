@@ -114,6 +114,32 @@ const T = (n, ok, d) => { results.push({ n, ok }); console.log((ok ? '✅' : '�
   }
   T('无运行时错误', errs.length === 0, errs.length ? errs.slice(0, 4).join(' | ') : '0 条');
 
+  // ---- I 警示条三态（v377 修复点）----
+  //   本页头部会触发 ensureDemandMerged → _demandMerging 必为 true，故「失败态」必须以
+  //   _demandFail>0 优先判定，否则一直失败会被显示成永久「⏳ 加载中」、无出口（v354 红线同源）。
+  const tri = await page.evaluate(() => {
+    const bak = dataStore.inventory.actualShipBySkuRdc;
+    const grab = () => (document.getElementById('page-plan-monitor') || {}).innerText || '';
+    const probe = () => {
+      const txt = grab();
+      return { banner: txt.indexOf('订单口径回退值') >= 0, loading: txt.indexOf('正在加载中') >= 0, retry: txt.indexOf('重试加载') >= 0 };
+    };
+    _demandMerged = false; dataStore.inventory.actualShipBySkuRdc = {};
+    window._demandFail = 0; window._demandMerging = true; window._demandMergingSince = Date.now();
+    renderPlanAdvice();
+    const merging = probe();
+    window._demandFail = 2;                       // 已失败过 → 必须给 ⚠ + 重试
+    renderPlanAdvice();
+    const failed = probe();
+    _demandMerged = true; window._demandFail = 0; window._demandMerging = false; window._demandMergingSince = 0;
+    dataStore.inventory.actualShipBySkuRdc = bak;
+    return { merging, failed };
+  });
+  T('I1 未就绪·加载中态 → ⏳ + 回退值告知（无按钮，符合设计）',
+    tri.merging.banner === true && tri.merging.loading === true && tri.merging.retry === false, JSON.stringify(tri.merging));
+  T('I2 未就绪·已失败态 → ⚠ + 🔄 重试按钮（v377 修复）',
+    tri.failed.banner === true && tri.failed.retry === true && tri.failed.loading === false, JSON.stringify(tri.failed));
+
   console.log('\n===== 汇总 =====');
   const bad = results.filter(r => !r.ok);
   console.log(bad.length ? `❌ ${bad.length}/${results.length} 项失败` : `✅ ${results.length}/${results.length} 项全部通过`);

@@ -105,30 +105,24 @@ const T = (n, ok, d) => { results.push({ n, ok }); console.log((ok ? '✅' : '�
       '计划=' + c[6] + ' 订单=' + c[7] + ' 完成率=' + c[8] + ' 总行数=' + (csv.split('\n').length - 1));
   }
 
-  // ---- F2 未就绪时必须给出「可见出口」：加载中(⏳) 或 失败(⚠+重试按钮) 二者之一 ----
-  //   注意：renderPlanAdvice 头部现在会触发 ensureDemandMerged → 同步置 _demandMerging=true，
-  //   所以正常重试中看到的是 ⏳ 态（无按钮，符合设计）；要验证 ⚠+按钮态必须构造「僵死」态。
+  // ---- F2 未就绪时必须给出「可见出口」----
+  //   在线只验证「加载中态」(⏳ + 回退值告知)：因为本页头部会触发 ensureDemandMerged →
+  //   _demandMerging 同步为 true，线上很难稳定停在该态之外。
+  //   「已失败态 → ⚠ + 🔄 重试按钮」的三态判定由 tools/verify-v375-clean.cjs 的 I1/I2 本地覆盖
+  //   （那里可直接操控 _demandFail/_demandMerging 构造两态）。
   const f2a = await page.evaluate(() => {
     const bak = dataStore.inventory.actualShipBySkuRdc;
     _demandMerged = false; dataStore.inventory.actualShipBySkuRdc = {};
-    window._demandMerging = true; window._demandMergingSince = Date.now();   // 正在合并
+    window._demandFail = 0; window._demandMerging = true; window._demandMergingSince = Date.now();
     renderPlanAdvice();
     const txt = (document.getElementById('page-plan-monitor') || {}).innerText || '';
-    const outA = { banner: txt.indexOf('订单口径回退值') >= 0, loading: txt.indexOf('正在加载中') >= 0, retry: txt.indexOf('重试加载') >= 0 };
-    // 构造「僵死」态：merging 标记超 60s → 应放行并回到可重试/失败展示
-    window._demandMerging = true; window._demandMergingSince = Date.now() - 90000;
-    window._demandFail = 2;
-    window._demandMerging = false;   // 直接落失败态验证按钮
-    renderPlanAdvice();
-    const txt2 = (document.getElementById('page-plan-monitor') || {}).innerText || '';
-    const outB = { banner: txt2.indexOf('订单口径回退值') >= 0, retry: txt2.indexOf('重试加载') >= 0 };
-    _demandMerged = true; window._demandFail = 0; window._demandMergingSince = 0; dataStore.inventory.actualShipBySkuRdc = bak;
-    return { outA, outB };
+    const outA = { banner: txt.indexOf('订单口径回退值') >= 0, loading: txt.indexOf('正在加载中') >= 0 };
+    _demandMerged = true; window._demandFail = 0; window._demandMerging = false; window._demandMergingSince = 0;
+    dataStore.inventory.actualShipBySkuRdc = bak;
+    return outA;
   });
-  T('F2a 未就绪(合并中)时显示 ⏳ 加载中 + 回退值告知',
-    f2a.outA.banner === true && f2a.outA.loading === true, JSON.stringify(f2a.outA));
-  T('F2b 未就绪(失败态)时显示 ⚠ 警示条 + 🔄 重试按钮',
-    f2a.outB.banner === true && f2a.outB.retry === true, JSON.stringify(f2a.outB));
+  T('F2 未就绪(合并中)时显示 ⏳ 加载中 + 回退值告知',
+    f2a.banner === true && f2a.loading === true, JSON.stringify(f2a));
 
   T('G 无运行时错误', errs.length === 0, errs.length ? errs.slice(0, 4).join(' | ') : '0 条');
 
