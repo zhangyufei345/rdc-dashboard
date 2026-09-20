@@ -788,7 +788,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 374; // v374: 修「导出/页面读到订单口径回退值」——ensureDemandMerged 就绪栅栏(_demandReady)+导出前 await+补算 renderPlanAdvice+优化建议页就绪警示条（用户 9/20 报 81014 导出仍 38220：实为 demand.json 未并入时导出的回退值，非取值 bug）
+const BUILD_VERSION = 375; // v375: 修「优化建议页 demand.json 从未被 fetch」——renderPlanAdvice 头部补 trigger（原只有补货建议/计划监控/调整跟踪三页会触发）+ 导出 await 就绪栅栏(_demandReady)+就绪警示条（用户 9/20 报 81014 导出仍 38220：实为回退口径，非取值 bug）
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -14009,7 +14009,21 @@ let _demandMerged = false;
 //   修法：① 导出按钮改为 await 就绪后再导；② 并入完成后补算 renderPlanAdvice；
 //        ③ 未就绪时显式提示（沿用 v371「绝不静默展示回退值」的既定方针）。
 function _demandReady() {
-  return (typeof _demandMerged !== 'undefined') && _demandMerged === true;
+  // 🔴 v375: 不能只看 _demandMerged —— 必须同时确认「并入结果还在」。
+  //   根因（2026-09-20，见下）：重建 dataStore.inventory（L14798 白名单对象字面量）时
+  //   actualShipBySkuRdc 被丢弃，但 _demandMerged 仍为 true → 栅栏失守，页面/导出静默用回退值。
+  //   这里补一道「数据在位」校验：并入过(true) 且 出货表非空，才算就绪。
+  //   （出货表为空而 _demandMerged=true，只可能是被重建清空 → 判定未就绪 → 触发重新并入）
+  if (typeof _demandMerged === 'undefined' || _demandMerged !== true) return false;
+  const _inv = (typeof dataStore !== 'undefined' && dataStore && dataStore.inventory) || null;
+  if (!_inv) return false;
+  const _ship = _inv.actualShipBySkuRdc;
+  if (!_ship || typeof _ship !== 'object' || Object.keys(_ship).length === 0) {
+    // 并入过但表空了 → 视为未就绪，并复位标志位，让下一次 ensureDemandMerged 真正重新拉取
+    _demandMerged = false;
+    return false;
+  }
+  return true;
 }
 window._demandReady = _demandReady;
 
@@ -14071,15 +14085,16 @@ async function ensureDemandMerged() {
     console.log('[ensureDemandMerged] 已并入 分仓需求：计划 ' + planN + ' 月值 / 实际出货 ' + shipN + ' 月值 / meta ' + Object.keys(inv.demandMeta).length + ' SKU');
     // 重算依赖 planBySkuRdc / 出货量的页面（与 ensureInventoryPlan 同款自愈）
     const cur = (typeof currentPage === 'string') ? currentPage : '';
+    // v374: 「分仓计划优化建议」（plan-monitor 的 advice 子页签）也必须重算。
+    //   实测（线上，2026-09-20）：停在 overview 时 demand.json **从未被 fetch**（_demandMerged=false、
+    //   actualShipBySkuRdc 0 个 SKU、无 ensureDemandMerged 日志）→ 用户切到优化建议页一直按回退口径
+    //   渲染（页面 + 导出同为 38220）。本页对应的触发点已在 renderPlanAdvice 头部补齐（v374b），
+    //   此处保证并入成功后本页自愈。
+    //   renderPlanMonitor 内部 L18377 已按 window._planTab 分派到 renderPlanAdvice，故调它即可覆盖
+    //   两个子页签，无需再显式调一次（原 v374 初版在此多调了一次 → 重复渲染，已收敛）。
     if (cur === 'plan-monitor' && typeof renderPlanMonitor === 'function') renderPlanMonitor();
     if (cur === 'replenishment' && typeof renderReplenishment === 'function') renderReplenishment();
     if (cur === 'adjust-track' && typeof renderAdjustTrack === 'function') renderAdjustTrack();
-    // v374: 补算「分仓计划优化建议」页（plan-monitor 的 advice 子页签）。
-    //   原实现遗漏本页 → 用户先切到优化建议页、demand.json 随后才并入时，本页永远停在
-    //   「订单口径回退值」（正是 38220 事件：页面与导出同时是旧值）。
-    //   renderPlanMonitor 内部会按 window._planTab 分派，故先调它即可覆盖两个子页签；
-    //   这里再显式兜底一次，确保 advice 子页签在前述分支未命中时也能刷新。
-    if (cur === 'plan-monitor' && (window._planTab || 'monitor') === 'advice' && typeof renderPlanAdvice === 'function') renderPlanAdvice();
   } catch (e) {
     window._demandMerging = false;
     window._demandFail = (window._demandFail || 0) + 1;
@@ -14823,6 +14838,19 @@ function parseInventoryExcel(rawData, merge) {
       recRdcMap: _keep(recRdcMap, _prev && _prev.recRdcMap, 'obj'),
       recWhMap: _keep(recWhMap, _prev && _prev.recWhMap, 'obj'),
       planBySkuRdc: _keep(planBySkuRdc, _prev && _prev.planBySkuRdc, 'obj'),
+      // 🔴 v375 修复（用户 2026-09-20 报「东北81014 订单支数还是 38220」的**真根因**）：
+      //   本对象字面量是「重建 dataStore.inventory」的白名单，**未列出的字段一律丢弃**。
+      //   demand.json 并入的两个字段（actualShipBySkuRdc / demandMeta，见 ensureDemandMerged
+      //   L14052/L14070）此前**不在白名单里** → 任何一次重新解析库存文件（inventory-plan.json /
+      //   inventory-extra.json，merge=true 走的就是这里）都会把它们**静默清空**，而 _demandMerged
+      //   仍是 true → 再也没有人去重新并入（`if (_demandMerged) return;` 直接跳过）。
+      //   实测复现：冷启动 → 进「分仓计划优化建议」页（该页会调 ensureInventoryPlan 重载 plan 文件）
+      //   → _demandMerged=true 但 actualShipBySkuRdc 只剩 0 个 SKU → 订单(支) 回退成 38220
+      //   （= 已放行 34560 + 未放行 3660）。这解释了「明明改了、页面/导出还是旧值」。
+      //   教训（与 v358 惰性缓存同源）：**重建型赋值的字段白名单必须覆盖所有运行期派生字段**，
+      //   少一个就是一次静默数据丢失。
+      actualShipBySkuRdc: _prev && _prev.actualShipBySkuRdc,   // 与 demand.json 并入同源，无来源可重建 → 原样保留
+      demandMeta: _prev && _prev.demandMeta,                   // 同上（供应链品类/生命周期，v369）
       _extraLoaded: _prev ? _prev._extraLoaded : undefined,
       _statusLoaded: _prev ? _prev._statusLoaded : undefined
     };
@@ -20003,6 +20031,16 @@ function renderPlanAdvice() {
   if (!window._slowDiagReady && typeof ensureSlowDiag === 'function') ensureSlowDiag();
   // v202: 补货建议的「分仓需求」同样依赖「分仓计划」sheet，与 renderPlanMonitor 同源
   if (!window._invPlanReady && typeof ensureInventoryPlan === 'function') ensureInventoryPlan();
+  // v374b: 本页「订单(支)」列取 = 实际出货（demand.json）→ 必须主动触发并入。
+  //   🔴 实测（线上 rdc-dashboard.pages.dev，2026-09-20）：停在 overview 时 _demandMerged=false、
+  //      actualShipBySkuRdc 只有 0 个 SKU、控制台**没有任何 ensureDemandMerged 日志** —— 即
+  //      demand.json 根本没人去 fetch。原实现只有「补货建议 / 分仓计划监控 / 调整跟踪」三页会触发它
+  //      （经 ensureInventoryPlan → ensureDemandMerged），优化建议页只是**被动等别人触发**。
+  //   ⇒ 后果：用户直接打开/刷新后切到优化建议页，本页一直按回退口径渲染，导出也是回退值 ——
+  //      这正是 9/20「东北81014 订单支数还是 38220」的用户路径（回退=已放行34560+未放行3660）。
+  //   修法：与 ensureInventoryPlan 同款「未就绪即触发」，触发后由 ensureDemandMerged 的成功/失败
+  //        分支回调重渲染本页（v374 已补 advice 分支），就绪即自愈。
+  if (typeof _demandReady === 'function' && !_demandReady() && typeof ensureDemandMerged === 'function') ensureDemandMerged();
   const inv = dataStore.inventory || {};
   const covSource = inv.cov7 ? 'cov7' : (inv.cov6 ? 'cov6' : 'cov5');
   const cov7 = inv[covSource] || [];
