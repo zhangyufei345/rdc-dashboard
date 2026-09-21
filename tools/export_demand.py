@@ -23,6 +23,21 @@ export_demand.py —— 从「订单部署」Excel 抽取「分仓需求」sheet
     "meta":        { "09865": { "name": "美加净...", "cat": "常规品", "life": "成熟期" }, ... }  # 每 SKU 的品名/供应链品类/生命周期（来自 分仓需求 表头列）
 }
 
+同时输出 demand-history.json（📌 2026-09-21 新增）
+------------------------------------------------
+源表「分仓需求」的「实际出货_数量」**本身就是当月累计（MTD）值**，用户每天更新一次。
+但它每天覆盖同一个文件 → 日度 MTD 序列会永久丢失。故本脚本每次运行时，
+把当日的「按 RDC 汇总的 MTD 实际出货」追加进 demand-history.json（**同日覆盖、跨月保留**），
+逐步积累出真正的日度曲线，供分仓计划监控页的「MTD 累计完成率曲线」使用。
+
+{
+  "generatedAt": "2026-09-21 10:31:53",
+  "note": "...",
+  "months": { "2026-09": { "days": { "2026-09-18": {"东北RDC": 330524, ...}, "2026-09-21": {...} } } }
+}
+⚠️ 曲线数据不能回溯：本机制自 2026-09-21 起生效，此前只有 git 历史里的零星时点
+   （已由 tools/backfill_demand_history.py 回填 9/18、9/20、9/21）。9/1~9/17 的 MTD 值无处可寻。
+
 用法
 ----
   python tools/export_demand.py [<订单部署xlsx路径>] [<输出demand.json路径>]
@@ -38,6 +53,51 @@ DEFAULT_OUT = os.path.join(SCRIPT_DIR, "..", "demand.json")
 
 PLAN_METRIC = "DP_共识数量"      # 计划（分仓计划）
 SHIP_METRIC = "实际出货_数量"     # 实际出货（出货量，已合并 已放行+未放行+大仓直发）
+
+HISTORY_FILE = "demand-history.json"   # 每日 MTD 实际出货快照（与 demand.json 同目录）
+
+
+def snapshot_by_rdc(actualShip, months):
+    """把 actualShip({sku:{rdc:{month:qty}}}) 折成 {month: {rdc: 合计}}。"""
+    agg = {}
+    for m in months:
+        d = {}
+        for rdcs in actualShip.values():
+            for r, md in rdcs.items():
+                v = md.get(m)
+                if v:
+                    d[r] = d.get(r, 0.0) + float(v)
+        if d:
+            agg[m] = d
+    return agg
+
+
+def append_history(out_path, actualShip, months, day=None):
+    """把当日 MTD 快照追加进 demand-history.json（同日覆盖、跨月保留）。返回 (路径, 内容)。"""
+    hp = os.path.join(os.path.dirname(os.path.abspath(out_path)), HISTORY_FILE)
+    hist = {}
+    if os.path.exists(hp):
+        try:
+            with open(hp, encoding="utf-8") as f:
+                hist = json.load(f)
+        except Exception as e:
+            print("   ⚠️ %s 解析失败(%s)，将重建" % (HISTORY_FILE, e))
+            hist = {}
+    if not isinstance(hist, dict):
+        hist = {}
+    hist.setdefault("months", {})
+    d = (day or datetime.date.today()).isoformat()
+    snap = snapshot_by_rdc(actualShip, months)
+    for m, byrdc in snap.items():
+        days = hist["months"].setdefault(m, {}).setdefault("days", {})
+        days[d] = {k: round(v, 2) for k, v in sorted(byrdc.items())}
+        hist["months"][m]["days"] = {k: days[k] for k in sorted(days)}
+    hist["generatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hist["note"] = ("每日 MTD 实际出货快照（源表「分仓需求」的实际出货_数量本身就是当月累计值）"
+                    "按 RDC 汇总；同日覆盖、跨月保留。供分仓计划监控页「MTD 累计完成率曲线」使用。")
+    with open(hp, "w", encoding="utf-8") as f:
+        json.dump(hist, f, ensure_ascii=False, separators=(",", ":"))
+    return hp, hist
 
 def norm_sku(s):
     s = str(s).strip()
@@ -191,6 +251,20 @@ def main():
               "请确认是「改名」还是「新建仓」：改名 → 加进 RDC_ALIAS；新建仓 → 需改前端 RDC_FULL。")
     else:
         print("   ✓ 6 大标准 RDC 齐全，无未登记名")
+
+    # ===== 每日 MTD 快照（demand-history.json）=====
+    #   「实际出货」本身是当月累计值，源文件每天覆盖 → 不主动留痕就永远画不出日度曲线。
+    hp, hist = append_history(out, actualShip, shipMonths)
+    _d = datetime.date.today().isoformat()
+    _pts = ", ".join("%s:%d天" % (m, len(v.get("days", {}))) for m, v in sorted(hist["months"].items()))
+    print("✅ 已更新 %s（快照日 %s；累计数据点 %s）" % (HISTORY_FILE, _d, _pts))
+    for m, v in sorted(hist["months"].items()):
+        _last = sorted(v.get("days", {}))
+        if _last:
+            _row = v["days"][_last[-1]]
+            print("   [%s] 最新 %s 合计 %.0f 支 ｜ %s" % (
+                m, _last[-1], sum(_row.values()),
+                ", ".join("%s=%.0f" % (k, x) for k, x in sorted(_row.items()))))
 
 if __name__ == "__main__":
     main()

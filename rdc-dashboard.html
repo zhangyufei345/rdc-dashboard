@@ -788,7 +788,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 377; // v377: 优化建议页就绪警示条改三态判定（_demandFail>0 优先判「失败+重试」）—— 修「一直失败被显示成永久加载中、无出口」（承接 v375/v376 的 81014 回退值修复）
+const BUILD_VERSION = 378; // v378: 销售进度口径全线统一为「实际出货 ÷ 分仓计划」（用户 2026-09-21 指令）——①分子唯一来源改为「分仓需求」表实际出货_数量（demand.json），取不到即 0，删除全部「订单口径回退值」路径；②未放行订单彻底退出计算（源文件已无该 sheet，看板里只剩 9/1 旧快照）——移除「订单放行」下拉、未放行披露块、buildPlanSkuAgg/renderPlanMonitor/buildPlanOptimAdvice 三处并入逻辑；③免费单/特殊价格订单确认不在销售进度内（保持）；④品牌×RDC矩阵分子由订单量改为实际出货（brandRdcOrder→brandRdcShip）；⑤「各RDC MTD累计完成率曲线」数据源由订单按日累计改为 demand-history.json 的实际出货 MTD 快照（新增 tools/export_demand.py 每日自动追加 + tools/backfill_demand_history.py 回填 git 历史）；⑥KPI/对比卡/明细/导出文案「订单量/订单进度」统一改「实际出货」。DB_VERSION 不动（无新增持久化字段）。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -1704,6 +1704,11 @@ function parseExcel(rawData, mode, options) {
     // 业务背景：SAP 中已创建但尚未放行的订单同样是未清订单，会安排补货，
     //   因此销售进度（分仓计划监控的「订单量/计划量」）需要能把它算进来；
     //   但满足率类指标（首日排单/总履约）拿不到，故仅在「分仓计划监控」页使用，其他板块不受影响。
+    // 🔴 v378（用户 2026-09-21 指令）：销售进度已**全线改为「实际出货 ÷ 分仓计划」**，
+    //   且源文件不再提供「未放行订单」sheet。下面这段解析**保留但已无下游消费**——
+    //   dataStore.unreleasedOrders 只供「未清订单/未清量(openQty)」这类判定使用
+    //   （如 getUnsettledSkuRdcMonth），**不再进入任何销售进度/完成率计算**。
+    //   若 sheet 不存在则解析出 0 行，属预期，不是数据缺失。
     // Sheet「装运条件定义」：A 装运条件 / B RDC（20=东北 50=华南 60=西北 70=华中 80=西南 90=华北）
     //   注意：这里的编码是「装运条件」，与收货库位编码规则（华南=40）不同，必须读定义 sheet，不能套库位规则。
     const shipDefIdx = sheetNames.findIndex(function(n) { return String(n || '').indexOf('装运条件') >= 0; });
@@ -1778,6 +1783,10 @@ function parseExcel(rawData, mode, options) {
     // 业务背景（用户 2026-09-18 裁定）：量大订单切换发货库位改由总仓直发，实际发货库位
     //   **不是 RDC**，但「实际在算销售进度的时候还是应该计入 RDC」—— 故并入订单量分子，
     //   作为分仓销售进度的补充数据（同时影响补货建议与分仓计划监控）。
+    // 🔴 v378（用户 2026-09-21 指令）：销售进度分子已统一为「分仓需求」表的实际出货_数量，
+    //   而该列**源文件本身就已把大仓直发合并进去**（用户 9/18 裁定）→ 本 sheet **不再并入销售进度**，
+    //   否则会重复计数。dataStore.directShip 现仅服务「分仓计划优化建议」的 C4 大单结构识别
+    //   （日度尖峰/单笔最大占比），以及库存结构等与销售进度无关的口径。
     // ⚠️ 单位是「箱」（源列名即「未清箱数」），必须 × 箱规折成支才能与 orderQty（支）相加。
     // 🔴 箱规查表必须用**原始物料码**：window._boxSpec 的键是 '09862' 这种带前导零的原样编码
     //   （实测 '9862' 查不到、'09862'=36）。而下游聚合键统一走 normSkuCode（去零）——
@@ -6743,7 +6752,7 @@ function renderShortageMonthly() {
             <th style="text-align:right" title="当月缺货报告里 dcSupply 含「整体缺货」或「供应紧张」的天数">总仓异常天数</th>
             <th style="text-align:center" title="总仓异常天数 vs SKU×RDC 缺货天数对比——判定是总仓卡死还是 RDC 内部问题">补货瓶颈</th>
             <th style="text-align:center" title="v198 归因分析：总仓供应状态 × 分仓完成率交叉判定（A1总仓卡死 / A2部分紧张 / C1结构性超销 / C2偶发大单 / D需排查）。点击卡片行上方筛选按归因过滤">归因</th>
-            <th style="text-align:left" title="销售进度（v352，目标月 ${window._planSkuAggMonth || '—'}）：按 单仓(SKU×RDC) 口径——计划量=该仓当月分仓计划(分仓计划表优先、覆盖表计划字段兜底)，完成率=该仓订单量÷该仓计划量；「SKU 总览」视图才显示跨 RDC 合计。口径与「分仓计划监控」一致。&#10;订单量 = 已放行 + 未放行（订单号去重）；计划量 = 「分仓计划」表当月值优先、覆盖表计划字段兜底；完成率重新计算。&#10;状态按聚合后的完成率判定：v316 状态改自然日口径——完成率 &lt; 当月已过自然日(T-1)/当月总自然日 → 滞后；&gt;100% → 超额；其余正常（与 _classify L18420 _timeProg 同公式，不再用整月 70%/110% 硬阈值；早月天然偏滞后问题缓解）。&#10;显示「—」= 该 SKU 在目标月无计划量（v206 如实注记：v199 起已无任何品类剔除，促销装/新品/无需求 SKU 全部纳入计算）。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
+            <th style="text-align:left" title="销售进度（v378，目标月 ${window._planSkuAggMonth || '—'}）：按 单仓(SKU×RDC) 口径——计划量=该仓当月分仓计划，完成率=该仓实际出货÷该仓计划量；「SKU 总览」视图才显示跨 RDC 合计。口径与「分仓计划监控」一致。&#10;实际出货 = 「分仓需求」表的实际出货_数量（源文件已合并 已放行+未放行+大仓直发）——v378 起唯一分子；该 SKU×仓无出货行时按 0 计（严格口径）。未放行订单（源文件已无该 sheet）与免费单/特殊价格订单均不参与。计划量 = 「分仓计划」表当月值；完成率重新计算。&#10;状态按聚合后的完成率判定：v316 状态改自然日口径——完成率 &lt; 当月已过自然日(T-1)/当月总自然日 → 滞后；&gt;100% → 超额；其余正常（与 _classify L18420 _timeProg 同公式，不再用整月 70%/110% 硬阈值；早月天然偏滞后问题缓解）。&#10;显示「—」= 该 SKU 在目标月无计划量（v206 如实注记：v199 起已无任何品类剔除，促销装/新品/无需求 SKU 全部纳入计算）。">销售进度<span style="font-weight:400;color:var(--text-secondary)">（${window._planSkuAggLabel || ''}）</span></th>
             <th style="text-align:right;white-space:nowrap" title="v316 新增：完成率 − 当月时间进度(自然日 T-1/当月总自然日，如 9/10=9/30=30%) 的偏差。&#10;正数=超前日历、负数=落后日历。颜色：≤-5pt 红 / (-5pt, +5pt) 灰 / ≥+5pt 绿。&#10;与 _classify 的 _dev (L18420) 同口径——'该 SKU 相对日历是快是慢'。&#10;与左列状态(label)互补：状态是'绝对偏前/偏后'、本列是'偏多少 pt'。">距时间进度</th>
           </tr></thead>
           <tbody>
@@ -6766,29 +6775,35 @@ function renderShortageMonthly() {
                 var sp = skuAgg[normSkuCode(p.sku) + '|' + normalizeRdcName(p.rdc)];
                 var spHtml;
                 if (!sp) {
-                  // 尝试从 shipMap 直接查（覆盖「分仓计划有但cov7无」的 SKU，如09862）
+                  // v378: 兜底改走实际出货 —— 覆盖「该 SKU×仓 有实际出货、但不在 buildPlanSkuAgg 键集内」的情况
+                  //   （原来是从 orderDetail 现算订单量，属订单口径，已按用户 2026-09-21 指令废弃）
                   var _directShip = 0;
-                  (dataStore.orderDetail || []).forEach(function(od){
-                    if (od && od.dateStr && od.dateStr.indexOf(filters.dataMonth || '') === 0 && normSkuCode(od.skuCode || '') === normSkuCode(p.sku)) _directShip += (od.orderQty || 0);
-                  });
+                  if (typeof _actualShipOf === 'function') {
+                    // 月份取「销售进度目标月」优先（与 buildPlanSkuAgg 同源），再回退本页 period
+                    var _spMonth = window._planSkuAggMonth || period || '';
+                    if (_spMonth.length === 7) {
+                      var _as = _actualShipOf(p.sku, normalizeRdcName(p.rdc), _spMonth);
+                      if (_as != null) _directShip = _as;
+                    }
+                  }
                   if (_directShip > 0) {
-                    spHtml = '<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap"><span style="display:inline-block;padding:1px 6px;font-size:10px;background:#F5F3FF;color:#7C3AED;border-radius:3px;margin-right:4px;font-weight:600">超销</span>订单 ' + _directShip.toLocaleString() + ' / 计划 0</div>' +
-                      '<div style="font-size:10px;color:#7C3AED;opacity:0.7" title="分仓计划需求=0但有实际订单">有订单未覆盖</div>';
+                    spHtml = '<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap"><span style="display:inline-block;padding:1px 6px;font-size:10px;background:#F5F3FF;color:#7C3AED;border-radius:3px;margin-right:4px;font-weight:600">超销</span>实际出货 ' + _directShip.toLocaleString() + ' / 计划 0</div>' +
+                      '<div style="font-size:10px;color:#7C3AED;opacity:0.7" title="分仓计划需求=0但有实际出货">有出货未覆盖</div>';
                   } else {
                     spHtml = '<span style="color:#CBD5E1" title="销售进度为空（数据未加载）：目标月 ' + (window._planSkuAggMonth || '') + '">—</span>';
                   }
                 } else if (sp.plan <= 0 && sp.shipped > 0) {
                   // v213fix: 有出货但计划=0 → 超销（分仓计划未分配但RDC实际有需求）
-                  spHtml = '<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap"><span style="display:inline-block;padding:1px 6px;font-size:10px;background:#F5F3FF;color:#7C3AED;border-radius:3px;margin-right:4px;font-weight:600">超销</span>订单 ' + sp.shipped.toLocaleString() + ' / 计划 0</div>' +
+                  spHtml = '<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap"><span style="display:inline-block;padding:1px 6px;font-size:10px;background:#F5F3FF;color:#7C3AED;border-radius:3px;margin-right:4px;font-weight:600">超销</span>实际出货 ' + sp.shipped.toLocaleString() + ' / 计划 0</div>' +
                     '<div style="font-size:10px;color:#7C3AED;opacity:0.7" title="分仓计划需求=0但有实际出货">有出货未覆盖</div>';
                 } else if (sp.plan <= 0) {
                   // plan=0 且 shipped=0 → 真正无需求/无数据
-                  spHtml = '<span style="color:#CBD5E1" title="销售进度为空（无计划量且无出货）：该SKU在目标月 ' + (window._planSkuAggMonth || '') + ' 分仓计划需求=0且无实际订单">—</span>';
+                  spHtml = '<span style="color:#CBD5E1" title="销售进度为空（无计划量且无出货）：该SKU在目标月 ' + (window._planSkuAggMonth || '') + ' 分仓计划需求=0且无实际出货">—</span>';
                 } else {
                   var stClr = sp.status === '滞后' ? '#DC2626' : (sp.status === '超额' ? '#15803D' : (sp.status === '超销' ? '#7C3AED' : '#D97706'));
                   var stBg = sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : (sp.status === '超销' ? '#F5F3FF' : '#FFFBEB'));
                   // v255: 状态标签移到第一行开头，压缩至2行；v259: 第一行 nowrap 防数字换行挤百分比到第3行
-                  spHtml = '<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap"><span style="display:inline-block;padding:1px 6px;font-size:10px;background:'+stBg+';color:'+stClr+';border-radius:3px;margin-right:4px;font-weight:600">'+sp.status+'</span>订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() + '</div>' +
+                  spHtml = '<div style="font-size:11px;color:var(--text-secondary);white-space:nowrap"><span style="display:inline-block;padding:1px 6px;font-size:10px;background:'+stBg+';color:'+stClr+';border-radius:3px;margin-right:4px;font-weight:600">'+sp.status+'</span>实际出货 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() + '</div>' +
                     '<div style="font-size:11px;color:' + stClr + ';font-weight:600">' + (isFinite(sp.comp) ? (sp.comp * 100).toFixed(1) + '%' : '∞') + '</div>';
                 }
                 return '<tr>' +
@@ -7063,15 +7078,15 @@ function renderShortageLongTerm() {
     const statBg = !spHas ? 'transparent' : (sp.status === '滞后' ? '#FEE2E2' : (sp.status === '超额' ? '#DCFCE7' : '#FFFBEB'));
     const spTip = !spHas
       ? ('销售进度：该 SKU 在库存覆盖表（' + (window._planSkuAggMonth || '') + '）中当月计划量为 0，故无销售进度。可在「分仓计划监控」切换目标月后回看。')
-      : ('销售进度（' + (window._planSkuAggMonth || '') + '）：' + (_useByRdc ? '按 RDC 拆分视图 → 单仓分仓需求（计划量=该仓当月分仓计划、完成率=该仓订单÷该仓计划）。' : 'SKU 总览视图 → 跨 RDC 合计（计划量=各仓分仓计划之和）。') + '口径与「分仓计划监控」一致。&#10;' +
-         '订单量 = 已放行订单 + 未放行订单（订单号去重），仅统计目标月；&#10;' +
+      : ('销售进度（' + (window._planSkuAggMonth || '') + '）：' + (_useByRdc ? '按 RDC 拆分视图 → 单仓分仓需求（计划量=该仓当月分仓计划、完成率=该仓实际出货÷该仓计划）。' : 'SKU 总览视图 → 跨 RDC 合计（计划量=各仓分仓计划之和）。') + '口径与「分仓计划监控」一致。&#10;' +
+         '实际出货 = 「分仓需求」表的实际出货_数量（源文件已合并 已放行+未放行+大仓直发），仅统计目标月（v378 起唯一分子）；&#10;' +
          '计划量 = 「分仓计划」表当月值优先、覆盖表计划字段兜底；&#10;' +
-         '完成率 = 订单量 ÷ 计划量（按聚合值重算，不是逐 RDC 均值）；&#10;' +
+         '完成率 = 实际出货 ÷ 计划量（按聚合值重算，不是逐 RDC 均值）；&#10;' +
          '状态按【聚合后的完成率】判定：v316 状态改自然日口径——完成率 &lt; 当月已过自然日(T-1)/当月总自然日 → 滞后；&gt;100% → 超额；其余正常（与 _classify L18420 _timeProg 同公式，不再用整月 70%/110% 硬阈值）。&#10;' +
          '聚合自 ' + (sp.rdcCnt || 0) + ' 个有计划量的 RDC。');
     const spCell = !spHas
       ? '<span style="color:#CBD5E1">—</span>'
-      : ('订单 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() +
+      : ('实际出货 ' + sp.shipped.toLocaleString() + ' / 计划 ' + sp.plan.toLocaleString() +
          '<div style="font-size:11px;color:' + statColor + ';font-weight:600">' + (sp.comp * 100).toFixed(1) + '%</div>' +
          '<div style="display:inline-block;padding:1px 6px;font-size:10px;background:' + statBg + ';color:' + statColor + ';border-radius:3px;margin-top:2px">' + sp.status + '</div>');
     return '<tr>' +
@@ -7257,7 +7272,7 @@ function exportLongTermCSV() {
   const head = ['品牌', 'SKU编码', 'SKU名称', '供应链品类', '长期标记', '收缩值', '有效月数', 'LSI',
     '累计缺货量', (_view === 'byRdc' ? null : '涉及RDC'), '当月缺货率(%)', '当前连续',
     // v184: 销售进度（自建聚合，与表体同源同口径）；列头带目标月，避免读者不知道这是哪个月的进度
-    '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态', '销售进度_目标月']
+    '销售进度_实际出货', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态', '销售进度_目标月']
     .filter(Boolean)
     .concat(months.map(m => m + ' 百分位'))
     .concat(months.map(m => m + ' 严重度'));
@@ -7355,8 +7370,8 @@ function exportShortageFocusListCSV() {
     '总仓供应(最新)', '总仓最新库存', '总仓异常天数', '补货瓶颈',
     // v198: 归因分析（A1总仓卡死 / A2部分紧张 / C1结构性超销 / C2偶发大单 / D需排查）
     '归因类型', '归因名称', '分仓完成率(%)',
-    // v185: 销售进度（与表体同源同口径；目标月 window._planSkuAggMonth）
-    '销售进度_目标月', '销售进度_订单量', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态'
+    // v185: 销售进度（与表体同源同口径；目标月 window._planSkuAggMonth）；v378: 分子改为实际出货
+    '销售进度_目标月', '销售进度_实际出货', '销售进度_计划量', '销售进度_完成率(%)', '销售进度_状态'
   ];
 
   // 等级映射：与表内标签对齐（CSV 里同事无需再算）
@@ -14139,6 +14154,41 @@ function _actualShipOf(sku, rdc, month) {
 }
 window._actualShipOf = _actualShipOf;
 
+// ===== v378: 每日 MTD 实际出货快照（demand-history.json）=====
+//   为什么需要它：源表「分仓需求」的「实际出货_数量」**本身就是当月累计（MTD）值**，用户每天更新一次，
+//   但每天覆盖同一个文件 → 日度 MTD 序列平时不落盘、会永久丢失。故由 tools/export_demand.py 每次运行时
+//   把「按 RDC 汇总的当日 MTD 实际出货」追加进 demand-history.json（同日覆盖、跨月保留），
+//   分仓计划监控页的「MTD 累计完成率曲线」即读它（分子=实际出货，分母=当月分仓计划）。
+//   ⚠️ 曲线无法回溯：本机制 2026-09-21 起生效；此前的点只有 git 历史里的零星时点
+//      （已由 tools/backfill_demand_history.py 回填 9/18、9/20、9/21）。
+//   结构：{ months: { "2026-09": { days: { "2026-09-18": { "东北RDC": 330524, ... } } } } }
+window._demandHistory = window._demandHistory || null;
+window._demandHistoryLoading = false;
+window._demandHistoryFail = 0;
+function ensureDemandHistory() {
+  if (window._demandHistory) return;
+  if (window._demandHistoryLoading) return;
+  window._demandHistoryLoading = true;
+  const url = 'demand-history.json?_=' + Date.now();
+  fetch(url)
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(j) {
+      window._demandHistory = j;
+      window._demandHistoryLoading = false;
+      console.log('[demand-history] 已加载：' + Object.keys(j.months || {}).map(function(m) {
+        return m + ' ' + Object.keys((j.months[m] || {}).days || {}).length + '天';
+      }).join(' / '));
+      if (currentPage === 'plan-monitor' && typeof renderPlanMonitor === 'function') renderPlanMonitor();
+    })
+    .catch(function(e) {
+      window._demandHistoryLoading = false;
+      window._demandHistoryFail++;
+      console.warn('[demand-history] 加载失败第' + window._demandHistoryFail + '次:', e && e.message);
+      if (currentPage === 'plan-monitor' && typeof renderPlanMonitor === 'function') renderPlanMonitor();
+    });
+}
+window.ensureDemandHistory = ensureDemandHistory;
+
 function parseInventoryExcel(rawData, merge) {
   try {
     let wb;
@@ -17541,9 +17591,13 @@ function directShipMapByKey(month) {
 //   修法：本函数自己重建 cov7 + shipMap，与 renderPlanMonitor 口径完全一致，不依赖调用顺序。
 //   口径对齐 renderPlanMonitor：
 //     · 计划量 = cov7 行的 targetField（可切换月份，默认 window._planMonthIdx=0）
-//     · 订单量 = orderDetail 按 SKU×RDC 聚合【仅已放行】+ unreleasedOrders【未放行，订单号去重】
+//     · 出货量 = 「分仓需求」表的实际出货_数量（demand.json，v378 起为**唯一分子**）
 //     · 剔除促销装/新品期（覆盖周数分类）；海南开关与 RDC 筛选一律取全部（清单是全库视角）
 //     · 状态阈值与分仓计划监控一致：完成率 <0.7 滞后 / >1.1 超额 / 其余正常
+//   🔴 v378（用户 2026-09-21 指令）：销售进度**全线统一**为「实际出货 ÷ 分仓计划」。
+//      · 未放行订单数据源已不存在（源文件不再有「未放行订单」sheet，看板里只剩 9/1 旧快照）→ 彻底退出计算；
+//      · 免费单/特殊价格订单（dataStore.otherOrders）本来就不在销售进度内，**不要再引入**；
+//      · 大仓直发不再单独并入 —— 源表「实际出货_数量」本身已含它（用户 9/18 裁定）；
 //   🔴 状态必须按【聚合后的 comp】判定，不能用「逐 RDC 计数取最严重」——
 //      v183 那样做会出现「订单 13,212 / 计划 5,904 → 223.8% 却显示『滞后』」的自相矛盾
 //      （某个 RDC 滞后，但 SKU 整体早已超额）。
@@ -17573,30 +17627,8 @@ function buildPlanSkuAgg() {
 
   // v199+: 取消分类剔除（促销装/新品期/无需求全部纳入销售进度计算）
 
-  const shipMap = {};
-  function accumulate(sku, rdc, q) { shipMap[sku + '|' + rdc] = (shipMap[sku + '|' + rdc] || 0) + (q || 0); }
-  orders.forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    const rdc = normalizeRdcName(d.warehouse);
-    if (!rdc) return;
-    accumulate(normSkuCode(d.skuCode || ''), rdc, d.orderQty || 0); // v227: 统一normSkuCode（建表/查表一致，修复订单0显示异常）
-  });
-  // 未放行订单（订单号已在已放行侧出现 → 整单剔除，避免一笔单算两次）
-  const relNoSet = releasedOrderNoSet();
-  (dataStore.unreleasedOrders || []).forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    if (d.orderNo && relNoSet.has(String(d.orderNo))) return;
-    const rdc = normalizeRdcName(d.warehouse);
-    if (!rdc) return;
-    accumulate(normSkuCode(d.skuCode || ''), rdc, d.orderQty || 0); // v227: 同上normSkuCode
-  });
-  // v359: 大仓直发并入（用户 2026-09-18 裁定——实际发货库位是总仓，但销售进度计入 RDC）。
-  //   parseExcel 阶段已做「订单号存在于已放行/未放行 → 整单剔除」+ 折支，此处只做月份过滤与累加。
-  const _dsAggMap = directShipMapByKey(targetMonth);
-  Object.keys(_dsAggMap).forEach(function(_dk) {
-    const _sp = _dk.split('|');
-    accumulate(_sp[0], _sp[1], _dsAggMap[_dk]);
-  });
+  // v378: shipMap（订单口径 + 未放行 + 大仓直发的本地聚合）已整体删除 ——
+  //   分子只认 _actualShipOf()，取不到即 0，不再有「订单口径回退值」这条路径。
 
   // v352: 改为按 sku|rdc 双键——per-RDC 条目存「真实分仓需求」（该仓计划/出货/完成率），
   //   同时保留 out[sku]（跨 RDC 合计）供「SKU 总览」视图使用。
@@ -17611,8 +17643,9 @@ function buildPlanSkuAgg() {
     if (!sku) return;
     const rdcN = normalizeRdcName(rdc);
     const kRdc = normSkuCode(sku) + '|' + rdcN;
+    // v378: 分子 = 实际出货（demand.json）；该 SKU×仓在实际出货表里没有行 → 0（严格口径，用户 2026-09-21 裁定）
     const _aShip = (typeof _actualShipOf === 'function') ? _actualShipOf(sku, rdcN, targetMonth) : undefined;
-    const shipped = (_aShip !== undefined) ? _aShip : (shipMap[kRdc] || 0);
+    const shipped = (_aShip !== undefined) ? _aShip : 0;
     if (!out[kRdc]) out[kRdc] = { plan: 0, shipped: 0, rdcCnt: 1 };
     out[kRdc].plan += plan;
     out[kRdc].shipped += shipped;
@@ -17637,8 +17670,9 @@ function buildPlanSkuAgg() {
         if (_p == null || isNaN(Number(_p))) return;
         const _kRdc = normSkuCode(_sku) + '|' + normalizeRdcName(_rdc);
         if (out[_kRdc]) return; // 该 sku|rdc 已由 cov7 覆盖（含 getPlanDemand 回退），不再加
+        // v378: 同上方——分子只认实际出货，取不到即 0
         const _aShip = (typeof _actualShipOf === 'function') ? _actualShipOf(_sku, _rdc, targetMonth) : undefined;
-        const _ship = (_aShip !== undefined) ? _aShip : (shipMap[_kRdc] || 0);
+        const _ship = (_aShip !== undefined) ? _aShip : 0;
         out[_kRdc] = { plan: Number(_p), shipped: _ship, rdcCnt: 1 };
         if (!out[_sku]) out[_sku] = { plan: 0, shipped: 0, rdcCnt: 0 };
         out[_sku].plan += Number(_p);
@@ -18529,107 +18563,35 @@ function renderPlanMonitor() {
 
   function isH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); } // v113: 用 window._skuIsHainan 而非局部 const（之前因 TDZ 永远 false，导致"不含海南花露水"开关失效 + 品牌矩阵累计被 return 跳过 → 全部 100%）
 
-  // v173: 订单放行筛选——默认「含未放行」（v274 起，用户确认订单明细仅含已放行订单，未放行须默认并入订单进度）。
-  //   未放行订单 = SAP 已创建但尚未放行、仍属未清订单、会安排补货，因此需要能并入订单进度。
-  //   仅在分仓计划监控（销售进度）使用；满足率类指标拿不到首日排单/总履约字段，其他板块不受影响。
-  const includeUnrel = window._planIncludeUnreleased || 'yes';
-  window._planIncludeUnreleased = includeUnrel;
-
-  // 出货口径 = 订单口径：orderQty（订单支数），有订单即计入，不等实际出库
-  // 聚合：SKU×RDC（明细用），品牌×RDC（矩阵用），按日×RDC（曲线用）
-  const shipMap = {};       // sku|rdc -> orderQty
-  const skuRdcBrand = {};   // sku|rdc -> brand（兜底来自订单行）
-  const brandRdcOrder = {}; // brand -> rdc -> orderQty
-  const dayOrderByRdc = {}; // rdc -> day -> orderQty 当日
+  // ===== v378（用户 2026-09-21 指令）：销售进度全线统一为「实际出货 ÷ 分仓计划」=====
+  //   · 分子 = 「分仓需求」表的实际出货_数量（demand.json → dataStore.inventory.actualShipBySkuRdc）
+  //     —— 源表已把它合并好（已放行 + 未放行 + 大仓直发），看板不再自行拼接；
+  //   · 未放行订单：**数据源已不存在**（源文件不再有「未放行订单」sheet；看板里只剩 9/1 旧快照）
+  //     → 彻底退出本页所有计算，「订单放行」下拉框一并移除；
+  //   · 免费单/特殊价格订单（dataStore.otherOrders）：本来就不在销售进度内，**不要再引入**；
+  //   · 取不到实际出货的 SKU×仓 → 分子 0（严格口径，不再回退订单口径）。
+  //   本页的订单明细（已放行）只保留两个用途：①兜底 SKU×RDC → 品牌；②收集出现过的 RDC。
+  const skuRdcBrand = {};   // sku|rdc -> brand（品牌矩阵/明细的品牌回退链）
   const brandRdcPlan = {};  // brand -> rdc -> planQty
-  const skuRdcPlan = {};    // sku|rdc -> planQty（兜底来自 cov）
+  const brandRdcShip = {};  // brand -> rdc -> 实际出货（v378：矩阵分子改用实际出货，不再用订单量）
   const RDCS = [];
-  // v173: 已放行与未放行订单共用同一累加实现，保证 SKU×RDC / 品牌×RDC / 按日×RDC 三处口径完全一致
-  // v211-fix: accumulate 的 key 必须用 normSkuCode 标准化（分仓计划=09539 带0，订单=9539 不带）
-  function accumulate(sku, rdc, br, q, day) {
-    const key = normSkuCode(sku) + '|' + rdc;
-    shipMap[key] = (shipMap[key] || 0) + q;
-    if (br) skuRdcBrand[key] = br;
-    if (br) {
-      if (!brandRdcOrder[br]) brandRdcOrder[br] = {};
-      brandRdcOrder[br][rdc] = (brandRdcOrder[br][rdc] || 0) + q;
-    }
-    if (!isNaN(day) && day >= 1 && day <= daysInMonth) {
-      if (!dayOrderByRdc[rdc]) dayOrderByRdc[rdc] = {};
-      dayOrderByRdc[rdc][day] = (dayOrderByRdc[rdc][day] || 0) + q;
-    }
-    if (RDCS.indexOf(rdc) === -1) RDCS.push(rdc);
-  }
   orders.forEach(function(d) {
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
     if (hainan === 'no' && isH(d.skuCode)) return;
     const rdc = normalizeRdcName(d.warehouse);
+    if (!rdc) return;
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
-    const sku = d.skuCode || '';
-    const q = d.orderQty || 0;
-    accumulate(sku, rdc, d.brand || '', q, Number(d.dateStr.slice(8, 10)));
+    const _bk = normSkuCode(d.skuCode || '') + '|' + rdc;
+    if (d.brand) skuRdcBrand[_bk] = d.brand;
+    if (RDCS.indexOf(rdc) === -1) RDCS.push(rdc);
   });
 
-  // v173: 未放行订单计入销售进度（按「创建日期」归月，与已放行订单同口径）
-  //   数据源是「截至切片日仍未放行」的存量快照；9/1 创建的订单只计入 9 月，不计入 8 月。
-  //   过滤条件与已放行订单保持一致：海南花露水开关、RDC 筛选（v199 起无品类剔除）。
-  // v174: 订单号级去重——订单号若已在已放行订单中出现，则该单实际已放行，未放行侧整单剔除（不只剔除同 SKU 行）。
-  //   同一订单号在「未放行订单」sheet 里通常有多行（一行一物料），去重与「笔」的统计都按订单号口径。
-  const unrelStat = { cnt: 0, rows: 0, qty: 0, slice: '', noRdc: 0, dup: 0, dupRows: 0, dupQty: 0 };
-  const relNoSet = releasedOrderNoSet();
-  const _unrelNos = new Set();    // 本目标月已计入的未放行订单号（用于按订单号统计「笔」）
-  const _unrelDupNos = new Set(); // 本目标月因订单号重复被剔除的订单号
-  (dataStore.unreleasedOrders || []).forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    // v174: 已放行订单优先——同一订单号只取已放行数据，未放行行既不计数也不累加（避免一笔单算两次）
-    if (d.orderNo && relNoSet.has(String(d.orderNo))) {
-      unrelStat.dupRows++;
-      unrelStat.dupQty += d.orderQty || 0;
-      if (!_unrelDupNos.has(String(d.orderNo))) { _unrelDupNos.add(String(d.orderNo)); unrelStat.dup++; }
-      return;
-    }
-    if (hainan === 'yes' && !isH(d.skuCode)) return;
-    if (hainan === 'no' && isH(d.skuCode)) return;
-    const rdc = normalizeRdcName(d.warehouse);
-    if (!rdc) { unrelStat.noRdc++; return; } // 装运条件无法映射到 RDC 的不计入（避免落到空的 RDC 维度）
-    if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
-    unrelStat.rows++;
-    unrelStat.qty += d.orderQty || 0;
-    const _noKey = d.orderNo ? ('#' + d.orderNo) : ('@' + unrelStat.rows);
-    if (!_unrelNos.has(_noKey)) { _unrelNos.add(_noKey); unrelStat.cnt++; }
-    if (d.sliceDate && d.sliceDate > unrelStat.slice) unrelStat.slice = d.sliceDate;
-    if (includeUnrel !== 'yes') return;
-    accumulate(d.skuCode || '', rdc, d.brand || '', d.orderQty || 0, Number(d.dateStr.slice(8, 10)));
-  });
-
-  // v359: 大仓直发并入订单量（第三种来源，与「已放行」「未放行」并列）。
-  //   用户 2026-09-18 裁定：量大订单切换发货库位改由总仓直发，实际发货库位不是 RDC，
-  //   但算销售进度时应计入对应 RDC。
-  //   与「未放行」的差异：未放行受 includeUnrel 开关控制（可切换看纯已放行口径），
-  //   直发**始终计入** —— 它已确定由总仓发货，不属于「待定」部分（订单量与完成率都必须含它）。
-  //   海南开关 / RDC 筛选 / 按日曲线 / 品牌矩阵全部与已放行订单同口径，保证「三处合计一致」。
-  const _dsStat = { cnt: 0, rows: 0, qty: 0, byRdc: {}, byKey: {}, byNo: {} };
-  (dataStore.directShip || []).forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    const dsRdc = normalizeRdcName(d.rdc);
-    if (!dsRdc) return;
-    if (hainan === 'yes' && !isH(d.skuCode)) return;
-    if (hainan === 'no' && isH(d.skuCode)) return;
-    if (rdcFilter !== 'all' && dsRdc !== rdcFilter) return;
-    const dsQ = _dsQty(d);              // v359: 惰性折算（箱 × 当前箱规），见 _dsQty 注释
-    if (!(dsQ > 0)) return;             // 箱规缺失 → 折算为 0，不计入订单量，也不计入下方构成统计
-    _dsStat.rows++;
-    _dsStat.qty += dsQ;
-    if (d.orderNo) {
-      const _nk = String(d.orderNo);
-      if (!_dsStat.byNo[_nk]) { _dsStat.byNo[_nk] = true; _dsStat.cnt++; }
-    }
-    _dsStat.byRdc[dsRdc] = (_dsStat.byRdc[dsRdc] || 0) + dsQ;
-    _dsStat.byKey[normSkuCode(d.skuCode || '') + '|' + dsRdc] = (_dsStat.byKey[normSkuCode(d.skuCode || '') + '|' + dsRdc] || 0) + dsQ;
-    accumulate(d.skuCode || '', dsRdc, planBrandOf(d.skuCode), dsQ, Number(d.dateStr.slice(8, 10)));
-  });
-  window._planMonitorDsStat = _dsStat;
+  // v378: 未放行订单 + 大仓直发 的本地并入逻辑（v173/v174/v359）已**整体删除** ——
+  //   ① 未放行：源文件不再提供「未放行订单」sheet（已核实 data.json 的 sheetNames 无该表），
+  //      看板里残留的只是 9/1 时点的旧快照 → 继续并入等于用过期数据污染销售进度；
+  //   ② 大仓直发：源表「实际出货_数量」已把它合并进去（用户 9/18 裁定），本页再叠一次会重复计数。
+  //   两者原本都只是「订单口径的拼装件」，而 v378 起分子唯一来源是实际出货（demand.json）。
 
   // 计算偏差
   // v209: 行来源优先取分仓计划表（planBySkuRdc），cov7 仅作字段回退
@@ -18688,12 +18650,11 @@ function renderPlanMonitor() {
         if (rdcFilter !== 'all' && rdc !== rdcFilter) continue;
         if (hainan === 'yes' && !isH(sku)) continue;
         if (hainan === 'no' && isH(sku)) continue;
-        // v302-fix: key 必须 normSkuCode——shipMap 写入统一 norm（L17545 v211），0 开头 SKU（09805→9805）原始 key 会 miss → 订单恒 0。
-        //   v227 在 buildPlanSkuAgg 修过同类问题（订单0显示异常），本循环（planBySkuRdc 驱动）当时漏改。
-        const key = normSkuCode(sku) + '|' + rdc;
         const ed = _enrichRow(sku, rdc);
+        // v378: 分子 = 实际出货（demand.json 的 actualShipBySkuRdc）；无该 SKU×仓行 → 0（严格口径）
+        //   （原有的 shipMap 订单口径回退已随 v378 整体删除）
         const _aShip = (typeof _actualShipOf === 'function') ? _actualShipOf(sku, rdc, targetMonth) : undefined;
-        const shipped = (_aShip !== undefined) ? _aShip : (shipMap[key] || 0);
+        const shipped = (_aShip !== undefined) ? _aShip : 0;
         // v253: 与 buildPlanSkuAgg(L16314)保持一致——plan=0但有出货→Infinity(超销)，而非强制0导致误判"滞后"
         const comp = plan > 0 ? shipped / plan : (shipped > 0 ? Infinity : 0);
         const forecast = monthElapsed > 0 ? Math.min(isFinite(comp) ? comp / monthElapsed : 3, 3) : 0;
@@ -18714,9 +18675,14 @@ function renderPlanMonitor() {
         const _isSlowMover = isSlowCoverage(ed.coverageLevel) && hasAvailableStock(ed) && !isExcludedProduct(ed);
         if (_isSlowMover && advice && advice.indexOf('防呆滞') >= 0 && advice.indexOf('详见慢动品诊断') < 0) { advice += '·详见慢动品诊断'; }
         rows.push({ sku:sku, skuName:ed.skuName, brand:ed.brand, rdc:rdc, plan:plan, shipped:shipped, comp:comp, forecast:forecast, status:status, advice:advice, isSlowMover:_isSlowMover, diag:_isSlowMover ? (window._slowDiagMap && window._slowDiagMap[rdc+'|'+sku]) || null : null });
+        // v378: 品牌×RDC 矩阵的分子（实际出货口径）——与明细同源同口径，在月份/海南/RDC 筛选之后聚合
+        if (ed.brand) {
+          if (!brandRdcShip[ed.brand]) brandRdcShip[ed.brand] = {};
+          brandRdcShip[ed.brand][rdc] = (brandRdcShip[ed.brand][rdc] || 0) + shipped;
+        }
       }
     }
-    // 兜底品牌/RDC列/skuRdcPlan 同样从 planBySkuRdc 取
+    // 兜底品牌 / RDC 列 同样从 planBySkuRdc 取
     for (let _pi2 = 0; _pi2 < _planSkus.length; _pi2++) {
       const sku2 = _planSkus[_pi2]; const rdcObj2 = pb[sku2] || {}; const _rdcs2 = Object.keys(rdcObj2);
       for (let _ri2 = 0; _ri2 < _rdcs2.length; _ri2++) {
@@ -18726,7 +18692,6 @@ function renderPlanMonitor() {
         const ed2 = _enrichRow(sku2, rdc2); const br2 = ed2.brand || '';
         if (br2 && plan2 > 0) { if (!brandRdcPlan[br2]) brandRdcPlan[br2] = {}; brandRdcPlan[br2][rdc2] = (brandRdcPlan[br2][rdc2] || 0) + plan2; }
         const key2 = sku2 + '|' + rdc2; if (!skuRdcBrand[key2] && br2) skuRdcBrand[key2] = br2;
-        skuRdcPlan[key2] = (skuRdcPlan[key2] || 0) + plan2;
         if (RDCS.indexOf(rdc2) === -1 && (rdcFilter === 'all' || rdcFilter === rdc2)) RDCS.push(rdc2);
       }
     }
@@ -18737,16 +18702,9 @@ function renderPlanMonitor() {
     const _extraBtn2 = '<button class="btn-export" style="margin-top:8px;background:#7C3AED;color:#fff;border-color:#7C3AED" onclick="var btn=this;btn.disabled=true;btn.textContent=\'正在重新加载分仓计划…\';window._invPlanReady=false;window._invPlanLoading=false;window._planMonitorRetry=0;if(typeof ensureInventoryPlan===\'function\')ensureInventoryPlan();setTimeout(function(){renderPlanMonitor();},2000);">📦 重新加载分仓计划</button>';
     page.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text-secondary)"><div style="font-size:40px;margin-bottom:12px">📋</div><div style="font-size:var(--font-size-lg);margin-bottom:8px">分仓计划数据未加载</div><div style="font-size:13px;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.6">最新的「分仓计划」表（inventory-plan.json）未能成功加载。<br>当前不会回退到旧版库存覆盖数据（cov7）——请点击下方按钮重新加载。</div>' + _extraBtn2 + '<div style="font-size:11px;margin-top:12px;color:var(--text-muted)">诊断：planBySkuRdc=' + (pb ? Object.keys(pb).length : 'null') + ' SKU, cov7=' + cov7.length + '行, orderDetail=' + orders.length + '行, _invPlanReady=' + !!window._invPlanReady + ', _invPlanLoading=' + !!window._invPlanLoading + '</div></div>';
     return;
-  }// 累计按日：rdc -> [day1累计, day2累计, ...]
-  const cumByDayByRdc = {};
-  RDCS.forEach(function(rdc){
-    cumByDayByRdc[rdc] = [];
-    let acc = 0;
-    for (let d = 1; d <= dayOfMonth; d++) {
-      acc += (dayOrderByRdc[rdc] && dayOrderByRdc[rdc][d]) || 0;
-      cumByDayByRdc[rdc].push(acc);
-    }
-  });
+  }
+  // v378: 原「按日累计订单量」(cumByDayByRdc ← dayOrderByRdc) 已删除 ——
+  //   MTD 曲线改为直接读 demand-history.json 的实际出货 MTD 快照（见下方 ECharts 段）。
   // v183: SKU 分仓偏差明细——排序 + 状态筛选（用户要求：可按订单量、完成率排序；按状态筛）
   // 默认保持 v180 的「完成率升序」（滞后在最前），其余三档显式按钮 + 一个状态下拉
   window._pmSkuSort = window._pmSkuSort || 'comp-asc';
@@ -18788,39 +18746,45 @@ function renderPlanMonitor() {
   html += '<span style="font-size:11px;color:var(--text-secondary)">当前目标月 '+targetLabel+'（'+targetMonth+'）｜计划口径：「分仓计划」表 '+targetMonth+' 计划值（支）<span title="取数顺序：优先「分仓计划」sheet（inventory-plan.json，2026-08~2027-01 六个月，计划仓→RDC 对位）；该 SKU×RDC 在分仓计划表中无值时，回退 7月库存覆盖数据的 '+targetLabel+' 需求字段。品类不设限：促销装/新品/无需求 SKU 全部纳入（v199 起）。">'+targetLabel+' 需求（支）</span></span>';
   html += '<select onchange="window._planRdc=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
   html += '<select onchange="window._invHainan=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px"><option value="all"'+(hainan==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainan==='yes'?' selected':'')+'>仅海南花露水</option><option value="no"'+(hainan==='no'?' selected':'')+'>不含海南花露水</option></select>';
-  // v173: 订单放行筛选（是否把未放行订单计入销售进度）
-  html += '<span style="font-size:11px;color:var(--text-secondary)">订单放行：</span>';
-  html += '<select onchange="window._planIncludeUnreleased=this.value;renderPlanMonitor()" style="padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px'+(includeUnrel==='yes'?';font-weight:600;border-color:var(--color-blue);color:var(--color-blue)':'')+'" title="未放行订单 = SAP 已创建但尚未放行的未清订单，同样会安排补货。选择「含未放行」后计入本页销售进度（订单量/完成率/品牌矩阵/MTD曲线/明细/导出全部跟随）。按创建日期归月，与已放行订单同口径。"><option value="no"'+(includeUnrel==='no'?' selected':'')+'>仅已放行</option><option value="yes"'+(includeUnrel==='yes'?' selected':'')+'>含未放行</option></select>';
-  html += '<span style="font-size:11px;color:'+(unrelStat.cnt>0?'#B45309':'var(--text-secondary)')+'" title="口径与本页订单量完全一致：按创建日期归属目标月 '+targetMonth+'，已应用海南花露水 / RDC 筛选（v199 起无品类剔除，促销装/新品/无需求全部纳入）；数量为「未放行订单」sheet U 列订单数量（支）。'+'\n· 「笔」按销售订单号去重统计（一个订单多行物料只算一笔），'+unrelStat.cnt+' 笔 = '+unrelStat.rows+' 行'+'\n· 订单号若已出现在已放行订单中，视为该单已放行，未放行侧整单剔除，只取已放行数据（本次剔除 '+unrelStat.dup+' 笔 / '+unrelStat.dupRows+' 行 / '+formatNum(unrelStat.dupQty)+' 支）">' +
-    (unrelStat.cnt > 0
-      ? ('本目标月未放行 <b>'+unrelStat.cnt+'</b> 笔 / <b>'+formatNum(unrelStat.qty)+'</b> 支'+(unrelStat.slice?('（切片 '+unrelStat.slice+'）'):'')+(includeUnrel==='yes'?' · 已计入':' · 未计入')+(unrelStat.dup>0?(' · 订单号重复已剔除 '+unrelStat.dup+' 笔'):''))
-      : (unrelStat.dup > 0
-          ? ('本目标月未放行订单 '+unrelStat.dup+' 笔均与已放行订单号重复，已全部剔除')
-          : '本目标月无未放行订单')) +
-    '</span>';
-  // v365: 大仓直发披露块已删除（用户 9/18 晚裁定：实际出货已包含大仓直发，直发不再单独维护，
-  //   页头披露 / KPI「含直发」后缀 / 行内「+直发 N」标注一并移除，避免与实际出货口径重复解释）。
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">完成率=当月实际出货(支)÷分仓计划(支)，缺出货行回退订单量(支)；全月预测=完成率÷已过天数占比</span>';
+  // v378: 「订单放行」筛选 + 未放行披露块已整体移除（用户 2026-09-21 指令）——
+  //   未放行订单数据源已不存在，且销售进度已全线统一为「实际出货 ÷ 分仓计划」，
+  //   不再需要「含/不含未放行」的开关。免费单/特殊价格订单本就不在本页口径内。
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto" title="分子 = 「分仓需求」表的实际出货_数量（源文件已合并 已放行+未放行+大仓直发）；该 SKU×仓 在表里没有行时按 0 计（严格口径，用户 2026-09-21 裁定）。未放行订单、免费单/特殊价格订单均不参与本页任何计算。">完成率 = 当月实际出货(支) ÷ 分仓计划(支)，无出货行按 0 计；全月预测 = 完成率 ÷ 已过天数占比</span>';
   html += '</div>';
 
-  // v371: 实际出货(demand.json)加载状态透明化 —— 未并入时绝不静默展示「订单口径回退值」
-  //   （用户 2026-09-19 硬要求：未读取数据时不要用老数据蒙混过关。48.9% vs 61.2% 事件：
-  //   demand.json 一次 fetch 失败 = 整会话静默卡在订单口径回退值，页面无任何提示）
-  const _dm = (typeof _demandMerged !== 'undefined') ? _demandMerged : false;
+  // v378: 实际出货(demand.json)未就绪时**不再有「订单口径回退值」**——
+  //   分子取不到就是 0，所以未就绪会整体显示 0%，必须显式提示，否则会被误读成"销售真的没动"。
+  //   （承接 v371 的透明化要求：绝不静默用别的口径蒙混；只是 v378 起连「回退」都没了。）
+  //   _dm 必须走 _demandReady()（v375 栅栏）而非裸 _demandMerged：
+  //   后者在「并入过、但 inventory 被重建清空了 actualShipBySkuRdc」时仍为 true → 会误判就绪、静默显示 0%。
+  const _dm = (typeof _demandReady === 'function')
+    ? _demandReady()
+    : ((typeof _demandMerged !== 'undefined') ? _demandMerged : false);
+  // 未就绪即触发；🔴 必须带 _demandFail 封顶，否则「fetch 失败 → 重渲染 → 再 fetch」会无限打网络。
+  if (!_dm && (window._demandFail || 0) < 3 && typeof ensureDemandMerged === 'function') ensureDemandMerged();
+  if (typeof ensureDemandHistory === 'function') ensureDemandHistory();         // MTD 曲线数据源（缺了不影响完成率）
   if (!_dm) {
     const _dmg = !!window._demandMerging;
     html += '<div style="padding:10px 14px;margin-bottom:14px;border-radius:10px;font-size:12.5px;line-height:1.7;' + (_dmg ? 'background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF' : 'background:#FEF2F2;border:1px solid #FECACA;color:#B91C1C') + '">';
     if (_dmg) {
-      html += '⏳ <b>分仓需求数据（实际出货）正在加载中…</b>当前完成率、SKU 销售进度等指标为「订单口径回退值」，加载完成后本页自动刷新为实际出货口径。';
+      html += '⏳ <b>实际出货数据正在加载中…</b>本页完成率暂按 0 显示（分子只认「分仓需求」的实际出货，未就绪时不再用订单口径顶替），加载完成后自动刷新。';
     } else {
-      html += '⚠️ <b>分仓需求数据（demand.json）未加载成功</b>，完成率、SKU 销售进度当前为「<b>订单口径回退值</b>」（分子=已放行+未放行订单，非实际出货）。进入本页已自动重试；若本提示持续出现，说明 demand.json 反复拉取失败，请点击按钮手动重试或检查网络。';
+      html += '⚠️ <b>实际出货数据（demand.json）未加载成功</b>：分母（分仓计划）正常，但分子（实际出货）取不到 → <b>本页完成率会显示为 0%，这不是真实销售进度</b>，请勿据此判断。进入本页已自动重试；若持续出现，点右侧按钮手动重试或检查网络。';
       html += '<button class="btn-export" style="margin-left:10px;background:#DC2626;color:#fff;border-color:#DC2626" onclick="this.disabled=true;this.textContent=\'重试中…\';if(typeof ensureDemandMerged===\'function\')ensureDemandMerged();setTimeout(function(){renderPlanMonitor();},2000);">🔄 重试加载</button>';
     }
     html += '</div>';
   }
+  // v378: MTD 曲线（demand-history.json）未就绪的轻量提示——只影响那一张图
+  if (!window._demandHistory) {
+    if (window._demandHistoryFail > 0) {
+      html += '<div style="padding:8px 14px;margin-bottom:14px;border-radius:10px;font-size:12px;background:#FFFBEB;border:1px solid #FDE68A;color:#92400E">⚠️ MTD 快照数据（demand-history.json）加载失败 → 下方 MTD 累计完成率曲线暂无法绘制。其余指标不受影响。</div>';
+    } else {
+      html += '<div style="padding:8px 14px;margin-bottom:14px;border-radius:10px;font-size:12px;background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF">⏳ MTD 快照数据加载中…</div>';
+    }
+  }
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">';
-  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（'+(_dm?'实际出货口径':'⚠ 订单口径回退')+(includeUnrel==='yes'?' · 含未放行':'')+'）<span title="口径（v364 起）：分子优先取「分仓需求」表的实际出货_数量（源文件已合并 已放行+未放行+大仓直发）；该 SKU×仓 无实际出货行时回退订单口径（已放行'+(includeUnrel==='yes'?'+未放行':'')+'）。demand.json 未加载时整体回退订单口径，页面顶部会出现警示条。">ⓘ</span></div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
+  html += '<div class="kpi-card blue"><div class="kpi-label">整体计划完成率（'+(_dm?'实际出货口径':'⚠ 数据未就绪→0')+'）<span title="口径（v378 起，用户 2026-09-21 裁定）：分子 = 「分仓需求」表的实际出货_数量（源文件已合并 已放行+未放行+大仓直发），分母 = 同表的分仓计划。该 SKU×仓 在表里没有实际出货行时按 0 计（严格口径），不再回退订单口径。未放行订单（数据源已不存在）与免费单/特殊价格订单均不参与本页任何计算。">ⓘ</span></div><div class="kpi-value">'+overall.toFixed(1)+'<span class="kpi-unit">%</span></div></div>';
   html += '<div class="kpi-card green"><div class="kpi-label">跑赢时间线的 SKU（>时间进度）</div><div class="kpi-value" style="color:#15803D">'+overCnt+'</div></div>';
   // v113: 顶部 KPI 补"正常"分类卡（之前漏掉，漏斗里有，KPI 行没有，对不上账）
   html += '<div class="kpi-card gray"><div class="kpi-label">正常 SKU（70%~110% 贴近时间线）</div><div class="kpi-value" style="color:#475569">'+normalCnt+'</div></div>';
@@ -18850,7 +18814,7 @@ function renderPlanMonitor() {
   html += '<div style="display:flex;align-items:center;gap:8px;background:#DCFCE7;padding:10px 12px;border-radius:8px">';
   html += '<span style="font-size:12px;color:#15803D;font-weight:600;min-width:54px">跑赢</span>';
   html += '<span style="font-weight:800;font-size:18px;color:#15803D;min-width:42px">'+overCnt+'</span>';
-  html += '<span style="color:#475569;font-size:11px">订单覆盖度 &gt; 计划 110%（需求被低估）</span>';
+  html += '<span style="color:#475569;font-size:11px">完成率 &gt; 110%（需求被低估）</span>';
   html += '<span style="margin-left:auto;font-size:11px;color:#15803D;font-weight:700">'+pctOf(overCnt)+'</span>';
   html += '</div>';
   html += '<div style="display:flex;align-items:center;gap:8px;background:#F1F5F9;padding:10px 12px;border-radius:8px">';
@@ -18862,40 +18826,40 @@ function renderPlanMonitor() {
   html += '<div style="display:flex;align-items:center;gap:8px;background:#FEE2E2;padding:10px 12px;border-radius:8px">';
   html += '<span style="font-size:12px;color:#DC2626;font-weight:600;min-width:54px">落后</span>';
   html += '<span style="font-weight:800;font-size:18px;color:#DC2626;min-width:42px">'+lagCnt+'</span>';
-  html += '<span style="color:#475569;font-size:11px">订单覆盖度 &lt; 计划 70%（落后时间线）</span>';
+  html += '<span style="color:#475569;font-size:11px">完成率 &lt; 70%（落后时间线）</span>';
   html += '<span style="margin-left:auto;font-size:11px;color:#DC2626;font-weight:700">'+pctOf(lagCnt)+'</span>';
   html += '</div>';
   html += '</div>';
   html += '</div>';
   html += '</div>';
   html += '<div style="margin-top:12px;font-size:11.5px;color:var(--text-secondary);border-top:1px dashed var(--border-card);padding-top:10px">';
-  html += '<b style="color:var(--text-primary)">怎么读</b>：从左到右是漏斗的过滤过程 — <b style="color:#15803D">'+overCnt+'</b> 跑赢需求：订单覆盖度 &gt;110%，下月计划可上调 / <b style="color:#475569">'+normalCnt+'</b> 正常：70~110%，贴近时间线 / <b style="color:#DC2626">'+lagCnt+'</b> 落后于时间线：&lt;70%，需要诊断（需求下降/慢动）。下方 ⏱️ 对比卡展示整体跑赢还是落后。';
+  html += '<b style="color:var(--text-primary)">怎么读</b>：从左到右是漏斗的过滤过程 — <b style="color:#15803D">'+overCnt+'</b> 跑赢需求：完成率 &gt;110%，下月计划可上调 / <b style="color:#475569">'+normalCnt+'</b> 正常：70~110%，贴近时间线 / <b style="color:#DC2626">'+lagCnt+'</b> 落后于时间线：&lt;70%，需要诊断（需求下降/慢动）。下方 ⏱️ 对比卡展示整体跑赢还是落后。';
   html += '</div>';
   html += '</div>';
   html += '</div>';
 
-  // ===== 时间进度 vs 订单进度 对比卡 =====
+  // ===== 时间进度 vs 实际出货进度 对比卡（v378：原名「订单进度」，分子实为实际出货，文案同步）=====
   const cmpBg = isAhead ? '#DCFCE7' : '#FEE2E2';
   const cmpFg = isAhead ? '#15803D' : '#DC2626';
   const cmpText = isAhead ? '领先于时间进度' : '落后于时间进度';
   const barSlot = 'rgba(148,163,184,0.18)';
   const timeColor = '#64748B';
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">⏱️ 时间进度 vs 订单进度对比</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">时间进度＝'+targetLabel+'已过天数占比（'+dayOfMonth+'/'+daysInMonth+'）｜订单进度＝'+targetLabel+'订单量/'+targetLabel+'分仓计划　<span style="color:#64748B">（两处口径均为 '+targetMonth+'，跟随上方月份下拉框）</span></span></div>';
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">⏱️ 时间进度 vs 实际出货进度对比</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">时间进度＝'+targetLabel+'已过天数占比（'+dayOfMonth+'/'+daysInMonth+'）｜实际出货进度＝'+targetLabel+'实际出货/'+targetLabel+'分仓计划　<span style="color:#64748B">（两处口径均为 '+targetMonth+'，跟随上方月份下拉框）</span></span></div>';
   html += '<div style="padding:16px 18px">';
   html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:84px;font-size:12px;color:var(--text-secondary)">时间进度</div><div style="flex:1;height:22px;background:'+barSlot+';border-radius:11px;overflow:hidden"><div style="width:'+(timeProg*100).toFixed(1)+'%;height:100%;background:'+timeColor+'"></div></div><div style="width:62px;text-align:right;font-size:13px;font-weight:700;color:'+timeColor+'">'+(timeProg*100).toFixed(1)+'%</div></div>';
-  html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:84px;font-size:12px;color:var(--text-secondary)">订单进度</div><div style="flex:1;height:22px;background:'+barSlot+';border-radius:11px;overflow:hidden"><div style="width:'+(shipProg*100).toFixed(1)+'%;height:100%;background:'+planCompColor(shipProg)+'"></div></div><div style="width:62px;text-align:right;font-size:13px;font-weight:700;color:'+planCompColor(shipProg)+'">'+(shipProg*100).toFixed(1)+'%</div></div>';
-  html += '<div style="display:flex;align-items:center;gap:10px;margin-top:2px"><span style="font-size:12px;color:var(--text-secondary)">进度差</span><span style="font-size:15px;font-weight:800;color:'+cmpFg+';background:'+cmpBg+';padding:4px 14px;border-radius:20px">'+(isAhead?'+':'')+gapPP.toFixed(1)+'pp　'+cmpText+'</span><span style="font-size:11px;color:var(--text-secondary)">（订单 '+(shipProg*100).toFixed(1)+'% － 时间 '+(timeProg*100).toFixed(1)+'%）</span></div>';
+  html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:84px;font-size:12px;color:var(--text-secondary)">实际出货进度</div><div style="flex:1;height:22px;background:'+barSlot+';border-radius:11px;overflow:hidden"><div style="width:'+(shipProg*100).toFixed(1)+'%;height:100%;background:'+planCompColor(shipProg)+'"></div></div><div style="width:62px;text-align:right;font-size:13px;font-weight:700;color:'+planCompColor(shipProg)+'">'+(shipProg*100).toFixed(1)+'%</div></div>';
+  html += '<div style="display:flex;align-items:center;gap:10px;margin-top:2px"><span style="font-size:12px;color:var(--text-secondary)">进度差</span><span style="font-size:15px;font-weight:800;color:'+cmpFg+';background:'+cmpBg+';padding:4px 14px;border-radius:20px">'+(isAhead?'+':'')+gapPP.toFixed(1)+'pp　'+cmpText+'</span><span style="font-size:11px;color:var(--text-secondary)">（实际出货 '+(shipProg*100).toFixed(1)+'% － 时间 '+(timeProg*100).toFixed(1)+'%）</span></div>';
   html += '</div></div>';
 
   html += '<div class="card" style="margin-bottom:16px" id="pm-brand-rdc-card"><div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
-  html += '<span class="card-title">🌡️ 品牌 × RDC 订单进度矩阵</span>';
-  // v111: 矩阵仅保留月度（日度当日波动大无参考价值）
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击单元格 → 下钻 SKU 明细 ｜ 月度=MTD订单量(8月1日至今天)/分仓计划(8月)</span>';
+  html += '<span class="card-title">🌡️ 品牌 × RDC 完成率矩阵</span>';
+  // v111: 矩阵仅保留月度（日度当日波动大无参考价值）；v378: 分子由订单量改为实际出货
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">点击单元格 → 下钻 SKU 明细 ｜ 完成率 = '+targetMonth+' 实际出货(支) ÷ 分仓计划(支)</span>';
   html += '</div><div id="pm-brand-rdc-matrix"></div><div id="pm-sku-drill"></div></div>';
 
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 各 RDC MTD 累计完成率曲线（订单口径'+(includeUnrel==='yes'?' · 含未放行':'')+'）</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">横轴：'+targetMonth+' 第 1 ~ '+dayOfMonth+' 日 ｜ 每条线 = 一个 RDC 的 MTD 累计完成率%</span>';
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-header"><span class="card-title">📈 各 RDC MTD 累计完成率曲线（实际出货口径）</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto" title="数据源：demand-history.json。源表「分仓需求」的『实际出货_数量』本身就是当月累计(MTD)值，用户每天更新一次；看板在每次更新订单部署时留一个快照点（同日覆盖）。曲线 = 该 RDC 当日 MTD 实际出货 ÷ 该 RDC 当月分仓计划。⚠️ 快照机制 2026-09-21 起生效，此前只有 git 历史里的零星时点（9/18、9/20、9/21），更早的 MTD 值无处可寻。">横轴：有快照的日期 ｜ 每条线 = 该 RDC 的 MTD 累计完成率%（实际出货÷分仓计划）</span>';
   html += '</div><div id="pm-rdc-trend" style="height:340px"></div></div>';
 
   // ===== v370: 分仓计划均分异常卡片（v369 原在 KPI 区后，按用户 9/19 要求移至完成率曲线之下、SKU 偏差明细之上；标题去括号；新增导出）=====
@@ -18955,12 +18919,12 @@ function renderPlanMonitor() {
         _pmStatusOptions.map(function(o){ return '<option value="'+o[0]+'"'+(_pmStatus===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('') +
       '</select>' +
       '<span style="font-size:11px;color:var(--text-secondary);margin-left:4px">排序：</span>' +
-      _pmSortBtn('comp-asc', '完成率升序') + _pmSortBtn('comp-desc', '完成率降序') + _pmSortBtn('qty-desc', '订单量降序') + _pmSortBtn('qty-asc', '订单量升序') +
+      _pmSortBtn('comp-asc', '完成率升序') + _pmSortBtn('comp-desc', '完成率降序') + _pmSortBtn('qty-desc', '实际出货降序') + _pmSortBtn('qty-asc', '实际出货升序') +
       '<button class="btn-export" onclick="exportPlanMonitor()" style="margin-left:6px">导出CSV</button>' +
     '</div>' +
   '</div>';
   html += '<div class="table-wrap" style="max-height:560px;overflow-y:auto"><table class="data-table" id="pm-sku-detail-table"><thead><tr>';
-  html += '<th style="position:sticky;left:0;background:inherit;z-index:1;white-space:nowrap;min-width:64px">SKU</th><th style="min-width:300px">名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>操作</th>';
+  html += '<th style="position:sticky;left:0;background:inherit;z-index:1;white-space:nowrap;min-width:64px">SKU</th><th style="min-width:300px">名称</th><th>品牌</th><th>RDC</th><th class="num">计划(支)</th><th class="num" title="v378：分子 = 「分仓需求」表的实际出货_数量（源文件已合并 已放行+未放行+大仓直发），不再是订单量">实际出货(支)</th><th class="num">完成率</th><th class="num">全月预测</th><th>状态</th><th>操作</th>';
   html += '</tr></thead><tbody></tbody></table></div></div>';
 
   // 行html数组（供通用分页器切分）——v183: 用排序+筛选后的 _pmRowsFiltered
@@ -19029,8 +18993,8 @@ function renderPlanMonitor() {
   (function fillBrandRdcMatrix(){
     const matrixWrap = document.getElementById('pm-brand-rdc-matrix');
     if (!matrixWrap) return;
-    // v111: 矩阵固定月度（日度去掉）
-    const brands = [...new Set([...Object.keys(brandRdcOrder), ...Object.keys(brandRdcPlan)])].filter(Boolean).sort();
+    // v111: 矩阵固定月度（日度去掉）；v378: 分子改用实际出货（brandRdcShip）
+    const brands = [...new Set([...Object.keys(brandRdcShip), ...Object.keys(brandRdcPlan)])].filter(Boolean).sort();
     if (brands.length === 0) {
       matrixWrap.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无品牌×RDC 数据</div>';
       return;
@@ -19047,16 +19011,16 @@ function renderPlanMonitor() {
     brands.forEach(function(b){
       m += '<tr><td style="text-align:left;font-weight:600;position:sticky;left:0;background:var(--bg-card)">'+escape(b)+'</td>';
       RDCS.forEach(function(rdc){
-        let planV=0, orderV=0, rate=0, isEmpty=true, onlyOrder=false;
+        let planV=0, shipV=0, rate=0, isEmpty=true, onlyShip=false;
         planV = (brandRdcPlan[b] && brandRdcPlan[b][rdc]) || 0;
-          orderV = (brandRdcOrder[b] && brandRdcOrder[b][rdc]) || 0;
-          isEmpty = (planV === 0 && orderV === 0);
-          onlyOrder = (planV === 0 && orderV > 0);
-          rate = planV > 0 ? orderV / planV : (orderV > 0 ? 1 : 0);
+          shipV = (brandRdcShip[b] && brandRdcShip[b][rdc]) || 0;
+          isEmpty = (planV === 0 && shipV === 0);
+          onlyShip = (planV === 0 && shipV > 0);
+          rate = planV > 0 ? shipV / planV : (shipV > 0 ? 1 : 0);
         let display, bgC, fgC, title;
-        if (isEmpty) { display = '—'; bgC = '#F1F5F9'; fgC = '#94A3B8'; title = escape(b)+'·'+escape(rdc)+'\n无订单无计划'; }
-        else if (onlyOrder) { display = '无计划'; bgC = '#F1F5F9'; fgC = '#DC2626'; title = escape(b)+'·'+escape(rdc)+'\n该品牌×RDC 有 '+Math.round(orderV)+' 支订单但分仓计划为 0（数据异常：库存覆盖数据缺该品牌×RDC 计划）'; } // v129: 改文案避免「无计划」误显示成 100% 绿色
-        else { display = pct(rate); bgC = bgg(rate); fgC = fgg(rate); title = escape(b)+'·'+escape(rdc)+'\n订单量: '+Math.round(orderV)+' 支\n计划量: '+Math.round(planV)+' 支\n完成率: '+(rate*100).toFixed(1)+'%\n点击下钻SKU明细'; }
+        if (isEmpty) { display = '—'; bgC = '#F1F5F9'; fgC = '#94A3B8'; title = escape(b)+'·'+escape(rdc)+'\n无实际出货无计划'; }
+        else if (onlyShip) { display = '无计划'; bgC = '#F1F5F9'; fgC = '#DC2626'; title = escape(b)+'·'+escape(rdc)+'\n该品牌×RDC 有 '+Math.round(shipV)+' 支实际出货但分仓计划为 0（数据异常：分仓计划缺该品牌×RDC）'; } // v129: 改文案避免「无计划」误显示成 100% 绿色
+        else { display = pct(rate); bgC = bgg(rate); fgC = fgg(rate); title = escape(b)+'·'+escape(rdc)+'\n实际出货: '+Math.round(shipV)+' 支\n计划量: '+Math.round(planV)+' 支\n完成率: '+(rate*100).toFixed(1)+'%\n点击下钻SKU明细'; }
         m += '<td style="background:'+bgC+';color:'+fgC+';font-weight:700;cursor:pointer;text-align:center" title="'+title+'" onclick="jumpToPlanMonitorSkuDetail(\''+esc(b)+'\',\''+esc(rdc)+'\')">'+display+'</td>';
       });
       m += '</tr>';
@@ -19065,39 +19029,74 @@ function renderPlanMonitor() {
     matrixWrap.innerHTML = m;
   })();
 
-  // ===== ECharts 折线图：各 RDC MTD 累计完成率 =====
-  const lineChart = echarts.init(document.getElementById('pm-rdc-trend'));
-  const xDays = []; for (let i = 1; i <= dayOfMonth; i++) xDays.push(i + '日');
-  const lineColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6'];
-  const rdcPlanTotals = {};
-  rows.forEach(function(r){ rdcPlanTotals[r.rdc] = (rdcPlanTotals[r.rdc] || 0) + r.plan; });
-  const lineSeries = RDCS.map(function(rdc, idx){
-    const cum = cumByDayByRdc[rdc] || [];
-    const planTotal = rdcPlanTotals[rdc] || 0;
-    return {
-      name: rdc, type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
-      lineStyle: { width: 2.2, color: lineColors[idx % lineColors.length] },
-      itemStyle: { color: lineColors[idx % lineColors.length] },
-      data: cum.map(function(acc){ return planTotal > 0 ? +(acc / planTotal * 100).toFixed(2) : 0; })
-    };
-  });
-  lineChart.setOption({
-    tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, valueFormatter: function(v){ return (v||0).toFixed(1)+'%'; } },
-    legend: { data: RDCS.concat(['时间进度基准']), top: 0, textStyle: { fontSize: 11 } },
-    grid: { left: 50, right: 30, top: 36, bottom: 40 },
-    xAxis: { type: 'category', data: xDays, axisLabel: { fontSize: 11 }, name: targetMonth, nameLocation: 'end', nameGap: 16, nameTextStyle: { fontSize: 11, color: '#64748B' } },
-    yAxis: { type: 'value', axisLabel: { formatter: function(v){ return v.toFixed(0)+'%'; }, fontSize: 11 }, splitLine: { lineStyle: { color: '#94A3B8', type: 'dashed', opacity: 0.3 } } },
-    series: lineSeries.concat([{
-      name: '时间进度基准',
+  // ===== v378: ECharts 折线图：各 RDC MTD 累计完成率（数据源改为实际出货 MTD 快照 demand-history.json）=====
+  //   口径：分子 = 该 RDC 当日 MTD 实际出货（源表「分仓需求」本身就是当月累计值），分母 = 该 RDC 当月分仓计划。
+  //   与顶部 KPI「整体计划完成率」同源同分母，所以曲线末端各点应等于各仓的当前完成率。
+  (function drawRdcMtdTrend(){
+    const box = document.getElementById('pm-rdc-trend');
+    if (!box) return;
+    const lineChart = echarts.init(box);
+    const hist = window._demandHistory;
+    const md = hist && hist.months ? hist.months[targetMonth] : null;
+    const days = (md && md.days) ? Object.keys(md.days).sort() : [];
+    const rdcPlanTotals = {};
+    rows.forEach(function(r){ rdcPlanTotals[r.rdc] = (rdcPlanTotals[r.rdc] || 0) + r.plan; });
+
+    if (!days.length) {
+      // 没有快照 → 明确空态，绝不画假线（用户硬要求：取不到就说取不到）
+      lineChart.setOption({
+        title: {
+          text: hist ? ('暂无 ' + targetMonth + ' 的 MTD 快照数据') : 'MTD 快照数据未加载',
+          subtext: hist
+            ? '快照由「更新订单部署」每次运行时写入，2026-09-21 起生效、随每次更新逐日累积'
+            : (window._demandHistoryFail > 0 ? 'demand-history.json 拉取失败' : 'demand-history.json 加载中…'),
+          left: 'center', top: '38%',
+          textStyle: { fontSize: 13, fontWeight: 'normal', color: '#64748B' },
+          subtextStyle: { fontSize: 11, color: '#94A3B8' }
+        }
+      });
+      window.addEventListener('resize', function(){ try { lineChart.resize(); } catch(e){} });
+      return;
+    }
+
+    const lineColors = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#14B8A6'];
+    // x 轴标签：9-18 / 9-20 …（同一月份内，只显示月-日）
+    const xLabels = days.map(function(d){ return (+d.slice(5, 7)) + '-' + d.slice(8, 10); });
+    const lineSeries = RDCS.map(function(rdc, idx){
+      const planTotal = rdcPlanTotals[rdc] || 0;
+      return {
+        name: rdc, type: 'line', smooth: false, symbol: 'circle', symbolSize: 7,
+        connectNulls: true,
+        lineStyle: { width: 2.2, color: lineColors[idx % lineColors.length] },
+        itemStyle: { color: lineColors[idx % lineColors.length] },
+        data: days.map(function(d){
+          const v = (md.days[d] || {})[rdc];
+          if (v == null) return null;                        // 该仓当天没快照 → 断点，不补 0
+          return planTotal > 0 ? +(v / planTotal * 100).toFixed(2) : 0;
+        })
+      };
+    });
+    // 日历进度基准：每个快照日对应的自然日进度（日/当月天数），比常数「时间进度」更贴合横轴
+    const _dim = new Date(+targetMonth.slice(0,4), +targetMonth.slice(5,7), 0).getDate();
+    const caliSeries = {
+      name: '日历进度基准',
       type: 'line',
-      data: xDays.map(function(){ return +(timeProg * 100).toFixed(2); }),
-      showSymbol: false,
+      data: days.map(function(d){ return +(Number(d.slice(8, 10)) / _dim * 100).toFixed(2); }),
+      showSymbol: true, symbol: 'none',
       lineStyle: { width: 1.4, color: '#DC2626', type: 'dashed', opacity: 0.7 },
       itemStyle: { color: '#DC2626' },
-      tooltip: { valueFormatter: function(v){ return '时间进度: ' + (v||0).toFixed(1) + '%（虚线参考）'; } }
-    }])
-  });
-  window.addEventListener('resize', function(){ try { lineChart.resize(); } catch(e){} });
+      tooltip: { valueFormatter: function(v){ return '日历进度: ' + (v||0).toFixed(1) + '%（虚线参考）'; } }
+    };
+    lineChart.setOption({
+      tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, valueFormatter: function(v){ return v == null ? '无数据' : v.toFixed(1)+'%'; } },
+      legend: { data: RDCS.concat(['日历进度基准']), top: 0, textStyle: { fontSize: 11 } },
+      grid: { left: 50, right: 30, top: 36, bottom: 40 },
+      xAxis: { type: 'category', data: xLabels, axisLabel: { fontSize: 11 }, name: targetMonth, nameLocation: 'end', nameGap: 16, nameTextStyle: { fontSize: 11, color: '#64748B' } },
+      yAxis: { type: 'value', axisLabel: { formatter: function(v){ return v.toFixed(0)+'%'; }, fontSize: 11 }, splitLine: { lineStyle: { color: '#94A3B8', type: 'dashed', opacity: 0.3 } } },
+      series: lineSeries.concat([caliSeries])
+    });
+    window.addEventListener('resize', function(){ try { lineChart.resize(); } catch(e){} });
+  })();
 }
 
 // ============ v197: 分仓计划优化建议（多信号融合，替代 plan-monitor 单一完成率建议） ============
@@ -19209,9 +19208,11 @@ function buildPlanOptimAdvice() {
   // 慢动诊断（SKU×RDC）
   const _slow = window._slowDiagMap || {};
 
-  // 订单聚合（出货 + C4 大单识别：日度尖峰 + 单笔最大占比）
-  // v211-fix: shipMap key 必须用 normSkuCode 标准化（分仓计划=09539 带0，订单=9539 不带）
-  const shipMap = {}, dayMap = {}, maxLineMap = {};
+  // 订单聚合（C4 大单识别：日度尖峰 + 单笔最大占比）
+  //   ⚠️ v378: 本函数**不再用订单口径做完成率分子**（分子统一为「实际出货」，见下方 _classify 调用点）。
+  //   这里的 dayMap / maxLineMap 只服务 C4「偶发大单 vs 结构性超销」的订单结构识别，不参与销售进度。
+  //   原有的 shipMap（已放行 + 未放行 + 大仓直发）已整体删除。
+  const dayMap = {}, maxLineMap = {};
   orders.forEach(function(d){
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     if (hainan === 'yes' && !isH(d.skuCode)) return;
@@ -19222,34 +19223,13 @@ function buildPlanOptimAdvice() {
     const key = sku + '|' + rdc;
     const day = Number(d.dateStr.slice(8, 10));
     const q = d.orderQty || 0;
-    shipMap[key] = (shipMap[key] || 0) + q;
     if (!dayMap[key]) dayMap[key] = {};
     dayMap[key][day] = (dayMap[key][day] || 0) + q;
     if (!maxLineMap[key] || q > maxLineMap[key]) maxLineMap[key] = q;
   });
 
-  // v274: 未放行订单默认计入订单进度（与 buildPlanSkuAgg / renderPlanMonitor 默认口径一致）
-  //   订单明细 sheet 仅含 SAP 已放行订单（col9=订单支数）；未放行订单在独立「未放行订单」sheet，需并入才能反映真实需求。
-  //   订单号级去重（releasedOrderNoSet）：同一单号已出现在已放行侧→整单剔除，避免一笔单算两次。
-  const _relNoSet2 = releasedOrderNoSet();
-  (dataStore.unreleasedOrders || []).forEach(function(d) {
-    if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
-    if (d.orderNo && _relNoSet2.has(String(d.orderNo))) return;
-    const _rdc2 = normalizeRdcName(d.warehouse);
-    if (!_rdc2) return;
-    if (rdcFilter !== 'all' && _rdc2 !== rdcFilter) return;
-    const _sku2 = normSkuCode(d.skuCode || '');
-    const _k2 = _sku2 + '|' + _rdc2;
-    shipMap[_k2] = (shipMap[_k2] || 0) + (d.orderQty || 0);
-  });
-
-  // v359: 大仓直发并入订单量（键口径同本函数 shipMap：normSkuCode + RDC 全名）。
-  //   海南/RDC 筛选对齐上方**已放行订单**循环（它带 hainan 判定）——不带会让「不含海南花露水」
-  //   下把海南 SKU 的直发量漏进来。
-  //   ⚠️ 这里**直接遍历 dataStore.directShip**而非走 directShipMapByKey：后者把 skuCode 折叠成
-  //   normSkuCode 去零码，而 window._skuIsHainan 的键是原始码（cov 表 col1 原样）→ 用去零码查会 miss，
-  //   海南开关失效。raw 码只用于 isH()，shipMap 键仍用 normSkuCode（与本函数其余部分一致）。
-  //   ⚠️ 注：紧邻上方的「未放行订单」循环本身缺 hainan 判定（既存差异，本次未改，避免超出改动范围）。
+  // v378: 未放行订单并入已删除（源文件不再提供「未放行订单」sheet，看板里只是 9/1 旧快照）；
+  //   大仓直发也只需保留 C4 用到的日度尖峰，不再并入订单量分子。
   (dataStore.directShip || []).forEach(function(d){
     if (!d.dateStr || d.dateStr.indexOf(targetMonth) !== 0) return;
     const _aRdc = normalizeRdcName(d.rdc);
@@ -19260,9 +19240,8 @@ function buildPlanOptimAdvice() {
     const _aQ = _dsQty(d);
     if (!(_aQ > 0)) return;
     const _ak = normSkuCode(d.skuCode || '') + '|' + _aRdc;
-    shipMap[_ak] = (shipMap[_ak] || 0) + _aQ;
     if (!dayMap[_ak]) dayMap[_ak] = {};
-    dayMap[_ak][d.dateStr] = (dayMap[_ak][d.dateStr] || 0) + _aQ;   // 与上方已放行循环同结构（C4 大单识别用）
+    dayMap[_ak][d.dateStr] = (dayMap[_ak][d.dateStr] || 0) + _aQ;
     if (!maxLineMap[_ak] || _aQ > maxLineMap[_ak]) maxLineMap[_ak] = _aQ;
   });
 
@@ -19277,7 +19256,7 @@ function buildPlanOptimAdvice() {
     const rdc = d.rdc;
     if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
         const key = normSkuCode(sku) + '|' + rdc;
-        const shipped = shipMap[key] || 0;
+        const shipped = 0;   // v378: 死分支（if(false) 遗留），原 shipMap 已删除，置 0 以免引用未定义变量
     const comp = plan > 0 ? shipped / plan : 0;
 
     const adviceTypes = [], reasonTags = [], evidence = [];
@@ -19905,7 +19884,7 @@ function buildPlanOptimAdvice() {
         //   cov7 回退分支（L18686）已 norm，planBySkuRdc 驱动分支当时漏改。shortageMap 查询仍用原始 sku（materialCode 同源同格式，自洽）。
         var key = normSkuCode(sku) + '|' + rdc;
         var _aShip = (typeof _actualShipOf === 'function') ? _actualShipOf(sku, rdc, targetMonth) : undefined;
-        var shipped = (_aShip !== undefined) ? _aShip : (shipMap[key] || 0);
+        var shipped = (_aShip !== undefined) ? _aShip : 0;   // v378: 分子只认实际出货，取不到即 0
         var comp = plan > 0 ? shipped / plan : 0;
         var cd = _cov7Lookup[key] || {};
         _classify(sku, rdc, plan, comp, key, shipped, cd);
@@ -19920,7 +19899,7 @@ function buildPlanOptimAdvice() {
       if (hainan === 'yes' && !isH(sku)) return;
       if (hainan === 'no' && isH(sku)) return;
       var rdc = d.rdc; if (rdcFilter !== 'all' && rdc !== rdcFilter) return;
-      var key = normSkuCode(sku) + '|' + rdc; var _aShip = (typeof _actualShipOf === 'function') ? _actualShipOf(d.sku || '', rdc, targetMonth) : undefined; var shipped = (_aShip !== undefined) ? _aShip : (shipMap[key] || 0); var comp = plan > 0 ? shipped / plan : 0;
+      var key = normSkuCode(sku) + '|' + rdc; var _aShip = (typeof _actualShipOf === 'function') ? _actualShipOf(d.sku || '', rdc, targetMonth) : undefined; var shipped = (_aShip !== undefined) ? _aShip : 0; var comp = plan > 0 ? shipped / plan : 0;   // v378: 分子只认实际出货
       _classify(sku, rdc, plan, comp, key, shipped, d);
     });
   }
@@ -20672,7 +20651,7 @@ window.exportPlanAdvice = exportPlanAdvice;
 function exportPlanMonitor() {
   const rows = window._planMonitorRows || [];
   if (!rows.length) { showToast('无数据', true); return; }
-  let csv = '\uFEFFSKU,名称,品牌,RDC,计划(支),订单量(支),完成率(%),全月预测(%),状态,建议\n';
+  let csv = '\uFEFFSKU,名称,品牌,RDC,计划(支),实际出货(支),完成率(%),全月预测(%),状态,建议\n';
   rows.forEach(function(r) {
     // v365: 计划=0 → 完成率导出「无需求」、全月预测留空（与页面显示同口径）
     csv += [r.sku, (r.skuName||'').replace(/,/g,'，'), r.brand||'', r.rdc, r.plan, r.shipped, isFinite(r.comp) ? (r.comp*100).toFixed(1) : '无需求', isFinite(r.comp) ? (r.forecast*100).toFixed(1) : '', r.status, r.advice].join(',') + '\n';
@@ -20694,11 +20673,11 @@ function jumpToPlanMonitorSkuDetail(brand, rdc) {
   let html = '';
   html += '<div style="margin-top:14px;border-top:1px dashed var(--border-card);padding-top:14px">';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">';
-  html += '<div style="font-size:13px;font-weight:600;color:var(--text-primary)">🔍 SKU 维度订单进度明细 · 品牌 <span style="color:#2563EB">'+brand+'</span> × RDC <span style="color:#2563EB">'+rdc+'</span></div>';
-  html += '<div style="font-size:12px;color:var(--text-secondary)">共 <b style="color:var(--text-primary)">'+rows.length+'</b> 个 SKU｜订单量 <b style="color:var(--text-primary)">'+formatNum(totalOrder)+'</b> 支 / 计划 <b style="color:var(--text-primary)">'+formatNum(totalPlan)+'</b> 支 / 完成率 <b style="color:'+planCompColor(overall/100)+'">'+overall.toFixed(1)+'%</b></div>';
+  html += '<div style="font-size:13px;font-weight:600;color:var(--text-primary)">🔍 SKU 维度完成率明细 · 品牌 <span style="color:#2563EB">'+brand+'</span> × RDC <span style="color:#2563EB">'+rdc+'</span></div>';
+  html += '<div style="font-size:12px;color:var(--text-secondary)">共 <b style="color:var(--text-primary)">'+rows.length+'</b> 个 SKU｜实际出货 <b style="color:var(--text-primary)">'+formatNum(totalOrder)+'</b> 支 / 计划 <b style="color:var(--text-primary)">'+formatNum(totalPlan)+'</b> 支 / 完成率 <b style="color:'+planCompColor(overall/100)+'">'+overall.toFixed(1)+'%</b></div>';
   html += '<button class="btn-export" onclick="document.getElementById(\'pm-sku-drill\').innerHTML=\'\'">收起</button>';
   html += '</div>';
-  html += '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="data-table" id="pm-sku-drill-table"><thead><tr><th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th class="num">计划(支)</th><th class="num">订单量(支)</th><th class="num">完成率</th><th>状态</th><th>建议</th><th>操作</th></tr></thead><tbody></tbody></table></div></div>';
+  html += '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="data-table" id="pm-sku-drill-table"><thead><tr><th style="position:sticky;left:0;background:inherit;z-index:1">SKU</th><th>名称</th><th class="num">计划(支)</th><th class="num">实际出货(支)</th><th class="num">完成率</th><th>状态</th><th>建议</th><th>操作</th></tr></thead><tbody></tbody></table></div></div>';
   // 行html数组（供通用分页器切分）
   const drillRowsHtml = [];
   if (rows.length === 0) drillRowsHtml.push('<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-secondary)">该 品牌×RDC 无分仓计划 / 订单数据</td></tr>');
