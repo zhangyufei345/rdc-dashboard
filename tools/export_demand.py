@@ -43,10 +43,30 @@ def norm_sku(s):
     s = str(s).strip()
     return s  # 保留原始编码（含前导0），与 planBySkuRdc 原始键一致
 
+# RDC 别名表：源表「计划仓 Name」出现的新叫法 → 看板 6 大 RDC 标准名。
+# 看板全套口径（RDC_FULL / rdcOrder / normalizeRdcName / 各页 RDC 列）只认
+# 「东北RDC/华北RDC/华南RDC/华中RDC/西北RDC/西南RDC」六个名；源表一旦换成别的写法，
+# 键就会与查询侧对不上 → 该仓的计划不会被更新、实际出货**静默丢失**（不报错）。
+# 2026-09-21 实测：订单部署文件「分仓需求」sheet 把「华南RDC」改成了「广东RDC」，
+#   两版键集 2328/2328 完全一致、SKU 388/388 完全一致，其余 5 仓一字未变 → 判定为改名，
+#   故在此归一化（前端零改动，不改 BUILD_VERSION/DB_VERSION，属数据管道适配）。
+# ⚠️ 若「广东RDC」实际是要新建的独立仓（而看板需新增第 7 个仓），请删除本条目并告知。
+RDC_ALIAS = {
+    "广东RDC": "华南RDC",
+    "广东": "华南RDC",
+    "广东仓": "华南RDC",
+}
+_ALIAS_HIT = {}
+
+
 def norm_rdc(s):
     s = str(s).strip()
     if s.endswith("仓"):
         s = s[:-1] + "RDC"
+    if s in RDC_ALIAS:
+        t = RDC_ALIAS[s]
+        _ALIAS_HIT[s] = _ALIAS_HIT.get(s, 0) + 1
+        return t
     return s
 
 def main():
@@ -143,6 +163,21 @@ def main():
     print("✅ 已生成 demand.json（%d 字节）" % sz)
     print("   计划(DC共识): %d SKU / %d SKU×仓 × 月份%s" % (len(plan), sum(len(v) for v in plan.values()), month_cols))
     print("   实际出货:     %d SKU / %d SKU×仓 × 月份%s" % (len(actualShip), sum(len(v) for v in actualShip.values()), out_obj["shipMonths"]))
+    # 输出各 RDC 的键数与合计，便于一眼发现「某仓整列消失」（键对不上时的典型症状）
+    for label, obj in (("计划", plan), ("实际出货", actualShip)):
+        agg = {}
+        for rdcs in obj.values():
+            for r, md in rdcs.items():
+                a = agg.setdefault(r, [0, 0.0])
+                a[0] += 1
+                a[1] += sum(md.values())
+        print("   [%s] %s" % (label, ", ".join("%s:%d键/%.0f" % (k, v[0], v[1]) for k, v in sorted(agg.items()))))
+    if _ALIAS_HIT:
+        print("   ⚠️ RDC 别名归一化命中: %s → %s（共 %d 行）"
+              % (dict(_ALIAS_HIT), " / ".join(sorted(set(RDC_ALIAS.values()))), sum(_ALIAS_HIT.values())))
+        print("      ↑ 源表「计划仓 Name」用了新叫法，已按 RDC_ALIAS 映射到看板标准名；如判定有误请修改 RDC_ALIAS。")
+    else:
+        print("   ✓ RDC 名全部为看板标准名（无别名命中）")
 
 if __name__ == "__main__":
     main()
