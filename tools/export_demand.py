@@ -50,7 +50,10 @@ def norm_sku(s):
 # 2026-09-21 实测：订单部署文件「分仓需求」sheet 把「华南RDC」改成了「广东RDC」，
 #   两版键集 2328/2328 完全一致、SKU 388/388 完全一致，其余 5 仓一字未变 → 判定为改名，
 #   故在此归一化（前端零改动，不改 BUILD_VERSION/DB_VERSION，属数据管道适配）。
-# ⚠️ 若「广东RDC」实际是要新建的独立仓（而看板需新增第 7 个仓），请删除本条目并告知。
+# ✅ 2026-09-21 用户裁决：「后续遇到广东RDC请默认为华南RDC」—— 故本别名表是**长期业务口径**，
+#    不是临时适配。（同一口径在 batch-pull-calculator skill 里也有：「广东仓=华南仓」。）
+#    🔴 不要再把「广东」当作可能新建的第 7 个仓来考虑；真有第 7 仓会由用户显式提出。
+#    别名归一化后的标准名全集仍由 tools/verify-demand-merge.cjs 的 A5 门控把关。
 RDC_ALIAS = {
     "广东RDC": "华南RDC",
     "广东": "华南RDC",
@@ -175,9 +178,19 @@ def main():
     if _ALIAS_HIT:
         print("   ⚠️ RDC 别名归一化命中: %s → %s（共 %d 行）"
               % (dict(_ALIAS_HIT), " / ".join(sorted(set(RDC_ALIAS.values()))), sum(_ALIAS_HIT.values())))
-        print("      ↑ 源表「计划仓 Name」用了新叫法，已按 RDC_ALIAS 映射到看板标准名；如判定有误请修改 RDC_ALIAS。")
+        print("      ↑ 源表「计划仓 Name」用了新叫法，已按 RDC_ALIAS 映射到看板标准名（广东RDC=华南RDC 已确认为业务口径）。")
     else:
         print("   ✓ RDC 名全部为看板标准名（无别名命中）")
+    # 自守卫：归一化之后仍出现未登记的 RDC 名 = 该仓数据在页面上永远查不到 → 必须大声报错
+    STD_RDC = ("东北RDC", "华北RDC", "华南RDC", "华中RDC", "西北RDC", "西南RDC")
+    stray = sorted({r for obj in (plan, actualShip) for rdcs in obj.values() for r in rdcs} - set(STD_RDC))
+    missing = [r for r in STD_RDC if r not in {r for obj in (plan, actualShip) for rdcs in obj.values() for r in rdcs}]
+    if stray or missing:
+        print("   🔴 未登记的 RDC 名: %s ；缺失的标准 RDC: %s" % (stray or "无", missing or "无"))
+        print("      ↑ 键与看板口径对不上 → 该仓计划/实际出货不会被更新（且不报错）。"
+              "请确认是「改名」还是「新建仓」：改名 → 加进 RDC_ALIAS；新建仓 → 需改前端 RDC_FULL。")
+    else:
+        print("   ✓ 6 大标准 RDC 齐全，无未登记名")
 
 if __name__ == "__main__":
     main()
