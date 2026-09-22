@@ -788,7 +788,14 @@ const DB_NAME = 'RDC_Dashboard';
 // v344: 补货调整跟踪新增「按调整类型归因：扣减量 → 窗口内缺货」卡片（用户裁决·方案A）——①原「按调整类型：扣减量与记录数」单图表升级为「归因表 + 双轴图」：表含 性质/扣减条数/扣减量/已走完/缺货条数/缺货率(条)/缺货量/B象限(条·箱)/结论，按 B 象限无谓损失降序，行点击联动现有 type 筛选；图改「扣减量(柱) vs 缺货率(折线)」双轴。②调整类型清单由硬编码改为从数据动态派生（_adjTypeList/_adjTypeColor/_adjTypeKind），新增类型自动可见——原硬编码 5 类漏掉 2026-09-14 新增的「低销预警」37 条（筛选下拉选不到、类型图不画）。③供给类（总仓缺货）标注缺货率存在定义循环（四象限"大仓紧张"即由该类型判定），不可与规则/人工类横向比大小；走完 <10 条标「样本不足」。纯展示层，判定逻辑零改动。DB_VERSION=232 不动。
 // v345: 🔴 修复 v344 引入的致命 bug —— 「补货调整跟踪」整页白屏报 `ReferenceError: typeList is not defined`（用户 9/15 08:59 报，线上 BUILD 344 复现）。根因：v344 把调整类型清单改为动态派生（新增函数 _adjTypeList()），但 renderAdjustTrack 内本应补上的 `const typeList = _adjTypeList(computed.list);` 漏写，而三处调用点（归因表聚合 17645、筛选下拉 17691、RDC堆叠图 17874）仍引用 typeList。教训：node --check 只校验语法，对"未声明标识符"这类运行时 ReferenceError 完全无感，改动含新变量引用时必须真实加载页面跑一次。本次已补定义并加静态扫描兜底（函数体内未声明标识符 = 0）。
 // v346: 「按 RDC：扣减量（按调整类型堆叠）」图新增「缺货率(条)」折线（用户 9/15 09:50 要求：与第 1 张类型图一样体现缺货率）。口径与类型图完全同源，仅分组维度换成 RDC：该 RDC 下「扣减 且 窗口已走完」的记录中，窗口缺货条数 ÷ 已走完条数；窗口未走完的 RDC 不画点（null + connectNulls:false）。折线走顶部第二 x 轴（min 0/max 100、红色标注「缺货率」），与横轴「量(箱)」量纲不同，只表达命中率高低；tooltip 改为自定义 formatter，在堆叠明细后追加「缺货率(条)：X%（缺货 a / 走完 b 条）」。纯展示层，判定逻辑零改动，DB_VERSION=232 不动。
-const BUILD_VERSION = 378; // v378: 销售进度口径全线统一为「实际出货 ÷ 分仓计划」（用户 2026-09-21 指令）——①分子唯一来源改为「分仓需求」表实际出货_数量（demand.json），取不到即 0，删除全部「订单口径回退值」路径；②未放行订单彻底退出计算（源文件已无该 sheet，看板里只剩 9/1 旧快照）——移除「订单放行」下拉、未放行披露块、buildPlanSkuAgg/renderPlanMonitor/buildPlanOptimAdvice 三处并入逻辑；③免费单/特殊价格订单确认不在销售进度内（保持）；④品牌×RDC矩阵分子由订单量改为实际出货（brandRdcOrder→brandRdcShip）；⑤「各RDC MTD累计完成率曲线」数据源由订单按日累计改为 demand-history.json 的实际出货 MTD 快照（新增 tools/export_demand.py 每日自动追加 + tools/backfill_demand_history.py 回填 git 历史）；⑥KPI/对比卡/明细/导出文案「订单量/订单进度」统一改「实际出货」。DB_VERSION 不动（无新增持久化字段）。
+// v379: 「已拒绝」展示标注（**纯展示，不动任何计算**）——用户 2026-09-22 裁定：「打标拒绝原因还是要算入
+//   订单满足公式的，因为拒绝了也是未满足。只不过这些订单不会再有履约的机会了，因此最好在展示的时候有标注提醒已拒绝」。
+//   ① 新增共用辅助 isRejectedOrder / rejMarkCell（L51xx 章节）；② 日满足率趋势 hover 弹窗「未清箱数 TOP 3」
+//   加一行「↳ 其中已拒绝 N 箱（x%）」；③ 缺货四象限清单「首日缺货量」+ 长期高严重度清单「累计缺货量」加悬停标注；
+//   ④ 订单缺货明细分析页 E（拒绝/删单）列表头/单元格悬停 + 口径说明改写（明确 E ⊂ B、拒绝计入满足率）。
+//   数据侧只加派生字段：月度画像 rejQty/rejBoxes/rejOrderCnt、长期画像 rejQty/totalRej、日 TOP3 rejUnits/rejBoxes。
+//   DB_VERSION 不动（无 sheet/字段语义变更，纯前端展示字段）。
+const BUILD_VERSION = 379; // v378: 销售进度口径全线统一为「实际出货 ÷ 分仓计划」（用户 2026-09-21 指令）——①分子唯一来源改为「分仓需求」表实际出货_数量（demand.json），取不到即 0，删除全部「订单口径回退值」路径；②未放行订单彻底退出计算（源文件已无该 sheet，看板里只剩 9/1 旧快照）——移除「订单放行」下拉、未放行披露块、buildPlanSkuAgg/renderPlanMonitor/buildPlanOptimAdvice 三处并入逻辑；③免费单/特殊价格订单确认不在销售进度内（保持）；④品牌×RDC矩阵分子由订单量改为实际出货（brandRdcOrder→brandRdcShip）；⑤「各RDC MTD累计完成率曲线」数据源由订单按日累计改为 demand-history.json 的实际出货 MTD 快照（新增 tools/export_demand.py 每日自动追加 + tools/backfill_demand_history.py 回填 git 历史）；⑥KPI/对比卡/明细/导出文案「订单量/订单进度」统一改「实际出货」。DB_VERSION 不动（无新增持久化字段）。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -2444,6 +2451,18 @@ function renderOverview() {
         '<span style="width:48px;text-align:right;color:#e2e8f0">' + formatNum(d.transit) + '</span>' +
         '<span style="width:40px;text-align:center;color:' + supplyColor + '">' + supplyLabel + '</span>' +
       '</div>';
+      // v379: 「已拒绝」标注 —— 在弹窗内单起一行。
+      //   注意：ECharts tooltip 默认 enterable:false，鼠标一旦移到弹窗上弹窗就消失，
+      //   因此**不能**在弹窗内部再套一层 hover，只能把提醒直接写进弹窗。
+      // 口径：拒绝订单仍计入未清箱数（拒绝=未满足，用户 2026-09-22 裁定），此处仅作提醒，不改任何数字。
+      if ((d.rejUnits || 0) > 0) {
+        const _rp = (d.units || 0) > 0 ? Math.round(d.rejUnits / d.units * 100) : 0;
+        html += '<div style="display:flex;font-size:10px;line-height:1.4;padding:0 2px 3px 20px">' +
+          '<span style="flex:1;min-width:90px;color:#fca5a5">↳ 其中已拒绝 ' + formatNum(d.rejBoxes || 0) + ' 箱（' + _rp + '%）' +
+          (d.rejReason ? ' · ' + d.rejReason : '') +
+          (d.rejOrderCnt ? ' · ' + d.rejOrderCnt + ' 单' : '') +
+          '，不会再排单、缺货不可恢复</span></div>';
+      }
     });
     return html;
   }
@@ -3958,13 +3977,22 @@ function getTopShortageSKUsByDay(rdc, dateStr, limit, channel) {
     const code = d.skuCode;
     if (!code) return;
     if (!map[code]) {
-      map[code] = { materialCode: code, materialName: d.skuName || '', brand: d.brand || '', units: 0, boxes: 0, hasSpec: false };
+      // v379: rej* 字段只服务「已拒绝」展示标注，**不参与** units/boxes 与排序
+      map[code] = { materialCode: code, materialName: d.skuName || '', brand: d.brand || '', units: 0, boxes: 0, hasSpec: false,
+                    rejUnits: 0, rejBoxes: 0, rejOrders: {}, rejReason: '' };
     }
     map[code].units += d.firstDayShort || 0;
     const bs = boxSpecOf(code);
     if (bs) {
       map[code].boxes += (d.firstDayShort || 0) / bs;
       map[code].hasSpec = true;
+    }
+    if (isRejectedOrder(d)) {
+      const _rq = d.firstDayShort || 0;
+      map[code].rejUnits += _rq;
+      if (bs) map[code].rejBoxes += _rq / bs;
+      map[code].rejOrders[d.orderNo || ('_r' + map[code].rejUnits)] = 1;
+      if (!map[code].rejReason) map[code].rejReason = String(d.rejectReason).trim();
     }
   });
   const arr = Object.values(map);
@@ -4003,6 +4031,9 @@ function getTopShortageSKUsByDay(rdc, dateStr, limit, channel) {
   top5.forEach(t => {
     t.transit = transitBySku[t.materialCode] || 0;    // 在途箱数（缺货报告，每 SKU 独立）
     t.dcSupply = supplyBySku[t.materialCode] || '';   // 大仓供应（缺货报告，每 SKU 独立）
+    // v379: 已拒绝量收口（箱数向上取整与主列同规则；供 tooltip 内「已拒绝」标注使用）
+    t.rejBoxes = Math.ceil(t.rejBoxes || 0);
+    t.rejOrderCnt = Object.keys(t.rejOrders || {}).length;
   });
   return top5;
 }
@@ -5144,6 +5175,43 @@ function attachUnreleasedToProfile(q, urMap, evMap) {
   if (evMap[k] && urMap[k]) attachUnreleasedInfo(q, urMap[k]);
 }
 
+// ==================== v379: 「已拒绝」展示标注（**只读标注，不参与任何计算**） ====================
+// 用户 2026-09-22 裁定（原话）：「打标拒绝原因还是要算入订单满足公式的，因为拒绝了也是未满足。
+//   只不过这些订单不会再有履约的机会了，因此最好在展示的时候有标注提醒已拒绝」
+// → 分子/分母**一律不动**：拒绝订单的 firstDayShort 照旧累加进「首日累计未满足 B」与满足率分母。
+// 判据：订单明细「订单拒绝原因」列非空（实测全量只有一种取值「10-不合理请求」）。
+// 形式：**原生 title 悬停** —— 这些表格外层多为 .table-wrap{overflow:auto} 滚动容器，
+//   绝对定位的自定义弹层会被裁掉；原生 title 不受裁切影响，且与本看板既有交互语言一致。
+function isRejectedOrder(d) {
+  return !!(d && d.rejectReason && String(d.rejectReason).trim() !== '');
+}
+// 把「已拒绝」标注包到任意单元格 HTML 外层。rejUnits <= 0 时**原样返回**（无拒绝就不加任何标记）。
+//   rejUnits  该行口径下的已拒绝量（支）
+//   boxSpec   箱规（>0 时额外给出箱数；无箱规传 null/0）
+//   ratioBase 同口径的总量（用于算占比；传 0/null 则不显示占比）
+//   extraNote 追加一行上下文说明（可选）
+function rejMarkCell(baseHtml, rejUnits, boxSpec, ratioBase, extraNote) {
+  var r = Number(rejUnits) || 0;
+  if (!(r > 0)) return baseHtml;
+  var tot = Number(ratioBase) || 0;
+  var boxTxt = (boxSpec && boxSpec > 0) ? '（' + Math.round(r / boxSpec).toLocaleString() + ' 箱）' : '';
+  var pctTxt = '';
+  if (tot > 0) {
+    var pc = r / tot * 100;
+    pctTxt = '，占本行缺货 ' + (pc >= 10 ? Math.round(pc) : pc.toFixed(1)) + '%';
+  }
+  var lines = [
+    '其中已拒绝 ' + r.toLocaleString() + ' 支' + boxTxt + pctTxt,
+    '源数据「订单拒绝原因」非空（当前全量为 10-不合理请求）',
+    '这些订单已删除、不会再排单发货 → 这部分缺货不可恢复',
+    '口径：拒绝仍计入满足率（拒绝 = 未满足），本标注只作提醒，不改任何数字'
+  ];
+  if (extraNote) lines.push(extraNote);
+  return '<span style="border-bottom:1px dashed #E24B4A;cursor:help" title="' + lines.join('&#10;') + '">' + baseHtml + '</span>';
+}
+window.isRejectedOrder = isRejectedOrder;
+window.rejMarkCell = rejMarkCell;
+
 function buildMonthlyShortageProfile() {
   var prof = {}, monthWd = {};
   var src = dataStore.orderDetail || [];
@@ -5165,13 +5233,15 @@ function buildMonthlyShortageProfile() {
       prof[k] = { month: ym, sku: d.skuCode, name: d.skuName || '', brand: d.brand || '',
                   rdc: rdc, orderQty: 0, shortQty: 0, gapQty: 0,
                   shortDays: {}, orderDays: {}, kaShort: 0, dealerShort: 0,
-                  boxSpec: boxSpec };
+                  boxSpec: boxSpec,
+                  rejQty: 0, rejOrders: {} };   // v379: 被拒绝订单的首日缺货量（**只挂展示，不改 shortQty/mr/severity**）
     }
     var p = prof[k];
     var o = d.orderQty || 0, sh = d.firstDayShort || 0;
     p.orderQty += o; p.shortQty += sh; p.gapQty += (d.totalGap || 0);
     p.orderDays[d.dateStr] = 1;
     if (sh > 0) p.shortDays[d.dateStr] = 1;
+    if (isRejectedOrder(d)) { p.rejQty += sh; p.rejOrders[d.orderNo || ('_r' + i)] = 1; }   // v379
     if (d.channel === 'KA') p.kaShort += sh;
     else if (d.channel === '经销商') p.dealerShort += sh;
   }
@@ -5188,6 +5258,9 @@ function buildMonthlyShortageProfile() {
     // v137: 派生月缺货箱数 = 整月 firstDayShort 累加 ÷ boxSpec
     // 用「按 SKU 聚合后的支数 ÷ 箱规」公式（v131 铁律），避免跨日累加导致的「同一批未满足订单在多日重复计入」虚增
     q.shortBoxes = (q.boxSpec && q.boxSpec > 0) ? Math.round(q.shortQty / q.boxSpec) : null;
+    // v379: 「已拒绝」展示标注派生字段（同样先按 SKU 聚合再除箱规；只展示，不参与 mr/sf/severity）
+    q.rejBoxes = (q.boxSpec && q.boxSpec > 0) ? Math.round(q.rejQty / q.boxSpec) : null;
+    q.rejOrderCnt = Object.keys(q.rejOrders).length;
     // v153: severity / isPersistent / isHighSeverity 改由 finalizeSeverity 用动态分位数统一计算
     list.push(q);
   }
@@ -5350,13 +5423,15 @@ function buildLongTermProfile(targetMonth) {
     var g = snap[ym][d.skuCode];
     if (!g) {
       g = snap[ym][d.skuCode] = { sku: d.skuCode, name: d.skuName || '', brand: d.brand || '',
-        month: ym, orderQty: 0, shortQty: 0, orderDays: {}, shortDays: {}, rdcSet: {} };
+        month: ym, orderQty: 0, shortQty: 0, orderDays: {}, shortDays: {}, rdcSet: {},
+        rejQty: 0 };   // v379: 被拒绝订单的首日缺货量（只挂展示）
     }
     var o = d.orderQty || 0, sh = d.firstDayShort || 0;
     g.orderQty += o; g.shortQty += sh;
     g.orderDays[d.dateStr] = 1;
     if (sh > 0) g.shortDays[d.dateStr] = 1;
     g.rdcSet[rdc] = 1;
+    if (isRejectedOrder(d)) g.rejQty += sh;   // v379
   }
   var months = Object.keys(monthSet).sort();
   // v264: 月份切片——若指定了 targetMonth，只保留 <= targetMonth 的月份
@@ -5408,15 +5483,16 @@ function buildLongTermProfile(targetMonth) {
       var v = validList[vi];
       var rec = bySku[v.sku];
       if (!rec) rec = bySku[v.sku] = { sku: v.sku, name: v.name, brand: v.brand,
-        m: {}, rdcCntMax: 0, totalShort: 0, totalOrder: 0 };
+        m: {}, rdcCntMax: 0, totalShort: 0, totalOrder: 0, totalRej: 0 };   // v379: totalRej 只展示
       rec.m[ym2] = { pct: v.pct, sev: v.severity, shortQty: v.shortQty, orderQty: v.orderQty,
-        mr: v.mr, sf: v.sf, rdcCnt: v.rdcCnt,
+        mr: v.mr, sf: v.sf, rdcCnt: v.rdcCnt, rejQty: v.rejQty || 0,
         inP75: v.severity >= th.sevP75, inP90: v.severity >= th.sevP90 };
       if (!rec.name && v.name) rec.name = v.name;
       if (!rec.brand && v.brand) rec.brand = v.brand;
       if ((v.rdcCnt || 0) > rec.rdcCntMax) rec.rdcCntMax = v.rdcCnt;
       rec.totalShort += v.shortQty || 0;
       rec.totalOrder += v.orderQty || 0;
+      rec.totalRej += v.rejQty || 0;   // v379: 窗口内被拒绝的首日缺货量合计（只展示）
     }
   }
 
@@ -5509,12 +5585,14 @@ function buildLongTermProfileByRdc(targetMonth) {
     var g = snap[ym][d.skuCode][rdc];
     if (!g) {
       g = snap[ym][d.skuCode][rdc] = { sku: d.skuCode, name: d.skuName || '', brand: d.brand || '',
-        month: ym, rdc: rdc, orderQty: 0, shortQty: 0, orderDays: {}, shortDays: {} };
+        month: ym, rdc: rdc, orderQty: 0, shortQty: 0, orderDays: {}, shortDays: {},
+        rejQty: 0 };   // v379: 被拒绝订单的首日缺货量（只挂展示）
     }
     var o = d.orderQty || 0, sh = d.firstDayShort || 0;
     g.orderQty += o; g.shortQty += sh;
     g.orderDays[d.dateStr] = 1;
     if (sh > 0) g.shortDays[d.dateStr] = 1;
+    if (isRejectedOrder(d)) g.rejQty += sh;   // v379
   }
   var months = Object.keys(monthSet).sort();
   // v264: 月份切片——若指定了 targetMonth，只保留 <= targetMonth 的月份
@@ -5561,12 +5639,13 @@ function buildLongTermProfileByRdc(targetMonth) {
       var v = validList[vi];
       var key = v.sku + '|' + v.rdc;
       var rec = byKey[key];
-      if (!rec) rec = byKey[key] = { sku: v.sku, name: v.name, brand: v.brand, rdc: v.rdc, m: {}, totalShort: 0 };
+      if (!rec) rec = byKey[key] = { sku: v.sku, name: v.name, brand: v.brand, rdc: v.rdc, m: {}, totalShort: 0, totalRej: 0 };
       rec.m[ym2] = { pct: v.pct, sev: v.severity, shortQty: v.shortQty, orderQty: v.orderQty,
-        mr: v.mr, sf: v.sf, inP75: v.severity >= th.sevP75, inP90: v.severity >= th.sevP90 };
+        mr: v.mr, sf: v.sf, rejQty: v.rejQty || 0, inP75: v.severity >= th.sevP75, inP90: v.severity >= th.sevP90 };
       if (!rec.name && v.name) rec.name = v.name;
       if (!rec.brand && v.brand) rec.brand = v.brand;
       rec.totalShort += v.shortQty || 0;
+      rec.totalRej += v.rejQty || 0;   // v379: 窗口内被拒绝的首日缺货量合计（只展示）
     }
   }
 
@@ -6816,7 +6895,8 @@ function renderShortageMonthly() {
                   '<td style="text-align:left">' + p.rdc + '</td>' +
                   '<td style="text-align:right">' + p.orderQty.toLocaleString() + (p.unrelQty ? '<div style="font-size:10px;color:#854F0B;font-weight:400;white-space:nowrap" title="构成：已放行订单量 ' + p.orderQty.toLocaleString() + ' 支（本列数值）+ 未放行量 ' + p.unrelQty.toLocaleString() + ' 支（该 SKU×RDC 当月另有未放行订单，尚未发货）。未放行**不计入**本列，也不参与本行任何比率——仅作信息展示（该 SKU×RDC 当月**存在未清订单**，故一并列出；仅有首日缺货、总体已满足的组合不展示，v358）。">+未放行 ' + p.unrelQty.toLocaleString() + '</div>' : '') + '</td>' +
                   // v356: 未放行量不再挂在本列——订单尚未放行，算不上「首日缺货」（用户 9/16 裁定）；只在「订单量」列以「+未放行 N」标注
-                  '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.shortQty.toLocaleString() + '</td>' +
+                  // v379: 该组合含已拒绝订单时加悬停标注（**数字本身不变**：拒绝仍计入缺货与满足率）
+                  '<td style="text-align:right;color:var(--color-red);font-weight:600">' + rejMarkCell(p.shortQty.toLocaleString(), p.rejQty, p.boxSpec, p.shortQty) + '</td>' +
                   '<td style="text-align:right;color:var(--color-red)" title="' + (p.mr * 100).toFixed(1) + '% = 首日缺货量 ' + p.shortQty.toLocaleString() + ' ÷ 订单量 ' + p.orderQty.toLocaleString() + '（均为已放行口径 → 恒 ≤ 100%）' + (p.unrelQty ? '\n另有未放行量 ' + p.unrelQty.toLocaleString() + ' 支（订单尚未放行、尚未发货，算不上首日缺货），未计入分子与分母（只作信息展示，不稀释/不放大本率）' : '') + '">' + (p.mr * 100).toFixed(1) + '%</td>' +
                   '<td style="text-align:right;color:var(--color-purple);font-weight:600">' + p.shortDayCnt + '</td>' +
                   '<td style="text-align:right">' + p.orderDayCnt + '</td>' +
@@ -7099,7 +7179,8 @@ function renderShortageLongTerm() {
       '<td style="text-align:right" title="有缺货且有单工作日 ≥ ' + MS_PROFILE.MIN_DAYS + ' 天的月数">' + p.nM + ' / ' + months.length + '</td>' +
       '<td style="text-align:right;color:var(--text-secondary)" title="加权长期严重度 = Σ(月度百分位 × 月序) ÷ Σ月序，近期权重更高，用于排序">' + p.lsi.toFixed(3) + '</td>' +
       '<td style="text-align:left;white-space:nowrap">' + trailHtml(p) + '</td>' +
-      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + p.totalShort.toLocaleString() + '</td>' +
+      // v379: 含已拒绝时加悬停标注（**数字本身不变**：拒绝仍计入累计缺货量）
+      '<td style="text-align:right;color:var(--color-red);font-weight:600">' + rejMarkCell(p.totalShort.toLocaleString(), p.totalRej, null, p.totalShort, '累计口径跨月合并，若各月拒绝原因不同请以订单明细为准') + '</td>' +
       (_useByRdc ? '' : '<td style="text-align:right" title="有效月里同时缺货的最大 RDC 数">' + p.rdcCntMax + '</td>') +
       '<td style="text-align:right;color:var(--color-red)">' + (p.curMr * 100).toFixed(1) + '%</td>' +
       '<td style="text-align:right" title="从最新月往前连续在当月 P75 的月数">' + (p.curStreak || 0) + '</td>' +
@@ -7870,7 +7951,7 @@ function renderShortageOrderDetail() {
         <table class="data-table" style="font-size:12px;max-width:720px">
           <thead><tr>
             <th>统计范围</th><th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日累计未满足(B)</th>
-            <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th><th style="text-align:right;color:var(--color-orange)">拒绝（删单）(E)</th>
+            <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th>            <th style="text-align:right;color:var(--color-orange)" title="E 拒绝（删单）= 「订单拒绝原因」非空的订单所对应的首日缺货量（支）。&#10;E 是 B 的组成部分（同一字段求和）——拒绝订单首日排单=0、缺货量=订单支数，故 E ⊂ B。&#10;拒绝仍计入满足率（拒绝了也是未满足，用户 2026-09-22 裁定），但这些订单已删除、不会再排单发货。">拒绝（删单）(E)</th>
           </tr></thead>
           <tbody>
             ${[
@@ -7882,12 +7963,13 @@ function renderShortageOrderDetail() {
               '<td style="text-align:right;color:var(--color-red);font-weight:500">'+s.firstShort.toLocaleString()+'</td>' +
               '<td style="text-align:right;color:var(--color-blue)">'+s.gap.toLocaleString()+'</td>' +
               '<td style="text-align:right;color:var(--color-green)">'+s.totalFulfilled.toLocaleString()+'</td>' +
-              '<td style="text-align:right;color:var(--color-orange)">'+s.reject.toLocaleString()+'</td></tr>'
+              '<td style="text-align:right;color:var(--color-orange)" title="E 拒绝（删单）= 该范围内「订单拒绝原因」非空的订单所对应的首日缺货量合计（支）。&#10;E 是 B 的组成部分：E 与 B 同取「首日缺货量」字段求和（拒绝订单首日排单=0、缺货量=订单支数），故 E ⊂ B。&#10;拒绝仍计入满足率（拒绝了也是未满足，用户 2026-09-22 裁定），但这些订单已删除、不会再排单发货 → 属不可恢复的缺货。">'+s.reject.toLocaleString()+'</td></tr>'
             ).join('')}
           </tbody>
         </table>
         <div style="margin-top:8px;padding:8px 10px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
-          <strong>口径说明：</strong>A = C + D；E 包含在 C 中；C ≤ B。C（累计未满足）是当月订单累计尚未满足的缺口量；E（拒绝/删单）是订单删除，后续不会再排单发货；B（首日累计未满足）是当月首日累计未满足的量，后续即使被满足也不会减少。
+          <strong>口径说明：</strong>A = C + D；C ≤ B。C（累计未满足）是当月订单累计尚未满足的缺口量；B（首日累计未满足）是当月首日累计未满足的量，后续即使被满足也不会减少。<br>
+          <strong>关于 E（拒绝 / 删单）：E 是 B 的组成部分</strong>——E 与 B 同取「首日缺货量」字段求和（拒绝订单首日排单=0、缺货量=订单支数），故 <strong>E ⊂ B</strong>（当前筛选范围：E = ${sumAll.reject.toLocaleString()} 支，占 B 的 ${sumAll.firstShort > 0 ? (sumAll.reject / sumAll.firstShort * 100).toFixed(2) : '0.00'}%）。<strong>拒绝仍计入满足率——拒绝了也是未满足</strong>（用户 2026-09-22 裁定）；但这些订单已删除、<strong>不会再排单发货，属不可恢复的缺货</strong>。本页各表 E 列与 SKU 明细中含已拒绝的数字上悬停可看该行构成。
         </div>
       </div>
     </div>
@@ -7955,7 +8037,7 @@ function renderShortageOrderDetail() {
             <th>品牌</th><th>SKU编码</th><th>SKU名称</th>
             <th style="text-align:right">订单总量(A)</th><th style="text-align:right;color:var(--color-red)">首日累计未满足(B)</th>
             <th style="text-align:right;color:var(--color-blue)">累计未满足(C)</th><th style="text-align:right;color:var(--color-green)">累计已满足(D)</th>
-            <th style="text-align:right;color:var(--color-orange)">拒绝（删单）(E)</th><th style="text-align:center;color:#8B5CF6">KA&amp;经销商<br/>都缺货</th>
+            <th style="text-align:right;color:var(--color-orange)" title="E 拒绝（删单）= 该 SKU「订单拒绝原因」非空的订单上的首日缺货量（支）。&#10;E 是 B 的组成部分，且已计入满足率（拒绝了也是未满足，用户 2026-09-22 裁定）；但这批订单不会再排单发货，属不可恢复的缺货。">拒绝（删单）(E)</th><th style="text-align:center;color:#8B5CF6">KA&amp;经销商<br/>都缺货</th>
             <th style="text-align:right;background:#FEF3C7">KA首日累计未满足</th><th style="text-align:right;background:#FEF3C7">KA累计未满足</th>
             <th style="text-align:right;background:#DBEAFE">经销首日累计未满足</th><th style="text-align:right;background:#DBEAFE">经销累计未满足</th>
           </tr></thead>
@@ -7968,7 +8050,7 @@ function renderShortageOrderDetail() {
               '<td style="text-align:right;color:var(--color-red);font-weight:500">' + s.firstShort.toLocaleString() + '</td>' +
               '<td style="text-align:right;color:var(--color-blue)">' + s.gap.toLocaleString() + '</td>' +
               '<td style="text-align:right;color:var(--color-green)">' + s.totalFulfilled.toLocaleString() + '</td>' +
-              '<td style="text-align:right;color:var(--color-orange)">' + (s.reject > 0 ? s.reject.toLocaleString() : '-') + '</td>' +
+              '<td style="text-align:right;color:var(--color-orange)" title="拒绝（删单）E = 该 SKU 在「订单拒绝原因」非空的订单上的首日缺货量合计（支）。&#10;E 是 B 的组成部分（同一字段求和），且已计入满足率——拒绝了也是未满足（用户 2026-09-22 裁定）。&#10;但这些订单已删除、不会再排单发货 → 属不可恢复的缺货。">' + (s.reject > 0 ? s.reject.toLocaleString() : '-') + '</td>' +
               '<td style="text-align:center">' + (s.kaFirstShort > 0 && s.dealerFirstShort > 0 ? '<span style="color:#8B5CF6;font-weight:600">是</span>' : '') + '</td>' +
               '<td style="text-align:right;background:#FEF3C7">' + (s.kaFirstShort > 0 ? s.kaFirstShort.toLocaleString() : '-') + '</td>' +
               '<td style="text-align:right;background:#FEF3C7">' + (s.kaGap > 0 ? s.kaGap.toLocaleString() : '-') + '</td>' +
@@ -7999,7 +8081,7 @@ function renderShortageOrderDetail() {
     ].filter(d => d.value > 0);
     return {
       title: { text: title, left: 'center', top: 5, textStyle: { fontSize: 13, fontWeight: 600 } },
-      tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + '（' + p.percent.toFixed(1) + '%）' },
+      tooltip: { trigger: 'item', confine: true, textStyle: { fontSize: 11 }, formatter: p => p.name + '<br/>' + p.value.toLocaleString() + '（' + p.percent.toFixed(1) + '%）' + (String(p.name).indexOf('拒绝') >= 0 ? '<br/><span style="font-size:10px;color:#F59E0B">已计入满足率（拒绝了也是未满足）<br/>这些订单不会再排单 → 不可恢复</span>' : '') },
       legend: { orient: 'vertical', right: 5, top: 'middle', itemGap: 6, textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 10 },
       series: [{
         type: 'pie', radius: ['42%', '62%'], center: ['38%', '55%'],
