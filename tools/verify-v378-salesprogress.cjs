@@ -12,7 +12,7 @@
  *   B. 全 14 页签 + plan-monitor 两个子页签（advice/logic）零运行时错误
  *   C. 页面「分仓计划监控」KPI 与 demand.json 逐位对账（计划合计 / 实际出货合计 / 完成率）
  *   D. 页面明细行不再出现「订单量」口径字样；表头为「实际出货(支)」
- *   E. demand-history.json 已加载且含 2026-09 快照点；MTD 曲线 series = 6 RDC + 日历基准
+ *   E. demand-history.json 已加载且含 >=4 个 2026-09 快照点；MTD 曲线 series = 6 RDC + 日历基准
  *   F. 「分仓计划优化建议」子页签同样走实际出货口径（无 JS 错误、导出按钮在）
  *
  * 用法（项目根执行）：
@@ -183,12 +183,15 @@ function check(name, ok, detail) {
     '页面 ' + Math.round(pm.totalPlan).toLocaleString() + ' vs 源 ' + exp.plan.toLocaleString() + ' 差 ' + (dPlan * 100).toFixed(3) + '%');
   check('分子（实际出货）与 demand.json 完全一致（容差 0.1%）', dShip < 0.001,
     '页面 ' + Math.round(pm.totalShip).toLocaleString() + ' vs 源 ' + exp.ship.toLocaleString() + ' 差 ' + (dShip * 100).toFixed(3) + '%');
-  check('页面完成率 ≈ 71.94%', Math.abs(pm.rate - 71.94) < 0.1, pm.rate.toFixed(2) + '%');
+  // ⚠️ 不许硬编码完成率（数据每天变）：必须与 demand.json 复算值对拍
+  check('页面完成率 == demand.json 复算（容差 0.1pp）', Math.abs(pm.rate - exp.rate) < 0.1,
+    pm.rate.toFixed(2) + '% vs 源 ' + exp.rate.toFixed(2) + '%');
   check('KPI 显示值与明细复算一致', pm.kpiText && Math.abs(parseFloat(pm.kpiText) - pm.rate) < 0.15,
     'KPI ' + pm.kpiText + ' vs 复算 ' + pm.rate.toFixed(1));
   check('明细表头为「实际出货(支)」', pm.th.indexOf('实际出货(支)') >= 0, JSON.stringify(pm.th));
   check('页面正文无「订单量」字样（销售进度已改文案）', !pm.hasOrderWord);
-  check('demand-history.json 已加载且含 4 个 2026-09 快照点', pm.hasHist && pm.histDays === 4, pm.histDays + ' 天');
+  // ⚠️ 快照点数只增不减（每天 +1）→ 用 >= 而非 ==，否则脚本会隔天假失败
+  check('demand-history.json 已加载且含 >= 4 个 2026-09 快照点', pm.hasHist && pm.histDays >= 4, pm.histDays + ' 天');
   check('MTD 曲线 = 6 条 RDC + 日历进度基准（共 7 条 series）',
     !!(pm.chart && pm.chart.series && pm.chart.series.length === 7), JSON.stringify(pm.chart && pm.chart.series));
   check('demand.json 未反复失败（_demandFail < 3）', pm.demandFail < 3, '_demandFail=' + pm.demandFail);
