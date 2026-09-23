@@ -798,7 +798,17 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 380; // v378: 销售进度口径全线统一为「实际出货 ÷ 分仓计划」（用户 2026-09-21 指令）——①分子唯一来源改为「分仓需求」表实际出货_数量（demand.json），取不到即 0，删除全部「订单口径回退值」路径；②未放行订单彻底退出计算（源文件已无该 sheet，看板里只剩 9/1 旧快照）——移除「订单放行」下拉、未放行披露块、buildPlanSkuAgg/renderPlanMonitor/buildPlanOptimAdvice 三处并入逻辑；③免费单/特殊价格订单确认不在销售进度内（保持）；④品牌×RDC矩阵分子由订单量改为实际出货（brandRdcOrder→brandRdcShip）；⑤「各RDC MTD累计完成率曲线」数据源由订单按日累计改为 demand-history.json 的实际出货 MTD 快照（新增 tools/export_demand.py 每日自动追加 + tools/backfill_demand_history.py 回填 git 历史）；⑥KPI/对比卡/明细/导出文案「订单量/订单进度」统一改「实际出货」。DB_VERSION 不动（无新增持久化字段）。
+const BUILD_VERSION = 381; // v381: 🔴 修复「基础数据」淘汰品列跨子表错配（数据正确性 bug，用户 2026-09-23 裁决·方案A）。
+//   「基础数据」是多段子表横向拼接（实测 29 列）：[0]产品编码…[3]品牌 | [4~7]空 | [8]产品编码 [9]是否为淘汰品 | … | [20]产品编码…[28]箱规转化因子。
+//   其中 [8]/[9] 是一份**独立贴在右侧的淘汰名单**（198 条），与同行的 [0] 无任何关系（实测：198 行的 [1]品名 vs [8]对应主表品名 → 相同 0 / 不同 198）。
+//   旧代码在 parseInventoryExcel(L14435) 与 _skuMasterMap(L19522) 两处都用 [0]/[20] 段的主表编码当 key + [9] 段的标记当值 → 198 条标记全部错配：
+//     ① 把「17781 是淘汰品」错记到「09855」（美加净银耳珍珠滋养霜80G，A类在销主力）头上；
+//     ② 33 个在销 SKU（合计 209.6 万支、占 9 月出货 31.87%）被误判淘汰 → 被挡在下调预警 / 优化建议之外；
+//     ③ 真正的 198 条淘汰品一个都没被过滤（实际 9 月仅剩 2,954 支零星出货）。
+//   修法（与 v233 已在 _skuMasterMap 里用过的「锚点向左取最近产品编码」同口径）：以「是否为淘汰品」列为锚点，
+//     向左取**最近**的「产品编码」作为 key 建独立淘汰集；锚点列与主表编码列重合时（旧模板单表结构）保持同行取值兼容。
+//   DB_VERSION 不动（无 sheet/字段语义变更，纯读取修复）。
+// v378: 销售进度口径全线统一为「实际出货 ÷ 分仓计划」（用户 2026-09-21 指令）——①分子唯一来源改为「分仓需求」表实际出货_数量（demand.json），取不到即 0，删除全部「订单口径回退值」路径；②未放行订单彻底退出计算（源文件已无该 sheet，看板里只剩 9/1 旧快照）——移除「订单放行」下拉、未放行披露块、buildPlanSkuAgg/renderPlanMonitor/buildPlanOptimAdvice 三处并入逻辑；③免费单/特殊价格订单确认不在销售进度内（保持）；④品牌×RDC矩阵分子由订单量改为实际出货（brandRdcOrder→brandRdcShip）；⑤「各RDC MTD累计完成率曲线」数据源由订单按日累计改为 demand-history.json 的实际出货 MTD 快照（新增 tools/export_demand.py 每日自动追加 + tools/backfill_demand_history.py 回填 git 历史）；⑥KPI/对比卡/明细/导出文案「订单量/订单进度」统一改「实际出货」。DB_VERSION 不动（无新增持久化字段）。
 // v343: ①回退上一轮「补货间隔索引 + L+R 覆盖周期补货量」改造（用户 9/11 纠偏：不需要 1:1 模拟补货流程，只需给上调/下调的 SKU 一个科学的调整量）——移除 parseExcel 末尾 buildReplInterval()、renderReplenishment 内 _rdcAvailMap、suggestQty 的 L+R 公式，模块A 建议补货量回到 v342 原状 MAX(0, 日均需求 × 4 − 总仓库存 − 在途数量)。②仅保留用户明确要求保留的**单位文案**修正：表头「近60天日均」→「近60天日均(支)」、「建议补货(箱)」→「建议补货(支)」，导出列名同步加 (支)，说明页补一句「数值单位支、与分仓计划/订单明细同源，『今日缺口』为箱、不可直接相加」。依据 v342 已实证：近60天日均与建议补货量取自订单支数/分仓计划(单位支)。纯文案，零逻辑改动。
 // v341: 上调侧新增「前瞻需求上升」信号（用户裁决·方案B，_demandDecayOf 的镜像）。落点=deviation 维度（语义同构：回看超销 vs 前瞻要涨，都是「需求被低估」的证据）：dims.deviation = min(回看偏离 + _riseSig, 1)。档位按用户指定**总分加成**口径换算（deviation 权重 0.30）：未来两月均值超当月 2 倍 → 总分 +0.05（_riseSig≈0.1667）、超 3 倍 → 总分 +0.10（_riseSig≈0.3333）。硬门槛 RISE_MIN_PLAN=100 箱（当前月计划 <100 时不启用，防低基数放大：实测 ratio>3 的 276 组中 39.5% 属 <100 箱噪声）。与衰减侧镜像要求 n1>0 且 n2>0（未来月显式 0/空白=未排产=无信号），两侧天然互斥。无上升信号时行为与 v340 完全一致（零回归），Math.min(...,1) 保持 1.0 量纲。实测影响 213 组（候选池 1300 组的 16.4%）。
 // v280: 防混淆专项——①5个函数头部加模块边界锚点注释(renderReplenishment/renderReplenishLogic=模块A每日补货建议·方案F打分; buildPlanOptimAdvice/renderPlanAdvice/renderPlanAdviceLogic=模块B分仓计划优化建议·规则链)，标明互不等于、共用底层sevDimCalc但上层机制不同。②UI消歧：优化建议页表格标题「🎯重点建议清单(评分降序)」→「重点建议清单(方向优先)」，「点击行展开五维因子明细」→「五维因子明细」(原措辞用模块A的图标与机制描述模块B，属误导源)。纯注释+文案，不改任何判定逻辑。DB_VERSION=228不动。
@@ -14421,6 +14431,45 @@ function parseInventoryExcel(rawData, merge) {
       const C_BASE_SPEC = bColIdx('箱规转化因子');
       const C_BASE_BRAND = bColIdx('品牌');
       const C_BASE_OBSOLETE = bColIdx('是否为淘汰品');
+      // v381: 🔴 淘汰品列必须配「它自己左侧最近的『产品编码』」，不能配 [0] 主表编码！
+      //   「基础数据」sheet 是**多段子表横向拼接**（实测 29 列）：
+      //     [0]产品编码 [1]产品名称 [2]成本价 [3]品牌 | [4~7]全空 |
+      //     [8]产品编码 [9]是否为淘汰品 | [10~11]空 | [12]收货库位 [13]收货仓 ... [20]产品编码 [21]产品名称 ...
+      //   其中 [8]/[9] 是一份**独立贴在右侧的淘汰名单**（198 条），与同行的 [0] 毫无关系：
+      //     实测 r5: [0]=88398「双妹玉容霜(经典版)50G(替换芯版正装)」 ↔ [8]=40288（主表真实品名=「家安酵素…」）
+      //     198 行的 [1]品名 vs [8]对应主表品名 —— 相同 0 条 / 不同 198 条。
+      //   v233 已在 _skuMasterMap 里用「锚点向左取最近产品编码」修对了同一 sheet，本处漏改（历史 bug）：
+      //     旧代码用 [0] 当 key + [9] 当标记 → 把「17781 是淘汰品」错记到「09855」头上，
+      //     导致 198 条标记全部错配到 [0] 列的**在销主力品**，把 33 个 SKU、209.6 万支（占 9 月出货 31.87%）
+      //     挡在下调预警/优化建议之外，同时真正的 198 条淘汰品一个都没被过滤。
+      //   修法：与 v233 同口径 —— 以淘汰品列为锚点，向左取**最近**的「产品编码」作为 key。
+      const C_OBS_CODE = (function(){
+        if (C_BASE_OBSOLETE < 0) return -1;
+        for (let i = C_BASE_OBSOLETE; i >= 0; i--) {
+          if (String(baseHeader[i] || '').trim() === '产品编码') return i;
+        }
+        return -1;
+      })();
+      const C_MASTER_CODE = (C_OBS_CODE >= 0 && C_OBS_CODE > 0)
+        ? (function(){ for (let i = C_OBS_CODE - 1; i >= 0; i--) { if (String(baseHeader[i] || '').trim() === '产品编码') return i; } return -1; })()
+        : -1;
+      // v381: [0] 主表编码列与淘汰名单编码列重合 → 该 sheet 是单表结构（旧模板），无需拆分
+      const _splitObsolete = (C_OBS_CODE >= 0 && C_MASTER_CODE >= 0 && C_OBS_CODE !== 0);
+      // v381: 独立淘汰名单 —— 先单独扫一遍，按「锚点左侧最近产品编码」建真实淘汰集
+      const _obsoleteSet = {};
+      if (_splitObsolete) {
+        for (let i = 1; i < baseArr.length; i++) {
+          const r = baseArr[i]; if (!r) continue;
+          const _oc = String(r[C_OBS_CODE] == null ? '' : r[C_OBS_CODE]).trim();
+          if (!_oc) continue;
+          if (String(r[C_BASE_OBSOLETE] == null ? '' : r[C_BASE_OBSOLETE]).trim() === '淘汰品') {
+            _obsoleteSet[_oc] = true;
+            const _on = normSkuCode(_oc);
+            if (_on && _on !== _oc) _obsoleteSet[_on] = true;
+          }
+        }
+        console.log('[基础数据] v381 淘汰名单(锚点配对)=' + Object.keys(_obsoleteSet).length + ' 个 SKU（原按[0]误配 198 条已废弃）');
+      }
       // v67/v69: 库位映射表（同一 sheet 右侧区域，列10起）—— 作为拉回数据 H/C 列缺失时的回退
       const C_BASE_REC = bColIdx('收货库位');
       const C_BASE_RDC = bColIdx('RDC');
@@ -14432,7 +14481,10 @@ function parseInventoryExcel(rawData, merge) {
         const cost = Number(r[C_BASE_COST >= 0 ? C_BASE_COST : 2]) || 0;
         const spec = Number(r[C_BASE_SPEC >= 0 ? C_BASE_SPEC : 3]) || 0;
         const brand = String(r[C_BASE_BRAND >= 0 ? C_BASE_BRAND : 4] || '').trim();
-        const obsolete = (C_BASE_OBSOLETE >= 0 ? String(r[C_BASE_OBSOLETE] || '').trim() : '') === '淘汰品';
+        // v381: 多段拼接表 → 查独立淘汰集；单表结构 → 沿用同行取值（旧模板兼容）
+        const obsolete = _splitObsolete
+          ? !!(_obsoleteSet[sku] || _obsoleteSet[normSkuCode(sku)])
+          : ((C_BASE_OBSOLETE >= 0 ? String(r[C_BASE_OBSOLETE] || '').trim() : '') === '淘汰品');
         if (!productMaster[sku]) productMaster[sku] = { cost, spec, brand, obsolete };
         // v67/v69: 收集 收货库位 → RDC / 收货仓 映射（基础数据 col14→col19 / col14→col15）
         if (C_BASE_REC >= 0) {
@@ -19510,6 +19562,28 @@ function buildPlanOptimAdvice() {
           var _aI = _hh.indexOf('ABC分类');
           var _bI = _hh.lastIndexOf('品牌');
           var _obI = _hh.indexOf('是否为淘汰品');
+          // v381: 🔴 与 parseInventoryExcel 同一坑 —— 「是否为淘汰品」必须配它**左侧最近**的「产品编码」。
+          //   旧代码用 _kI（[20] 段左取到的「产品编码」，即主表编码）当 key + _obI（[9] 段）当标记，
+          //   两者跨子表 → 198 条标记全部错配（详见 parseInventoryExcel 处 v381 注释）。此处同口径修正。
+          var _obKeyI = -1;
+          if (_obI >= 0) {
+            for (var _x2 = _obI; _x2 >= 0; _x2--) { if (_hh[_x2] === '产品编码') { _obKeyI = _x2; break; } }
+          }
+          var _obSplit = (_obKeyI >= 0 && _kI >= 0 && _obKeyI !== _kI);
+          // v381: 先按正确配对建独立淘汰集（仅多段拼接表需要）
+          var _obSet = {};
+          if (_obSplit) {
+            for (var _j = 1; _j < _bs.length; _j++) {
+              var _rj = _bs[_j]; if (!_rj) continue;
+              var _ojc = String(_rj[_obKeyI] == null ? '' : _rj[_obKeyI]).trim();
+              if (!_ojc) continue;
+              if (String(_rj[_obI] == null ? '' : _rj[_obI]).trim() === '淘汰品') {
+                _obSet[_ojc] = true;
+                var _ojn = normSkuCode(_ojc);
+                if (_ojn && _ojn !== _ojc) _obSet[_ojn] = true;
+              }
+            }
+          }
           for (var _i2 = 1; _i2 < _bs.length; _i2++) {
             var _r2 = _bs[_i2]; if (!_r2) continue;
             var _s2 = String(_r2[_kI] == null ? '' : _r2[_kI]).trim(); if (!_s2) continue;
@@ -19519,7 +19593,9 @@ function buildPlanOptimAdvice() {
               life: _lI >= 0 ? String(_r2[_lI] == null ? '' : _r2[_lI]).trim() : '',
               abc: _aI >= 0 ? String(_r2[_aI] == null ? '' : _r2[_aI]).trim() : '',
               brand: _bI >= 0 ? String(_r2[_bI] == null ? '' : _r2[_bI]).trim() : '',
-              obsolete: (_obI >= 0 ? String(_r2[_obI] || '').trim() : '') === '淘汰品'
+              obsolete: _obSplit
+                ? !!(_obSet[_s2] || _obSet[normSkuCode(_s2)])
+                : ((_obI >= 0 ? String(_r2[_obI] || '').trim() : '') === '淘汰品')
             };
             if (!m[_s2]) m[_s2] = _o;
             var _ns2 = normSkuCode(_s2);
