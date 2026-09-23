@@ -43,6 +43,35 @@ const SHEET_OPTS = { header: 1, defval: null, raw: true };
 // v201 阶段D: 源 xlsx 哈希记忆（.cache/source_hashes.json）—— 源未变跳过输出 JSON 写入
 //   部署"只更新 8月订单"时，inventory.xlsx / transship.xlsx 等未触碰 → 不重写对应 JSON →
 //   manifest 哈希不变 → 客户端无需拉取。解决"每次都全量更新"的体感问题。
+//
+// ============================================================================
+// 🔴🔴 v382 重大修正：manifest 哈希口径 = 「输出 JSON 自身哈希」（原为「源 xlsx 哈希」）
+// ============================================================================
+// 【事故】2026-09-23 v381 修复了「基础数据」淘汰品列跨子表错配（数据正确性 bug），
+//   代码变更 + 重生成 inventory-master.json 后，用户刷新却看不到修复生效 ——
+//   09855 仍被误判为淘汰品、导出「下调预警」里华北依旧缺它。
+//
+// 【根因】v381 是**纯代码修复，inventory.xlsx 源文件一个字节都没动**。
+//   而 manifest 里存的是 sha256(inventory.xlsx)，源没变 → 该哈希恒定不变 →
+//   客户端 refreshFromManifest 逐文件比对判「无变化」→ **永不重拉 inventory-master.json**
+//   → 用户 IDB 里永远是修复前的旧 productMaster。
+//   实测铁证：manifest 里 inventory-core.json 与 inventory-master.json 声明**同一个哈希**
+//   （6365a1be…），而两个文件内容完全不同 —— 因为那根本不是文件哈希，是 inventory.xlsx 的哈希。
+//   13 个受管文件里 7 个自相矛盾（inventory×2 / data.json / data-2026-05..08）。
+//
+// 【代价】任何「源没变但输出 JSON 变了」的部署（代码修复、解析逻辑调整、重跑、手工修 JSON）
+//   都会**静默失效**：脚本以为"无变化"，客户端也以为"无变化"，只有源数据更新才生效。
+//   这是一个**只影响老用户（有 IDB 缓存）**的隐性故障，全新访问者反而正常 —— 极难发现。
+//
+// 【修法】manifest 一律记录 **sha256(输出 JSON 文件本身)**：
+//   ✅ 源变了 → JSON 变 → 哈希变 → 客户端重拉（原行为不变）
+//   ✅ 源没变但 JSON 变了 → 哈希变 → 客户端重拉（**本次修复的核心**）
+//   ✅ 都不变 → 哈希不变 → 客户端走 IDB 缓存秒开（原行为不变）
+//   即：口径改成「数据内容的哈希」，比「源文件的哈希」更严格且无副作用。
+//
+// 【注意】`--only` 与「源未变跳过」两个分支原先都写 `= currentSrcHash`（源哈希），
+//   是坑的核心 —— 已一并改为对目标 JSON 重算 sha256File()。
+// ============================================================================
 const CACHE_DIR = path.join(ROOT, '.cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'source_hashes.json');
 function loadHashCache() {
@@ -292,18 +321,21 @@ function main() {
     return /^data.*\.xlsx$/i.test(f) || /^inventory\.xlsx$/i.test(f) || /^transship\.xlsx$/i.test(f);
   }).sort();
   // --only 过滤的：保留旧 manifest 哈希（确保客户端不误判为"删除"）
+  // v382: 🔴 哈希口径统一为「输出 JSON 自身哈希」——此时直接对该 JSON 重算，
+  //   而不是取源 xlsx 哈希。这样即使 JSON 在别处被改写（重跑/手工修复/前端解析变更），
+  //   哈希也会跟着变，客户端能感知到。详见文件顶部 v382 说明。
   for (const src of allSourceFiles) {
     if (allSources.indexOf(src) >= 0) continue;
     const outJson = src.replace(/\.xlsx$/i, '') + '.json';
     const primaryOutJson = (src.replace(/\.xlsx$/i, '') === 'inventory') ? 'inventory-core.json' : outJson;
     if (!ON_DEMAND_FILES.has(primaryOutJson) && fs.existsSync(path.join(ROOT, primaryOutJson))) {
-      manifest.files[primaryOutJson] = sha256File(path.join(ROOT, src));
+      manifest.files[primaryOutJson] = sha256File(path.join(ROOT, primaryOutJson));
       console.log(`   ⏭️ --only 跳过：${src}（保留旧 JSON + 旧 manifest 哈希）`);
     }
     if (src.replace(/\.xlsx$/i, '') === 'inventory') {
       ['inventory-master.json', 'inventory-plan.json'].forEach(f => {
         if (fs.existsSync(path.join(ROOT, f)) && !ON_DEMAND_FILES.has(f)) {
-          manifest.files[f] = sha256File(path.join(ROOT, src));
+          manifest.files[f] = sha256File(path.join(ROOT, f));
         }
       });
     }
@@ -330,15 +362,16 @@ function main() {
     const primaryOutJson = (base === 'inventory') ? 'inventory-core.json' : outJson;
     if (hashCache[src] === currentSrcHash && fs.existsSync(path.join(ROOT, primaryOutJson))) {
       console.log(`   ⏭️ 源未变（哈希一致），跳过：${primaryOutJson}（保留旧 JSON + 旧 manifest 哈希）`);
-      // 仍记入 manifest（不变才显得"无变化"，触发 IDB 缓存命中）
+      // v382: 🔴 哈希口径 = 输出 JSON 自身哈希（不再用源 xlsx 哈希）。
+      //   这样即使源没变、但 JSON 因代码修复/重跑被重写，哈希也会变 → 客户端强制重拉。
       if (!ON_DEMAND_FILES.has(primaryOutJson)) {
-        manifest.files[primaryOutJson] = currentSrcHash;
+        manifest.files[primaryOutJson] = sha256File(path.join(ROOT, primaryOutJson));
       }
       // inventory 拆出来的 inventory-master.json/inventory-plan.json 也都纳入 manifest（如已存在）
       if (base === 'inventory') {
         ['inventory-master.json', 'inventory-plan.json'].forEach(f => {
           if (fs.existsSync(path.join(ROOT, f)) && !ON_DEMAND_FILES.has(f)) {
-            manifest.files[f] = currentSrcHash;
+            manifest.files[f] = sha256File(path.join(ROOT, f));
           }
         });
       }
@@ -350,7 +383,8 @@ function main() {
       const payload = parseTransship(srcPath);
       fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
       // v201: transship.json 按需 fetch，不进 manifest（修复 v196 脚本未真改的隐性 bug）
-      if (!ON_DEMAND_FILES.has(outJson)) manifest.files[outJson] = currentSrcHash;
+      // v382: 🔴 哈希口径 = 输出 JSON 自身哈希（见文件顶部 v382 说明）
+      if (!ON_DEMAND_FILES.has(outJson)) manifest.files[outJson] = sha256File(path.join(ROOT, outJson));
       console.log(`   ${outJson}   rows=${payload.transship.length}`);
       continue;
     }
@@ -393,14 +427,14 @@ function main() {
         else if (STATUS_SHEETS.includes(name)) { statusSheets[name] = arr; statusRows += arr.length; }
         else console.log(`   ⚠️ inventory.xlsx 出现未分类 sheet：${name}（未输出，请确认 CORE/MASTER/PLAN/EXTRA/STATUS_SHEETS 配置）`);
       });
-      const srcHash = sha256File(srcPath);
       const writeSplit = (fileName, sheets, rows) => {
         if (!Object.keys(sheets).length) return; // 空集跳过，避免产出空文件
         const payload = { sheetNames: Object.keys(sheets), sheets };
         const filePath = path.join(ROOT, fileName);
         fs.writeFileSync(filePath, JSON.stringify(payload));
         // v201: inventory-master.json / inventory-plan.json 按需 fetch，不进 manifest（首屏不下载）
-        if (!ON_DEMAND_FILES.has(fileName)) manifest.files[fileName] = currentSrcHash;
+        // v382: 🔴 哈希口径改为「输出 JSON 自身的哈希」，不再是源 xlsx 哈希。原因见文件顶部 v382 说明。
+        if (!ON_DEMAND_FILES.has(fileName)) manifest.files[fileName] = sha256File(filePath);
         console.log(`   ${fileName}   sheets=${Object.keys(sheets).length}  rows=${rows}  size=${(fs.statSync(filePath).size / 1024).toFixed(1)}KB`);
       };
       writeSplit('inventory-core.json', coreSheets, coreRows);
@@ -470,8 +504,8 @@ function main() {
       }
     }
     fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
-    // manifest 以「源 xlsx 内容哈希」为键，仅当真实数据变化时才触发网页重新解析
-    if (!ON_DEMAND_FILES.has(outJson)) manifest.files[outJson] = currentSrcHash;
+    // v382: 🔴 哈希口径改为「输出 JSON 自身的哈希」（原为源 xlsx 哈希，见文件顶部 v382 说明）
+    if (!ON_DEMAND_FILES.has(outJson)) manifest.files[outJson] = sha256File(path.join(ROOT, outJson));
     console.log(`   ${outJson}   sheets=${wb.SheetNames.length}  rows=${totalRows}`);
     totalRows = 0; // 仅用于日志，每行文件重置
   }

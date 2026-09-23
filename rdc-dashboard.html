@@ -798,7 +798,25 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 381; // v381: 🔴 修复「基础数据」淘汰品列跨子表错配（数据正确性 bug，用户 2026-09-23 裁决·方案A）。
+const BUILD_VERSION = 382; // v382: 🔴 修复 manifest 哈希口径脱钩——让「纯代码修复」能被老用户看到（用户 2026-09-23 反馈：刷新后导出下调记录里华北仍无 09855）。
+//   【现象】v381（淘汰品列跨子表错配修复）部署后，用户刷新浏览器仍看不到修复：导出「下调预警」里华北没有 09855。
+//     但用全新浏览器（无 IndexedDB 缓存）实测**完全正常**：下调预警 166 行含 09855×华北RDC（计划量 95774、下调分 0.78、已下调）；
+//     RDC 筛「华北RDC」导出 34 行、09855 排第一行。→ 代码逻辑没问题，是**老用户拿不到新数据**。
+//   【根因】`manifest.json` 里记录的哈希**不是 JSON 文件的哈希，而是源 xlsx 的哈希**（generate_data_json.mjs 的 --only / 「源未变跳过」两个分支写 `= currentSrcHash`）。
+//     实测铁证：manifest 里 inventory-core.json 与 inventory-master.json 声明**同一个哈希 6365a1be…**，而两者内容完全不同
+//     —— 6365a1be… 实为 sha256(inventory.xlsx)。同批错位的共 7/13 个文件（inventory×2 + data.json + data-2026-05..08）。
+//     致命点：v381 是**纯代码修复，inventory.xlsx 源文件一字节未动** → 该哈希恒定 → 客户端 refreshFromManifest 逐文件比对判「无变化」
+//     → **永不重拉 inventory-master.json** → 老用户 IDB 里永远是修复前的旧 productMaster（09855 仍被误判淘汰）。
+//     而 DB_VERSION 未变 → 不清 IDB → 走「保留缓存 + 增量比对」路径，正好落进这个坑。**只影响老用户，全新访问者反而正常**。
+//   【A/B 实测（tools/verify-v382-ab.cjs）】同一份代码、同一个「伪造修复前 IDB」（pm09855=true）起点，只改 manifest 哈希：
+//     A 组（未修正，哈希=源 xlsx 哈希恒定）→ 刷新后 pm09855 **仍为 true**、storedHash 不变 → ✅ 复现 bug；
+//     B 组（已修正，哈希=JSON 真实哈希）  → 刷新后 pm09855 **变 false**、storedHash 变 19f0d328 → ✅ 修复生效。
+//   【修法】①manifest.json：7 个错位哈希改为**输出 JSON 文件自身的 sha256**（13/13 全匹配，见 tools 校验）；
+//     ②generate_data_json.mjs：manifest 哈希口径统一为 sha256(输出 JSON)，改掉原先的 currentSrcHash（3 处：--only 跳过 / 源未变跳过 / transship / 主输出分支）。
+//       语义更严格且无副作用：源变→JSON 变→哈希变→重拉（原行为不变）；都不变→哈希不变→走 IDB 秒开（原行为不变）。
+//   【注】`export_inventory.mjs` 与 `_update_adjustments.mjs` 口径本来就是「JSON 自身哈希」，本次只是把 generate_data_json.mjs 拉齐。
+//   DB_VERSION 不动（纯数据/manifest 口径修复，无 sheet/字段语义变更）。
+// v381: 🔴 修复「基础数据」淘汰品列跨子表错配（数据正确性 bug，用户 2026-09-23 裁决·方案A）。
 //   「基础数据」是多段子表横向拼接（实测 29 列）：[0]产品编码…[3]品牌 | [4~7]空 | [8]产品编码 [9]是否为淘汰品 | … | [20]产品编码…[28]箱规转化因子。
 //   其中 [8]/[9] 是一份**独立贴在右侧的淘汰名单**（198 条），与同行的 [0] 无任何关系（实测：198 行的 [1]品名 vs [8]对应主表品名 → 相同 0 / 不同 198）。
 //   旧代码在 parseInventoryExcel(L14435) 与 _skuMasterMap(L19522) 两处都用 [0]/[20] 段的主表编码当 key + [9] 段的标记当值 → 198 条标记全部错配：
