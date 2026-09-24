@@ -798,7 +798,23 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 383; // v383: 🔴 修复搜索框中文输入法打不进字（用户 2026-09-24 反馈：缺货分析「客户维度」的客户组搜索框无法输入中文）。
+const BUILD_VERSION = 384; // v384: 🔴 修订单满足率模块两处（用户 2026-09-24 反馈）：①RDC×渠道表「无订单」不再显示 0% ②弹窗「RDC在途(箱)」带前导零 SKU 恒为空（如华中 09872/09860）。
+//   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
+//     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
+//     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
+//     全库「有订单行但订单支数合计=0」的 日期×RDC×渠道 组合 = **0 个** → "分母为 0" 与 "无订单" 完全等价，判定无歧义。
+//     修复：6 个格子（KA / 经销商 / 合计 × 日(或MTD) / 月）分母=0 时显示灰字「无订单」；
+//     悬浮提示同步改为「当日无订单」/「MTD期间无订单」——此前它与"有订单但当日无缺货"共用"无缺货记录"一句，两者含义相反。
+//     底纹/字体/其它数值逻辑零改动；分母=0 的格子不再参与色阶判定（不会误标红）。
+//   【问题②：有在途却显示 —（根因=键形式不一致）】buildSupplyMaps 建索引时对物料码做了 `.replace(/^0+/,'')` 去前导零，
+//     而查询侧 getSkuSupplyInfo 用**原始码**查 → 带前导零的 SKU entries 恒为 null →「RDC在途(箱)」「大仓供应」永远是 —。
+//     实测（缺货汇总 2026-09-23 · 华中RDC）：09872 华中在途=400、09860=205，界面却显示 —；
+//     同批**不带零**的 10303/10304/10302 显示 163/250/274（与源列逐位一致）→ 零形式不一致是唯一变量。
+//     全库缺货汇总 204 个物料码中 **38 个以 0 开头**，此前全部受影响；9/23 当天有缺口且带零的 SKU 有 11 个。
+//     并且已验证「原样查不到、去零后才能查到」的 SKU = **0 个** → 去零归一化零收益，纯属多写的一步。
+//     修复 = 索引键改回原始物料码（1 行），查询侧不动。（铁律：查表严格用原始 SKU 码，去零会与真实短码撞键。）
+//   两处均为纯展示层修复，无 sheet/字段语义变更，DB_VERSION 不动。
+//   【上一版 v383】🔴 修复搜索框中文输入法打不进字（用户 2026-09-24 反馈：缺货分析「客户维度」的客户组搜索框无法输入中文）。
 //   【根因】该搜索框 oninput 直接调 renderCustomerToShortage()，而那条路径整页 `page.innerHTML = ...`，
 //   把「正在组字」的 <input> 节点一起替换掉 → 输入法组字目标脱离 DOM、composition 被销毁 → 汉字永远上不了屏；
 //   连带英文/数字也只能进 1 个字符（打完第一个字符焦点即掉到 BODY）。实测：组字中原节点 isConnected===false。
@@ -3697,12 +3713,20 @@ function renderFulfillment() {
     row['total_dayRate'] = allDayOrder > 0 ? allDayFirst / allDayOrder : 0;
     row['total_mtdRate'] = allMtdOrder > 0 ? allMtdFirst / allMtdOrder : 0;
     row['total_monthRate'] = allMonthOrder > 0 ? allMonthFulfill / allMonthOrder : 0;
+    // v384: 合计列的订单量（分母）单独留存，供渲染层判断「无订单」——此前只在算率时用过就丢了
+    row['total_dayOrder'] = allDayOrder;
+    row['total_mtdOrder'] = allMtdOrder;
+    row['total_monthOrder'] = allMonthOrder;
     tableRows.push(row);
   });
 
-  const pctCell = function(v, type) {
-    const cls = v >= 0.95 ? 'rate-good' : v >= 0.9 ? 'rate-warn' : 'rate-bad';
+  // v384: 该口径下完全没有订单（分母=0）时不显示 0%，改显示「无订单」
+  //   用户 2026-09-24 反馈：东北RDC × KA 当日无订单，却显示红色 0.0%（读起来像"全部缺货"）
+  const noOrderHtml = '<span style="color:var(--text-tertiary);font-weight:400">无订单</span>';
+  const pctCell = function(v, type, order) {
     const bg = type === 'day' ? 'background:#FFFBEB;' : 'background:#EFF6FF;';
+    if (!(order > 0)) return '<td class="num" style="' + bg + '">' + noOrderHtml + '</td>';
+    const cls = v >= 0.95 ? 'rate-good' : v >= 0.9 ? 'rate-warn' : 'rate-bad';
     return '<td class="num" style="' + bg + '"><span class="' + cls + '">' + formatPct(v) + '</span></td>';
   };
 
@@ -3726,31 +3750,42 @@ function renderFulfillment() {
       : getRdcChannelShortageSKUs(r.rdc, '经销商', filters.fulfillDate, 5);
 
     function skuTooltipHTML(channel, skus) {
-      const periodTip = isMtdMode ? 'MTD订单支数：' + formatNum(r[channel + '_mtdOrder']) + '<br/>MTD期间 ' + rangeStart + ' ~ ' + filters.fulfillDate : '订单支数：' + formatNum(r[channel + '_dayOrder']);
+      const chOrder = r[channel + '_' + dispKey + 'Order'];
+      const periodTip = isMtdMode ? 'MTD订单支数：' + formatNum(chOrder) + '<br/>MTD期间 ' + rangeStart + ' ~ ' + filters.fulfillDate : '订单支数：' + formatNum(chOrder);
       let head = '<div style="font-weight:600;margin-bottom:4px">' + r.rdc + ' · ' + channel + '</div>'
         + '<div style="color:#6b7280;font-size:11px;margin-bottom:4px">' + periodTip + '</div>';
+      // v384: 无订单时明说「无订单」——它与「有订单但无缺货」含义相反，不能共用一句提示
+      if (!(chOrder > 0)) return head + '<div style="color:#9ca3af">' + (isMtdMode ? 'MTD期间无订单' : '当日无订单') + '</div>';
       if (skus.length === 0) return head + '<div style="color:#9ca3af">' + (isMtdMode ? 'MTD期间无缺货记录' : '当日无缺货记录') + '</div>';
       return head + buildTopShortTipTable(skus, '订单缺口', function(s, info){ if (!info.boxSpec || !s.gap) return '—'; const b = s.gap / info.boxSpec; return b >= 1 ? Math.round(b) + ' 箱' : b.toFixed(2) + ' 箱'; }, r.rdc);
     }
 
     const kaRate = r['KA_' + dispKey + 'Rate'];
     const dealerRate = r['经销商_' + dispKey + 'Rate'];
+    const kaOrder = r['KA_' + dispKey + 'Order'];
+    const dealerOrder = r['经销商_' + dispKey + 'Order'];
+    const kaRateHtml = kaOrder > 0
+      ? '<span class="' + (kaRate >= 0.95 ? 'rate-good' : kaRate >= 0.9 ? 'rate-warn' : 'rate-bad') + '">' + formatPct(kaRate) + '</span>'
+      : noOrderHtml;
+    const dealerRateHtml = dealerOrder > 0
+      ? '<span class="' + (dealerRate >= 0.95 ? 'rate-good' : dealerRate >= 0.9 ? 'rate-warn' : dealerRate > 0 ? 'rate-bad' : '') + '">' + formatPct(dealerRate) + '</span>'
+      : noOrderHtml;
     tableHtml += '<tr>' +
       '<td><strong>' + r.rdc + '</strong></td>' +
       // 日/MTD满足率（淡黄底）
       '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('KA', leftKa)) + '">' +
-        '<span class="' + (kaRate >= 0.95 ? 'rate-good' : kaRate >= 0.9 ? 'rate-warn' : 'rate-bad') + '">' + formatPct(kaRate) + '</span>' +
+        kaRateHtml +
         (leftKa.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + leftKa.length + 'SKU</span>' : '') +
       '</td>' +
       '<td class="num" style="background:#FFFBEB;cursor:pointer" data-tip="' + regTip(skuTooltipHTML('经销商', leftDealer)) + '">' +
-        '<span class="' + (dealerRate >= 0.95 ? 'rate-good' : dealerRate >= 0.9 ? 'rate-warn' : dealerRate > 0 ? 'rate-bad' : '') + '">' + formatPct(dealerRate) + '</span>' +
+        dealerRateHtml +
         (leftDealer.length > 0 ? '<br/><span style="font-size:10px;color:var(--text-tertiary)">缺货' + leftDealer.length + 'SKU</span>' : '') +
       '</td>' +
-      pctCell(r['total_' + dispKey + 'Rate'], 'day') +
+      pctCell(r['total_' + dispKey + 'Rate'], 'day', r['total_' + dispKey + 'Order']) +
       // 月满足率（淡蓝底）
-      pctCell(r.KA_monthRate, 'month') +
-      pctCell(r.经销商_monthRate, 'month') +
-      pctCell(r.total_monthRate, 'month') +
+      pctCell(r.KA_monthRate, 'month', r.KA_monthOrder) +
+      pctCell(r.经销商_monthRate, 'month', r.经销商_monthOrder) +
+      pctCell(r.total_monthRate, 'month', r.total_monthOrder) +
       '</tr>';
   });
   tableHtml += '</tbody></table>';
@@ -8677,9 +8712,18 @@ function drillCustomerByName(name) {
 const RDC_TRANSIT_KEY = {'华南RDC':'huananTransit','华北RDC':'huabeiTransit','东北RDC':'dongbeiTransit','西北RDC':'xibeiTransit','华中RDC':'huazhongTransit','西南RDC':'xinanTransit'};
 function buildSupplyMaps() {
   // 每次重建，避免 dataStore.shortage 更新后索引仍停留在旧数据
+  // 🔴 v384: 索引键必须是**原始物料码**，不得去前导零。
+  //   事故（2026-09-24 用户报「华中仓 09872/09860 有在途，弹窗却显示 —」）：
+  //   此处曾经写成 `String(s.materialCode).replace(/^0+/,'').trim()`，而查询侧 getSkuSupplyInfo
+  //   用的是**原始码** → 键形式不一致 → 带前导零的 SKU 一律匹配失败（entries=null）。
+  //   实证：缺货汇总唯一物料码 204 个，其中 38 个以 0 开头 → 这 38 个的「RDC在途(箱)」「大仓供应」恒为 —；
+  //   同批不带零的 10303/10304/10302 正常显示 163/250/274（与「缺货汇总」09-23 华中在途列逐位一致），
+  //   零形式不一致是唯一变量。
+  //   并已验证「原样查不到、去零后才能查到」的 SKU = **0 个** → 去零归一化零收益，纯属多写的一步。
+  //   （口径铁律：查表严格用原始 SKU 码；去零会与真实短码撞键，项目已有 `09865` 类先例。）
   window._shortageByCode = {};
   dataStore.shortage.forEach(function(s) {
-    const c = String(s.materialCode == null ? '' : s.materialCode).replace(/^0+/, '').trim();
+    const c = String(s.materialCode == null ? '' : s.materialCode).trim();
     if (!c) return;
     (window._shortageByCode[c] = window._shortageByCode[c] || []).push(s);
   });
