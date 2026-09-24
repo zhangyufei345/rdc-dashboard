@@ -798,7 +798,16 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 382; // v382: 🔴 修复 manifest 哈希口径脱钩——让「纯代码修复」能被老用户看到（用户 2026-09-23 反馈：刷新后导出下调记录里华北仍无 09855）。
+const BUILD_VERSION = 383; // v383: 🔴 修复搜索框中文输入法打不进字（用户 2026-09-24 反馈：缺货分析「客户维度」的客户组搜索框无法输入中文）。
+//   【根因】该搜索框 oninput 直接调 renderCustomerToShortage()，而那条路径整页 `page.innerHTML = ...`，
+//   把「正在组字」的 <input> 节点一起替换掉 → 输入法组字目标脱离 DOM、composition 被销毁 → 汉字永远上不了屏；
+//   连带英文/数字也只能进 1 个字符（打完第一个字符焦点即掉到 BODY）。实测：组字中原节点 isConnected===false。
+//   【修复】新增统一入口 onSearchInput(el, ev, selector, renderFn)（见 renderShortage 上方注释）：
+//   用 `input` 事件自带的 ev.isComposing 判组字（不依赖 oncompositionstart/oncompositionend 内容属性——本环境不可用），
+//   组字期间不重渲染 + 渲染 220ms 防抖 + 渲染后按选择器还原焦点与光标。落点 2 处：
+//   ① 缺货分析/客户维度缺货分析「客户组名称」② 缺货分析（quadrant 深链落地的旧模板）「物料号/名称/品牌」。
+//   纯交互修复，无口径/布局改动，DB_VERSION 不动。
+//   【上一版 v382】🔴 修复 manifest 哈希口径脱钩——让「纯代码修复」能被老用户看到（用户 2026-09-23 反馈：刷新后导出下调记录里华北仍无 09855）。
 //   【现象】v381（淘汰品列跨子表错配修复）部署后，用户刷新浏览器仍看不到修复：导出「下调预警」里华北没有 09855。
 //     但用全新浏览器（无 IndexedDB 缓存）实测**完全正常**：下调预警 166 行含 09855×华北RDC（计划量 95774、下调分 0.78、已下调）；
 //     RDC 筛「华北RDC」导出 34 行、09855 排第一行。→ 代码逻辑没问题，是**老用户拿不到新数据**。
@@ -6118,6 +6127,48 @@ function shortageTabBarHtml(active) {
     '</div>';
 }
 
+// 🔴 v383: 搜索框中文输入法（IME）兼容 —— 统一入口
+// 根因（2026-09-24 真实浏览器实测确认）：这些搜索框的 oninput 直接调 renderXxx()，而那条渲染路径会
+//   整页 `page.innerHTML = ...`，把「正在组字」的 <input> 节点一起替换掉 →
+//   ① 输入法组字目标脱离 DOM → composition 被销毁 → 汉字永远上不了屏；
+//   ② 连带英文/数字也只能进 1 个字符（打完第一个字符焦点就掉到 BODY）。
+//   实测证据：组字中派发 isComposing 的 input 后，原节点 isConnected===false、activeElement 变 BODY；
+//   而「只重渲染子容器」的搜索框（转储 / 订单数据洞察）节点存活、组字正常。
+// 🔴 反面教训（同一轮实测踩到，务必别重犯）：**不能靠 oncompositionstart / oncompositionend 内容属性做门控** ——
+//   本环境 Chrome 里 `el.oncompositionend` / `el.oncompositionstart` 均为 `undefined`（这两个 IDL 属性不可用），
+//   写在 HTML 属性里的处理器压根绑不上 → 一旦用「粘性标记」做门控就会永远清不掉，把搜索彻底卡死。
+//   可靠判据只有 `input` 事件自带的 `ev.isComposing`（组字中 true、提交那一下 false），且**不需要任何全局标记**。
+// 对策（三件必须一起做）：
+//   ① 组字期间（ev.isComposing === true）直接 return，不重渲染，让输入法把字打完；
+//   ② 渲染改 220ms 防抖，避免每键整页重渲染；
+//   ③ 渲染后按选择器重新定位输入框、还原焦点与光标到末尾，保证可连续输入（且只在焦点本来就在框内时才抢焦点）。
+let _searchRenderTimer = null;
+function onSearchInput(el, ev, selector, renderFn) {
+  if (ev && ev.isComposing) {          // ① 组字中：不重渲染（保住输入法组字目标），也不写 filters.search（避免把拼音串当关键词）
+    if (!el._imeHooked) {              // 兜底：极少数实现提交时不补发 isComposing=false 的 input，用真实监听补一次渲染
+      el._imeHooked = true;
+      el.addEventListener('compositionend', function () {
+        if (el.isConnected) onSearchInput(el, null, selector, renderFn);
+      });
+    }
+    return;
+  }
+  filters.search = el.value;           // 只把「已提交」的文本当关键词
+  clearTimeout(_searchRenderTimer);
+  _searchRenderTimer = setTimeout(function () {
+    if (!el.isConnected) return;                    // 页面已切走 / 输入框已被换掉 → 放弃这次迟到的渲染
+    const stillMine = document.activeElement === el;
+    renderFn();
+    if (!stillMine) return;                         // 用户已把焦点移到别处 → 不抢焦点
+    const next = document.querySelector(selector);  // ③ 重新定位（刚渲染出来的是新节点）
+    if (next) {
+      next.focus();
+      const len = next.value.length;
+      try { next.setSelectionRange(len, len); } catch (e) {}
+    }
+  }, 220);
+}
+
 function renderShortage() {
   setTitle('缺货分析');
   const page = document.getElementById('page-shortage');
@@ -6204,7 +6255,7 @@ function renderShortage() {
       </select>
       <label>品牌：</label><select id="filter-shortage-brand" onchange="filters.brand=this.value;shortagePage=1;renderShortage()"><option value="all">全部</option>${BRAND_LIST.map(b => '<option value="'+b+'"'+(filters.brand===b?' selected':'')+'>'+b+'</option>').join('')}</select>
       <label>RDC：</label><select id="filter-shortage-rdc" onchange="filters.rdc=this.value;shortagePage=1;renderShortage()"><option value="all">全部</option>${RDC_LIST.map(r => '<option value="'+r+'"'+(filters.rdc===r?' selected':'')+'>'+r+'</option>').join('')}</select>
-      <label>搜索：</label><input type="text" id="filter-shortage-search" placeholder="物料号/名称/品牌" value="${filters.search}" oninput="filters.search=this.value;renderShortage()">
+      <label>搜索：</label><input type="text" id="filter-shortage-search" placeholder="物料号/名称/品牌" value="${filters.search}" oninput="onSearchInput(this,event,'#filter-shortage-search',renderShortage)">
       <button class="btn-export" onclick="exportShortageCSV()">导出CSV</button>
     </div>
     <!-- Tab切换：订单缺货明细分析 / 客户维度缺货分析 / 月度缺货全貌（缺货汇总已移除；客户维度从侧边栏并入） -->
@@ -8455,7 +8506,7 @@ function renderCustomerImpl(page) {
         <option value="qty" ${window.customerSortMode==='qty'?'selected':''}>📦 按订单量排序</option>
       </select>
       <label>RDC：</label><select onchange="filters.rdc=this.value;renderCustomerToShortage()"><option value="all">全部</option>${RDC_LIST.map(r => '<option value="'+r+'"'+(filters.rdc===r?' selected':'')+'>'+r+'</option>').join('')}</select>
-      <label>搜索：</label><input type="text" placeholder="客户组名称" value="${filters.search}" oninput="filters.search=this.value;renderCustomerToShortage()">
+      <label>搜索：</label><input type="text" id="filter-customer-search" placeholder="客户组名称" value="${filters.search}" oninput="onSearchInput(this,event,'#filter-customer-search',renderCustomerToShortage)">
       ${window.drillCustomer ? '<button class="btn-export" style="background:#DBEAFE;color:#1D4ED8;border-color:#93C5FD" onclick="window.drillCustomer=null;renderCustomerToShortage()">← 返回客户列表</button>' : ''}
       <button class="btn-export" onclick="exportCustomerCSV()">导出CSV</button>
     </div>
