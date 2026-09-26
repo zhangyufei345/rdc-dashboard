@@ -529,7 +529,7 @@ if (_savedRoleInit === 'ops' || _savedRoleInit === 'admin') currentRole = _saved
     }
   } catch (e) {}
 })();
-const OPS_ALLOWED = ['overview','fulfillment','order-insight','shortage','replenishment','shortage-compare','plan-monitor','biz-demand'];
+const OPS_ALLOWED = ['overview','fulfillment','order-insight','shortage','replenishment','shortage-compare','plan-monitor','biz-demand','transfer-opp'];
 function isPageAllowed(page) {
   if (currentRole === 'admin') return true;
   return OPS_ALLOWED.indexOf(page) >= 0;
@@ -798,7 +798,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 384; // v384: 🔴 修订单满足率模块两处（用户 2026-09-24 反馈）：①RDC×渠道表「无订单」不再显示 0% ②弹窗「RDC在途(箱)」带前导零 SKU 恒为空（如华中 09872/09860）。
+const BUILD_VERSION = 385; // v385: 新增「跨仓调拨机会」Tab（品牌视角分工抓手）：按线路约束就近配对 源仓低销↔目标仓缺货，因看板无各RDC在手库存，出线索清单而非建议量。 🔴 修订单满足率模块两处（用户 2026-09-24 反馈）：①RDC×渠道表「无订单」不再显示 0% ②弹窗「RDC在途(箱)」带前导零 SKU 恒为空（如华中 09872/09860）。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -2271,6 +2271,162 @@ function initChart(id) {
   return echarts.init(el);
 }
 
+// v385: 跨仓调拨机会线索表（品牌视角分工抓手）
+//   关键前提：看板无各RDC在手库存 → 本表不做"建议调拨量"，改做"调拨机会线索清单"。
+//   配对逻辑：源仓(低销信号) ↔ 目标仓(真缺货) 且 两仓在允许调拨线路内 且 非免费单。
+//   目标缺口(箱) = 首日缺货量(取最新日快照，已去重/排除双休日)；源仓可腾出量 = 待计划员核实库存。
+//   线路约束(成本·就近)：华中枢纽连华南/西北/西南/华北；西南连华中华南；华南连华中西南；
+//   华北连华中东北；东北仅连华北；西北仅连华中。免费单(收货库位尾号23/06)剔除范围。
+function renderTransferOpp() {
+  var page = document.getElementById('page-transfer-opp');
+  if (!page) return;
+  var _fmt = function(n){ return n == null ? '-' : (n % 1 ? n.toFixed(1) : ('' + Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')); };
+  var inv = dataStore.inventory || {};
+  var planBySkuRdc = inv.planBySkuRdc || {};
+  var actualShip = inv.actualShipBySkuRdc || {};
+  var shortageData = dataStore.shortage || [];
+  var orderDetail = dataStore.orderDetail || [];
+  var mMap = window._skuMasterMap || {};
+  var nbMap = window._masterNB || {};
+
+  var RDC_CN = ['东北RDC','华北RDC','华南RDC','西北RDC','华中RDC','西南RDC'];
+  var RDC_CODE = {'东北RDC':20,'华北RDC':90,'华南RDC':40,'西北RDC':60,'华中RDC':70,'西南RDC':80};
+  var ROUTES = {
+    '东北RDC':['华北RDC'], '华北RDC':['华中RDC','东北RDC'],
+    '华南RDC':['华中RDC','西南RDC'], '西南RDC':['华中RDC','华南RDC'],
+    '西北RDC':['华中RDC'], '华中RDC':['华南RDC','西北RDC','西南RDC','华北RDC']
+  };
+  var LEAD = {'华中RDC':4,'华南RDC':4,'华北RDC':5,'东北RDC':5,'西北RDC':5,'西南RDC':7};
+  var rdcShortKeys = {'东北RDC':'dongbeiShort','华北RDC':'huabeiShort','华南RDC':'huananShort','西北RDC':'xibeiShort','华中RDC':'huazhongShort','西南RDC':'xinanShort'};
+
+  if (!Object.keys(planBySkuRdc).length) {
+    page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">🔄</div><div style="font-size:var(--font-size-lg)">数据加载中…</div><div style="font-size:12px;margin-top:8px">分仓计划 / 缺货 / 订单明细 就绪后本页自动刷新</div></div>';
+    return;
+  }
+
+  // 最新日缺货快照（去重跨日；缺货分析源已排除双休日放行订单）
+  var latestDate = '';
+  shortageData.forEach(function(d){ if (d.dateStr && d.dateStr > latestDate) latestDate = d.dateStr; });
+  var shortMap = {};   // normSku|rdc -> 箱
+  var nameMap = {};    // normSku -> { name, brand }
+  shortageData.forEach(function(d){
+    if (d.dateStr !== latestDate) return;
+    var sku = normSkuCode(d.materialCode || d.sku || '');
+    if (!sku) return;
+    if (!nameMap[sku]) nameMap[sku] = { name: d.materialName || '', brand: d.brand || '' };
+    RDC_CN.forEach(function(rdcName){
+      var sv = (d[rdcName] != null ? d[rdcName] : (d[rdcShortKeys[rdcName]] != null ? d[rdcShortKeys[rdcName]] : 0)) || 0;
+      if (sv > 0) { var k = sku + '|' + rdcName; shortMap[k] = (shortMap[k] || 0) + sv; }
+    });
+  });
+
+  // 近60天日均(支/天) per normSku|rdc
+  var sda = new Date(latestDate || Date.now());
+  if (latestDate) sda = new Date(latestDate);
+  sda.setDate(sda.getDate() - 60);
+  var sdaStr = sda.toISOString().slice(0, 10);
+  var dailyMap = {};
+  orderDetail.forEach(function(d){
+    if (!d.dateStr || d.dateStr < sdaStr || (latestDate && d.dateStr > latestDate)) return;
+    var rdc = normalizeRdcName(d.warehouse || '');
+    if (!rdc || RDC_CODE[rdc] == null) return;
+    var sku = normSkuCode(d.skuCode || '');
+    if (!sku) return;
+    var k = sku + '|' + rdc;
+    dailyMap[k] = (dailyMap[k] || 0) + (d.orderQty || 0);
+  });
+  var days = latestDate ? Math.max(1, Math.ceil((new Date(latestDate) - sda) / 86400000)) : 60;
+
+  // 构建 SKU×RDC 单元
+  var cells = {};
+  Object.keys(planBySkuRdc).forEach(function(sk){
+    var sku = normSkuCode(sk);                       // 跨源统一 join key（前导零归一）
+    var row = planBySkuRdc[sk] || planBySkuRdc[sku] || {};  // 计划表按原始码查，norm 兜底
+    RDC_CN.forEach(function(rdcName){
+      var plan = row[rdcName] || 0;
+      if (!(plan > 0)) return;                       // 无计划 = 无需求，不参与（与下调口径一致）
+      var ship = 0;
+      var sr = actualShip[sk] || actualShip[sku] || {};
+      var sm = sr[rdcName] || {};
+      if (sm && typeof sm === 'object') { Object.keys(sm).forEach(function(m){ ship += (Number(sm[m]) || 0); }); }
+      else ship = Number(sm) || 0;
+      var shortBoxes = shortMap[sku + '|' + rdcName] || 0;
+      var dailyAvg = (dailyMap[sku + '|' + rdcName] || 0) / days;
+      var m = mMap[sk] || mMap[sku] || {};
+      var nb = nbMap[sk] || nbMap[sku] || {};
+      var life = (m.lifecycle || m['生命周期标签'] || nb['生命周期标签'] || '');
+      var phased = (m['是否淘汰品'] === '是' || nb['是否淘汰品'] === '是' || nb.obsolete === true);
+      var brand = (nameMap[sku] && nameMap[sku].brand) || nb['品牌'] || m['品牌'] || '';
+      var cat = (nb['供应链品类'] || m['供应链品类'] || nb['品类'] || '');
+      var name = (nameMap[sku] && nameMap[sku].name) || nb['产品名称'] || sk;
+      if (!cells[sku]) cells[sku] = { skuRaw: sk, name: name, brand: brand, cat: cat, life: life, rdc: {} };
+      cells[sku].rdc[rdcName] = {
+        plan: plan, ship: ship, shortBoxes: shortBoxes, dailyAvg: dailyAvg,
+        completion: plan > 0 ? ship / plan : 0, phased: phased
+      };
+    });
+  });
+
+  // 配对：源仓(低销信号) ↔ 目标仓(真缺货) 且 线路允许
+  var rows = [];
+  Object.keys(cells).forEach(function(sku){
+    var c = cells[sku];
+    RDC_CN.forEach(function(src){
+      var sc = c.rdc[src]; if (!sc) return;
+      // 源仓候选：低销信号 = 完成率<70% 且 无缺货 且 非淘汰 且 非新品期
+      var isSource = sc.completion < 0.7 && sc.shortBoxes <= 0 && !sc.phased && c.life !== '新品期';
+      if (!isSource) return;
+      RDC_CN.forEach(function(tgt){
+        if (tgt === src) return;
+        var tc = c.rdc[tgt]; if (!tc) return;
+        if (tc.shortBoxes <= 0) return;                       // 目标仓必须有真缺货
+        if ((ROUTES[src] || []).indexOf(tgt) < 0) return;     // 线路允许
+        rows.push({
+          sku: sku, skuRaw: c.skuRaw, name: c.name, brand: c.brand, cat: c.cat, life: c.life,
+          src: src, tgt: tgt,
+          srcCompletion: sc.completion, srcDailyAvg: sc.dailyAvg,
+          tgtShort: tc.shortBoxes, tgtCompletion: tc.completion,
+          lead: LEAD[tgt] || 0
+        });
+      });
+    });
+  });
+  rows.sort(function(a, b){ return b.tgtShort - a.tgtShort; });
+
+  var html = '';
+  html += '<div class="card" style="margin:16px"><div class="card-header"><span class="card-title">🔄 跨仓调拨机会线索</span>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">最新缺货日 ' + (latestDate || '—') + ' · 免费单(23/06)已剔除 · 无RDC库存故不含建议量</span></div>';
+  html += '<div style="font-size:12px;color:var(--text-secondary);padding:8px 12px;line-height:1.7">';
+  html += '用途：品牌负责人周报抓手。配对 = 源仓低销信号(完成率&lt;70%且无缺货) ↔ 目标仓真缺货，且两仓在允许调拨线路内。<br>';
+  html += '目标缺口(箱)=首日缺货量(最新日快照，已去重/排除双休日)；源仓可腾出量需计划员核实库存后填写（看板无各RDC在手库存）。建议调拨量上限=目标缺口。<br>';
+  html += '线路(成本就近)：华中枢纽连华南/西北/西南/华北；西南连华中华南；华南连华中西南；华北连华中东北；东北仅连华北；西北仅连华中。';
+  html += '</div>';
+  if (!rows.length) {
+    html += '<div style="padding:20px;color:var(--text-secondary)">当前无符合「源仓低销 + 目标仓缺货 + 线路允许」的调拨机会（或数据尚未加载完成）。</div>';
+  } else {
+    html += '<table class="data-table" style="width:100%"><thead><tr>';
+    html += '<th>SKU</th><th>品名</th><th>品牌</th><th>品类</th><th>生命周期</th>';
+    html += '<th>源仓(低销)</th><th>源仓完成率</th><th>源仓日均(支)</th><th>方向</th>';
+    html += '<th>目标仓(缺货)</th><th>目标缺口(箱)</th><th>目标完成率</th><th>建议调拨(箱)</th><th>到货周期(天)</th><th>优先级</th>';
+    html += '</tr></thead><tbody>';
+    rows.forEach(function(r){
+      var pri = r.tgtShort >= 50 ? '高' : (r.tgtShort >= 10 ? '中' : '低');
+      html += '<tr>';
+      html += '<td>' + r.skuRaw + '</td><td>' + r.name + '</td><td>' + (r.brand || '—') + '</td><td>' + (r.cat || '—') + '</td><td>' + (r.life || '—') + '</td>';
+      html += '<td>' + r.src + '</td><td>' + (r.srcCompletion * 100).toFixed(0) + '%</td><td>' + _fmt(r.srcDailyAvg) + '</td>';
+      html += '<td>' + r.src + ' → ' + r.tgt + '</td>';
+      html += '<td>' + _fmt(r.tgtShort) + '</td><td>' + (r.tgtCompletion * 100).toFixed(0) + '%</td>';
+      html += '<td>≤ ' + _fmt(r.tgtShort) + ' <span style="color:#A32D2D;font-size:11px">待核实源仓库存</span></td>';
+      html += '<td>' + r.lead + '</td><td>' + pri + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+  html += '<div style="font-size:11px;color:var(--text-muted);padding:8px 12px">共 ' + rows.length + ' 条候选 · 按目标缺口(箱)降序 · 仅作线索，实际调拨须计划员核实源仓库存后执行</div>';
+  html += '</div>';
+  page.innerHTML = html;
+}
+
 function renderPage(page) {
   if (!dataStore.loaded && page !== 'data') {
     // v188: 区分「首拉加载中」与「真的没数据」——bootLoad 全量拉取 17~25s 期间别让用户误以为要手工导 Excel
@@ -2280,6 +2436,7 @@ function renderPage(page) {
       //   ②boot 期间点转储/分仓监控时顺手预触发按需加载器，boot 一结束页面立即可用，不用再等第二轮 fetch。
       if (page === 'transship' && !window._transshipReady && typeof ensureTransship === 'function') ensureTransship();
       if (page === 'plan-monitor' && !window._invPlanReady && typeof ensureInventoryPlan === 'function') ensureInventoryPlan();
+      if (page === 'transfer-opp' && !window._invPlanReady && typeof ensureInventoryPlan === 'function') ensureInventoryPlan();
       document.getElementById('page-' + page).innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite">⏳</div><div style="font-size:var(--font-size-lg)">数据加载中…</div><div style="font-size:12px;margin-top:8px">首次打开 / 新版本部署后需全量拉取，之后自动走本地缓存秒开</div><div id="boot-loading-note" style="font-size:12px;margin-top:10px;color:#f59e0b;font-weight:600">' + ((window._bootProgress && window._bootProgress.text) || '正在准备…') + '</div><div style="font-size:11px;margin-top:8px;color:var(--text-muted)">数据到位后本页会自动刷新，无需手动操作</div></div>';
       return;
     }
@@ -2305,6 +2462,7 @@ function renderPage(page) {
       case 'slow-moving-logic': renderSlowMovingLogic(); break;
       case 'biz-demand': renderBizDemandCombined(); break;
       case 'plan-monitor': renderPlanMonitor(); break;
+      case 'transfer-opp': renderTransferOpp(); break;
       case 'adjust-track': renderAdjustTrack(); break;
       case 'biz-demand-detail': renderBizDemandDetail(); break;
       case 'biz-demand-dacr': renderBizDemandDACR(); break;
@@ -12932,6 +13090,7 @@ function init() {
           <div class="menu-item" data-page="replenishment" onclick="navigateTo('replenishment')"><span class="icon">🎯</span>补货建议</div>
           <div class="menu-item" data-page="shortage-compare" onclick="navigateTo('shortage-compare')"><span class="icon">⚖</span>缺货差异维护</div>
           <div class="menu-item" data-page="plan-monitor" onclick="navigateTo('plan-monitor')"><span class="icon">📊</span>分仓计划监控</div>
+          <div class="menu-item" data-page="transfer-opp" onclick="navigateTo('transfer-opp')"><span class="icon">🔄</span>跨仓调拨机会</div>
           <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>业务需求可信度</div>
           <div class="menu-item" data-page="adjust-track" onclick="navigateTo('adjust-track')"><span class="icon">🔁</span>补货调整跟踪</div>
           </div>
@@ -12983,6 +13142,7 @@ function init() {
           <div class="page" id="page-adjust-track"></div>
           <div class="page" id="page-biz-demand-detail"></div>
           <div class="page" id="page-biz-demand-dacr"></div>
+          <div class="page" id="page-transfer-opp"></div>
         </main>
       </div>
     </div>
@@ -12994,7 +13154,7 @@ function init() {
   // Handle hash routing
   function handleHash() {
     const hash = window.location.hash.replace('#/', '');
-    if (hash && ['overview','fulfillment','order-insight','shortage','weekend-sim','customer','transship','data','shortage-compare','replenishment','replenish-logic','inventory','inventory-structure','inventory-coverage-detail','slow-moving','slow-moving-logic','biz-demand','biz-demand-detail','biz-demand-dacr'].includes(hash)) {
+    if (hash && ['overview','fulfillment','order-insight','shortage','weekend-sim','customer','transship','data','shortage-compare','replenishment','replenish-logic','inventory','inventory-structure','inventory-coverage-detail','slow-moving','slow-moving-logic','biz-demand','biz-demand-detail','biz-demand-dacr','transfer-opp'].includes(hash)) {
       if (!isAuthenticated) return;
       if (hash === 'login') return;
       currentPage = hash;
