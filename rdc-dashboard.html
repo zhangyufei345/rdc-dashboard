@@ -529,7 +529,8 @@ if (_savedRoleInit === 'ops' || _savedRoleInit === 'admin') currentRole = _saved
     }
   } catch (e) {}
 })();
-const OPS_ALLOWED = ['overview','fulfillment','order-insight','shortage','replenishment','shortage-compare','plan-monitor','biz-demand','transfer-opp'];
+// 「跨仓调拨机会」(transfer-opp) 暂从可见菜单隐藏（2026-09-26 用户要求暂不展示）：函数/页面div/路由均保留，恢复时把 'transfer-opp' 加回此数组即可。
+const OPS_ALLOWED = ['overview','fulfillment','order-insight','shortage','replenishment','shortage-compare','plan-monitor','biz-demand'];
 function isPageAllowed(page) {
   if (currentRole === 'admin') return true;
   return OPS_ALLOWED.indexOf(page) >= 0;
@@ -798,7 +799,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 386; // v386: 修「跨仓调拨机会」两处——①致命：planBySkuRdc[sku][rdc] 是 {月:量} 对象，原代码直接 `plan>0` 比较对象恒 false → 表永远空；改为取出货同月(无则最新月)计划量，完成率=出货÷当月计划。②诚实：原 header 谎称「免费单已剔除」但代码未过滤，现按「其他订单」sheet 的 ZKFD/寄售类免费单 SKU×RDC 真实标记，源/目标两侧剔除（实测剔除 7 条免费单噪点）。
+const BUILD_VERSION = 387; // v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -13112,7 +13113,9 @@ function init() {
           <div class="menu-item" data-page="replenishment" onclick="navigateTo('replenishment')"><span class="icon">🎯</span>补货建议</div>
           <div class="menu-item" data-page="shortage-compare" onclick="navigateTo('shortage-compare')"><span class="icon">⚖</span>缺货差异维护</div>
           <div class="menu-item" data-page="plan-monitor" onclick="navigateTo('plan-monitor')"><span class="icon">📊</span>分仓计划监控</div>
+          <!-- 跨仓调拨机会 Tab 暂隐藏（2026-09-26 用户要求暂不展示）：恢复时取消此注释并在 OPS_ALLOWED 加回 'transfer-opp'
           <div class="menu-item" data-page="transfer-opp" onclick="navigateTo('transfer-opp')"><span class="icon">🔄</span>跨仓调拨机会</div>
+          -->
           <div class="menu-item" data-page="biz-demand" onclick="navigateTo('biz-demand')"><span class="icon">📋</span>业务需求可信度</div>
           <div class="menu-item" data-page="adjust-track" onclick="navigateTo('adjust-track')"><span class="icon">🔁</span>补货调整跟踪</div>
           </div>
