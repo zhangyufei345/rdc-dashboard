@@ -798,7 +798,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 385; // v385: 新增「跨仓调拨机会」Tab（品牌视角分工抓手）：按线路约束就近配对 源仓低销↔目标仓缺货，因看板无各RDC在手库存，出线索清单而非建议量。 🔴 修订单满足率模块两处（用户 2026-09-24 反馈）：①RDC×渠道表「无订单」不再显示 0% ②弹窗「RDC在途(箱)」带前导零 SKU 恒为空（如华中 09872/09860）。
+const BUILD_VERSION = 386; // v386: 修「跨仓调拨机会」两处——①致命：planBySkuRdc[sku][rdc] 是 {月:量} 对象，原代码直接 `plan>0` 比较对象恒 false → 表永远空；改为取出货同月(无则最新月)计划量，完成率=出货÷当月计划。②诚实：原 header 谎称「免费单已剔除」但代码未过滤，现按「其他订单」sheet 的 ZKFD/寄售类免费单 SKU×RDC 真实标记，源/目标两侧剔除（实测剔除 7 条免费单噪点）。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -2289,6 +2289,17 @@ function renderTransferOpp() {
   var mMap = window._skuMasterMap || {};
   var nbMap = window._masterNB || {};
 
+  // 免费单(23/06)剔除调拨范围：免费单来自「其他订单」sheet（ZKFD/寄售类），按 SKU×RDC 标记；
+  // 配对时源仓与目标仓两侧都剔除（宁可少报不把免费单噪点当调拨机会）。缺货汇总为全渠道未满足快照、
+  // 行级无免费单标记，故用「其他订单」sheet 的免费单 SKU×RDC 反查剔除。
+  var freeSet = {};
+  (dataStore.otherOrders || []).forEach(function(o){
+    if (o.orderType === '免费单') {
+      var fk = normSkuCode(o.skuCode || '') + '|' + normalizeRdcName(o.warehouse || '');
+      if (fk) freeSet[fk] = 1;
+    }
+  });
+
   var RDC_CN = ['东北RDC','华北RDC','华南RDC','西北RDC','华中RDC','西南RDC'];
   var RDC_CODE = {'东北RDC':20,'华北RDC':90,'华南RDC':40,'西北RDC':60,'华中RDC':70,'西南RDC':80};
   var ROUTES = {
@@ -2343,13 +2354,21 @@ function renderTransferOpp() {
     var sku = normSkuCode(sk);                       // 跨源统一 join key（前导零归一）
     var row = planBySkuRdc[sk] || planBySkuRdc[sku] || {};  // 计划表按原始码查，norm 兜底
     RDC_CN.forEach(function(rdcName){
-      var plan = row[rdcName] || 0;
-      if (!(plan > 0)) return;                       // 无计划 = 无需求，不参与（与下调口径一致）
-      var ship = 0;
+      var pobj = row[rdcName] || {};                  // 结构：{月: 计划量}（如 {2026-09:v,2026-10:v,2026-11:v}）
       var sr = actualShip[sk] || actualShip[sku] || {};
-      var sm = sr[rdcName] || {};
-      if (sm && typeof sm === 'object') { Object.keys(sm).forEach(function(m){ ship += (Number(sm[m]) || 0); }); }
-      else ship = Number(sm) || 0;
+      var sm = sr[rdcName] || {};                     // 结构：{月: 实际出货}
+      // 实际出货（按自然月求和；当前仅 2026-09）
+      var ship = 0; var shipMonths = [];
+      if (sm && typeof sm === 'object') { shipMonths = Object.keys(sm); shipMonths.forEach(function(m){ ship += (Number(sm[m]) || 0); }); }
+      else { ship = Number(sm) || 0; }
+      // 计划：取与出货同月（无出货则取最新计划月）——完成率=出货÷当月计划，避免把未来月计划计入放大分母
+      var pmonths = (pobj && typeof pobj === 'object') ? Object.keys(pobj) : [];
+      var targetMonth = shipMonths.length ? shipMonths.reduce(function(a,b){ return a > b ? a : b; })
+                                            : (pmonths.length ? pmonths.reduce(function(a,b){ return a > b ? a : b; }) : null);
+      var plan = 0;
+      if (pmonths.length) { plan = targetMonth ? (Number(pobj[targetMonth]) || 0) : 0; }
+      else { plan = Number(pobj) || 0; }
+      if (!(plan > 0)) return;                       // 当月无计划 = 无需求，不参与（与下调口径一致）
       var shortBoxes = shortMap[sku + '|' + rdcName] || 0;
       var dailyAvg = (dailyMap[sku + '|' + rdcName] || 0) / days;
       var m = mMap[sk] || mMap[sku] || {};
@@ -2373,12 +2392,14 @@ function renderTransferOpp() {
     var c = cells[sku];
     RDC_CN.forEach(function(src){
       var sc = c.rdc[src]; if (!sc) return;
+      if (freeSet[sku + '|' + src]) return;                   // 源仓该SKU为免费单，剔除出调拨范围
       // 源仓候选：低销信号 = 完成率<70% 且 无缺货 且 非淘汰 且 非新品期
       var isSource = sc.completion < 0.7 && sc.shortBoxes <= 0 && !sc.phased && c.life !== '新品期';
       if (!isSource) return;
       RDC_CN.forEach(function(tgt){
         if (tgt === src) return;
         var tc = c.rdc[tgt]; if (!tc) return;
+        if (freeSet[sku + '|' + tgt]) return;                 // 目标仓该SKU为免费单，剔除出调拨范围
         if (tc.shortBoxes <= 0) return;                       // 目标仓必须有真缺货
         if ((ROUTES[src] || []).indexOf(tgt) < 0) return;     // 线路允许
         rows.push({
@@ -2395,10 +2416,11 @@ function renderTransferOpp() {
 
   var html = '';
   html += '<div class="card" style="margin:16px"><div class="card-header"><span class="card-title">🔄 跨仓调拨机会线索</span>';
-  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">最新缺货日 ' + (latestDate || '—') + ' · 免费单(23/06)已剔除 · 无RDC库存故不含建议量</span></div>';
+  html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">最新缺货日 ' + (latestDate || '—') + ' · 免费单(其他订单sheet)已按 SKU×RDC 剔除出调拨范围 · 无RDC库存故不含建议量</span></div>';
   html += '<div style="font-size:12px;color:var(--text-secondary);padding:8px 12px;line-height:1.7">';
   html += '用途：品牌负责人周报抓手。配对 = 源仓低销信号(完成率&lt;70%且无缺货) ↔ 目标仓真缺货，且两仓在允许调拨线路内。<br>';
   html += '目标缺口(箱)=首日缺货量(最新日快照，已去重/排除双休日)；源仓可腾出量需计划员核实库存后填写（看板无各RDC在手库存）。建议调拨量上限=目标缺口。<br>';
+  html += '免费单 SKU×RDC（来自「其他订单」sheet 的 ZKFD/寄售类）已从源仓与目标仓两侧剔除，不计入调拨机会。<br>';
   html += '线路(成本就近)：华中枢纽连华南/西北/西南/华北；西南连华中华南；华南连华中西南；华北连华中东北；东北仅连华北；西北仅连华中。';
   html += '</div>';
   if (!rows.length) {
