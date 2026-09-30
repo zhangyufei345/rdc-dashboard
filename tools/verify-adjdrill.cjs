@@ -2,7 +2,9 @@
 /**
  * v347 验证：补货调整跟踪「下钻联动 + 两图 tooltip 跨维度分布」
  *   ① 页面运行时零报错
- *   ② 归因表点行 → 该类型被筛选（下拉同步）+ 明细表行全部属于该类型 + 行数 == 页面内复算值
+ *   ② 归因表点行 → 该类型被筛选（下拉同步）+ 明细表行全部属于该类型 + 行数 == 该类型「走完后有缺货」条数
+ *      （🔴 2026-09-30 校正：v348 起下钻会同时置 short='yes'，行数不再等于该类型全部记录数；
+ *        原 v347 期望值已过期，本地/线上一直报 3 项假红，本次按 v348 口径对齐）
  *   ③ 点行后自动滚到「调整明细」且该卡片短暂高亮；标题出现「筛选后 N 条 · M 个 SKU」徽标
  *   ④ 类型图 tooltip 含「缺货条来自哪些 RDC」，且各 RDC 条数 == 页面内同源复算
  *   ⑤ RDC图 tooltip 含「缺货条来自哪些调整类型」，且各类型条数 == 页面内同源复算
@@ -90,8 +92,15 @@ const ok = (cond, msg) => { console.log((cond ? '  ✓ ' : '  ✗ ') + msg); if 
     const rowsOf = t => t ? t.querySelectorAll('tbody tr').length : -1;
     const typeCnt = {};
     c.list.forEach(r => { const t = r.adjType || '未填写'; typeCnt[t] = (typeCnt[t] || 0) + 1; });
+    // v348 起：点归因表行下钻时同时置 short='yes'（只看「扣减且窗口已走完且真的缺了」的条），
+    //   所以下钻后的明细行数**不是**该类型全部记录数，而是这个子集 —— 本工具原期望（v347）已过期，此处对齐。
+    const typeShortCnt = {};
+    c.list.forEach(r => {
+      if (!(r.cut > 0 && r.status === '已完成' && r.shortBoxes > 0)) return;
+      const t = r.adjType || '未填写'; typeShortCnt[t] = (typeShortCnt[t] || 0) + 1;
+    });
     return {
-      allTotal: c.list.length, maxOrd: c.maxOrd, typeCnt,
+      allTotal: c.list.length, maxOrd: c.maxOrd, typeCnt, typeShortCnt,
       tableCount: cards.length,
       typeTableRows: rowsOf(cards[0]), detailRows: rowsOf(cards[1]),
       detailId: !!document.getElementById('adj-detail-card'),
@@ -120,9 +129,14 @@ const ok = (cond, msg) => { console.log((cond ? '  ✓ ' : '  ✗ ') + msg); if 
   console.log('\n[下钻] 点击归因表第 ' + (pick.idx + 1) + ' 行：' + pick.type + '（B象限 ' + pick.bBox + '）');
 
   await page.evaluate(i => document.querySelectorAll('#page-adjust-track table.data-table')[0].querySelectorAll('tbody tr')[i].click(), pick.idx);
-  // 高亮持续 ~1.7s：先在 500ms 时抓高亮（滚动是 smooth，此时可能还没到位）
-  await page.waitForTimeout(500);
-  const shadow = await page.evaluate(() => (document.getElementById('adj-detail-card') || {}).style.boxShadow || '');
+  // 高亮是「渲染后 80ms 设置、1600ms 后清除」的瞬时样式 → 单次采样会漏（曾因此误报）。
+  //   改为在 ~1.5s 窗口内轮询，只要出现过即算通过。
+  let shadow = '';
+  for (let i = 0; i < 15; i++) {
+    shadow = await page.evaluate(() => (document.getElementById('adj-detail-card') || {}).style.boxShadow || '');
+    if (/252,\s*165,\s*165|FCA5A5/i.test(shadow)) break;
+    await page.waitForTimeout(100);
+  }
   // 滚动到位是异步动画 → 轮询等待（最多 8s），再取最终位置与表格内容
   const scrolled = await page.waitForFunction(() => {
     const el = document.getElementById('adj-detail-card');
@@ -148,7 +162,8 @@ const ok = (cond, msg) => { console.log((cond ? '  ✓ ' : '  ✗ ') + msg); if 
   console.log('      明细卡位置 top/bottom = ' + hl.rectTop + '/' + hl.rectBottom + '（视口高 ' + hl.vh + '）| 高亮 =', shadow || '(无)');
   console.log('      明细卡头部 =', JSON.stringify(hl.header));
   ok(hl.selType === pick.type, '② 类型下拉已同步为「' + pick.type + '」');
-  ok(hl.rowCount === base.typeCnt[pick.type], '② 明细行数 ' + hl.rowCount + ' == 页面复算该类型记录数 ' + base.typeCnt[pick.type]);
+  ok(hl.rowCount === base.typeShortCnt[pick.type], '② 明细行数 ' + hl.rowCount + ' == 该类型「走完后有缺货」条数 ' + base.typeShortCnt[pick.type] +
+    '（v348 口径：下钻同时置 short=yes，故不等于该类型全部 ' + base.typeCnt[pick.type] + ' 条）');
   ok(hl.typesInTable.length === 1 && hl.typesInTable[0] === pick.type, '② 明细表内只含该类型（无混入）');
   ok(!hl.emptyRow, '② 明细表非空态');
   ok(scrolled, '③ 已自动滚动到明细卡（top=' + hl.rectTop + '，落在视口内）');
@@ -158,7 +173,8 @@ const ok = (cond, msg) => { console.log((cond ? '  ✓ ' : '  ✗ ') + msg); if 
   // ---------- 2) 查清筛选徽标数字是否与页面复算一致 ----------
   const badge = await page.evaluate(tp => {
     const c = window.buildAdjComputed();
-    const f = c.list.filter(r => (r.adjType || '未填写') === tp);
+    // 徽标是「下钻后 filtered」的数字 → 必须套 v348 的 short 口径，否则期望值偏大（原 v347 期望已过期）
+    const f = c.list.filter(r => (r.adjType || '未填写') === tp && r.cut > 0 && r.status === '已完成' && r.shortBoxes > 0);
     const cuts = f.filter(r => r.cut > 0);
     const short = cuts.filter(r => r.shortBoxes > 0);
     const el = document.getElementById('adj-detail-card');

@@ -799,7 +799,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 392; // v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 393; // v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -19188,7 +19188,10 @@ const ADJ_QUADRANTS = {
   C: { key: 'C', label: '判断有效', desc: '少补也没缺，人工判断准，计划员环节应当保留', cls: 'qc' },
   D: { key: 'D', label: '规则无感', desc: '少补无影响，放了不痛，适合做规则松绑试点', cls: 'qd' }
 };
-window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all', short: 'all' };
+// v393: 新增 batchShort —— 「按补货批次」图点击红色「窗口缺货(箱)」柱后，只看该批次**已进窗口且真的缺了**的记录。
+//   与归因表的 _adjState.short 是两套（short 要求 status==='已完成'，本项含「进行中」），
+//   因为红柱的口径就是 status !== '未开始'，两者必须逐字同源，不能复用。
+window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all', short: 'all', batchShort: false };
 // v347: 归因表点击行 → 置位本标志；renderAdjustTrack 渲染完成后滚动到「调整明细」并高亮（一次性消费）
 window._adjJumpDetail = false;
 
@@ -19330,6 +19333,11 @@ function _adjFiltered(computed) {
     // v348: 归因表下钻专用 —— 只看「走完后真的缺了」的记录。
     //   口径与归因表「缺货条数」分子逐字一致 = 扣减(cut>0) 且 窗口已走完(status==='已完成') 且 缺货量>0。
     if (st.short === 'yes' && !(r.cut > 0 && r.status === '已完成' && r.shortBoxes > 0)) return false;
+    // v393: 批次柱图红柱下钻（用户 2026-09-30 要求「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据」）。
+    //   🔴 判据必须与红柱**逐字同源**：红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，
+    //      滤掉 shortBoxes===0 的行不改变合计 → 明细「窗口缺货合计」恒等于红柱柱值（探针据此对拍）。
+    //      所以这里用 status!=='未开始'（含「进行中」），**不是** st.short 的 '已完成'。
+    if (st.batchShort && !(r.cut > 0 && r.status !== '未开始' && r.shortBoxes > 0)) return false;
     return true;
   });
 }
@@ -19417,7 +19425,9 @@ function renderAdjustTrack() {
 
   // 筛选条
   html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
-  html += '<select onchange="window._adjState.batch=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部批次</option>' + batches.map(function(b) { return '<option value="' + b + '"' + (st.batch === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select>';
+  // v393: 换批次时一并复位 batchShort —— 红柱下钻是「针对某一根柱」的临时视图，
+  //   若不复位，用户在已下钻状态下选「全部批次」会看到「全部批次的缺货行」而非全部记录，与预期不符。
+  html += '<select onchange="window._adjState.batch=this.value;window._adjState.batchShort=false;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部批次</option>' + batches.map(function(b) { return '<option value="' + b + '"' + (st.batch === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select>';
   html += '<select onchange="window._adjState.rdc=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部 RDC</option>' + rdcList.map(function(x) { return '<option value="' + x + '"' + (st.rdc === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   html += '<select onchange="window._adjState.type=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部调整类型</option>' + typeList.map(function(x) { return '<option value="' + x + '"' + (st.type === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   html += '<select onchange="window._adjState.hainan=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all"' + (st.hainan === 'all' ? ' selected' : '') + '>海南花露水：默认</option><option value="yes"' + (st.hainan === 'yes' ? ' selected' : '') + '>仅看花露水</option><option value="no"' + (st.hainan === 'no' ? ' selected' : '') + '>不含花露水</option></select>';
@@ -19494,22 +19504,29 @@ function renderAdjustTrack() {
   html += '<div class="card"><div class="card-header"><span class="card-title">按调整类型：扣减量 vs 窗口缺货率</span></div><div id="adj-chart-type" style="height:260px"></div></div>';
   html += '<div class="card"><div class="card-header"><span class="card-title">按 RDC：扣减量（按调整类型堆叠）vs 窗口缺货率</span></div><div id="adj-chart-rdc" style="height:260px"></div></div>';
   html += '</div>';
-  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">按补货批次：扣减量 vs 窗口缺货量</span><span style="font-size:11px;color:var(--text-secondary)">窗口缺货只含已进窗口的批次，随缺货数据日更补全</span></div><div id="adj-chart-batch" style="height:260px"></div></div>';
+  // v393: 卡片说明补「点红柱可下钻」提示 —— 「功能存在」≠「可发现」（v244 教训：品牌下钻入口不可见被当成 bug 报过）
+  html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">按补货批次：扣减量 vs 窗口缺货量</span><span style="font-size:11px;color:var(--text-secondary)">窗口缺货只含已进窗口的批次，随缺货数据日更补全 · <b style="color:#DC2626">点红色柱可下钻该批次缺货明细</b></span></div><div id="adj-chart-batch" style="height:260px"></div></div>';
 
   // 明细表
   // v347: 归因表 / 四象限的下钻落点。带「筛选后 SKU 汇总」徽标，避免用户从图表跳下来不知道筛了什么。
   html += '<div class="card" id="adj-detail-card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">调整明细（点击行查看扣减 vs 缺货因果图）</span>';
   // v348: 下钻时默认只列「走完后有缺货」的条（与归因表「缺货条数」同口径），并给出可点击取消的徽标 —— 否则用户
   //   看到的是该类型全部记录（含走完没缺、窗口没走完的），对不上表里的数字。
-  if (st.type !== 'all' || st.rdc !== 'all' || st.batch !== 'all' || st.hainan !== 'all' || st.quadrant !== 'all' || st.short === 'yes') {
+  // v393: 条件里补 batchShort，并在筛选带批次时把批次号写进徽标 —— 用户从红柱跳下来必须一眼知道「现在筛的是什么批次」
+  //   （v347 原则：下钻后不给上下文，用户会以为表格坏了）
+  if (st.type !== 'all' || st.rdc !== 'all' || st.batch !== 'all' || st.hainan !== 'all' || st.quadrant !== 'all' || st.short === 'yes' || st.batchShort) {
     const fSku = {}; filtered.forEach(function(r) { fSku[r.sku] = 1; });
     const fCuts = filtered.filter(function(r) { return r.cut > 0; });
     const fShort = fCuts.filter(function(r) { return r.shortBoxes > 0; });
-    let badge = '<span style="font-size:11px;color:var(--text-secondary)">筛选后 <b>' + filtered.length + '</b> 条 · ' + Object.keys(fSku).length + ' 个 SKU · 扣减 ' + _adjFmtNum(fCuts.reduce(function(s, r) { return s + r.cut; }, 0)) + ' 箱';
+    let badge = '<span style="font-size:11px;color:var(--text-secondary)">筛选后 <b>' + filtered.length + '</b> 条';
+    if (st.batch !== 'all') badge += '（批次 <b>' + st.batch + '</b>）';
+    badge += ' · ' + Object.keys(fSku).length + ' 个 SKU · 扣减 ' + _adjFmtNum(fCuts.reduce(function(s, r) { return s + r.cut; }, 0)) + ' 箱';
     badge += fShort.length ? (' · 窗口缺货 <b style="color:#DC2626">' + fShort.length + ' 条 / ' + _adjFmtNum(fShort.reduce(function(s, r) { return s + r.shortBoxes; }, 0)) + ' 箱</b>') : ' · 窗口缺货 0 条';
     badge += '</span>';
     html += badge;
     if (st.short === 'yes') html += ' <span class="badge" style="background:#FEF2F2;color:#B91C1C;cursor:pointer" title="只看窗口已走完且真的缺了的记录；点此恢复该类型全部记录" onclick="window._adjState.short=\'all\';renderAdjustTrack()">仅看走完后有缺货 ✕</span>';
+    // v393: 红柱下钻的可退出口（v354 红线：筛选态必须「可见 + 可退」）。只关这一层，保留批次筛选。
+    if (st.batchShort) html += ' <span class="badge" style="background:#FEF2F2;color:#B91C1C;cursor:pointer" title="只看该批次已进观察窗口且窗口内真的缺了的记录（含进行中）；点此恢复该批次全部记录" onclick="window._adjState.batchShort=false;renderAdjustTrack()">仅看窗口缺货 ✕</span>';
   }
   html += '</div>';
   html += '<div class="table-wrap" style="max-height:520px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' +
@@ -19534,7 +19551,7 @@ function renderAdjustTrack() {
       '<td style="text-align:left">' + (r.explain != null ? r.explain + '%' : '—') + '</td>' +
       '</tr>';
   });
-  if (!rows.length) html += '<tr><td colspan="13" style="text-align:left;color:var(--text-secondary);padding:24px">' + (st.short === 'yes' ? '当前筛选下没有「走完后有缺货」的记录（该类型的观察窗口可能尚未走完）' : '当前筛选条件下无记录') + '</td></tr>';
+  if (!rows.length) html += '<tr><td colspan="13" style="text-align:left;color:var(--text-secondary);padding:24px">' + (st.batchShort ? ('批次 ' + (st.batch === 'all' ? '' : st.batch + ' ') + '在已进入的观察窗口内没有缺货记录 —— 可能该批次尚未进入观察窗口，或窗口内确实没缺货。点上方「仅看窗口缺货 ✕」可恢复该批次全部记录。') : (st.short === 'yes' ? '当前筛选下没有「走完后有缺货」的记录（该类型的观察窗口可能尚未走完）' : '当前筛选条件下无记录')) + '</td></tr>';
   html += '</tbody></table></div></div>';
 
   // 功能2（v239 落地）：砍量冗余验证 —— 扣减量的正向影响（避免压货折算）+ 窗口后7天缺货复现跟踪
@@ -19694,17 +19711,33 @@ function renderAdjustTrack() {
   // 3) 按批次：扣减 vs 窗口缺货
   const batchAsc = batches.slice().reverse();
   const ch3 = initChart('adj-chart-batch');
-  if (ch3) ch3.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['扣减量(箱)', '窗口缺货(箱)'], top: 0 },
-    grid: { left: 60, right: 30, top: 34, bottom: 24 },
-    xAxis: { type: 'category', data: batchAsc },
-    yAxis: { type: 'value', name: '箱' },
-    series: [
-      { name: '扣减量(箱)', type: 'bar', barMaxWidth: 40, itemStyle: { color: '#FCA5A5' }, data: batchAsc.map(function(b) { return Math.round(computed.list.filter(function(r) { return r.date === b; }).reduce(function(s, r) { return s + cutOf(r); }, 0)); }) },
-      { name: '窗口缺货(箱)', type: 'bar', barMaxWidth: 40, itemStyle: { color: '#DC2626' }, data: batchAsc.map(function(b) { return Math.round(cuts.filter(function(r) { return r.date === b && r.status !== '未开始'; }).reduce(function(s, r) { return s + r.shortBoxes; }, 0)); }) }
-    ]
-  });
+  if (ch3) {
+    ch3.setOption({
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['扣减量(箱)', '窗口缺货(箱)'], top: 0 },
+      grid: { left: 60, right: 30, top: 34, bottom: 24 },
+      xAxis: { type: 'category', data: batchAsc },
+      yAxis: { type: 'value', name: '箱' },
+      series: [
+        { name: '扣减量(箱)', type: 'bar', barMaxWidth: 40, itemStyle: { color: '#FCA5A5' }, data: batchAsc.map(function(b) { return Math.round(computed.list.filter(function(r) { return r.date === b; }).reduce(function(s, r) { return s + cutOf(r); }, 0)); }) },
+        // v393: 红柱加 cursor:pointer —— 只有它可点（粉柱「扣减量」保持不可点，避免与本次需求不符的扩展）
+        { name: '窗口缺货(箱)', type: 'bar', barMaxWidth: 40, cursor: 'pointer', itemStyle: { color: '#DC2626' }, data: batchAsc.map(function(b) { return Math.round(cuts.filter(function(r) { return r.date === b && r.status !== '未开始'; }).reduce(function(s, r) { return s + r.shortBoxes; }, 0)); }) }
+      ]
+    });
+    // v393（用户 2026-09-30）：点击红色「窗口缺货(箱)」柱 → 筛到该批次 + 只看该批次的缺货记录 + 滚到「调整明细」并高亮。
+    //   🔴 批次值用 p.dataIndex 回查 batchAsc，**绝不用 p.name**（v389 铁律：展示值反查源数据是 bug 温床）。
+    //   🔴 同时置 batchShort=true，使明细行集合与红柱**逐字同源**（见 _adjFiltered 内注释）；
+    //      若只设 batch 会退化成「该批次全部记录」，用户仍需自己在「窗口缺货(箱)」列里挑，等于没下钻。
+    ch3.on('click', function(p) {
+      if (p.seriesIndex !== 1) return;
+      const b = batchAsc[p.dataIndex];
+      if (!b) return;
+      window._adjState.batch = b;
+      window._adjState.batchShort = true;
+      window._adjJumpDetail = true;   // 复用 v347 的一次性滚动/高亮标志
+      renderAdjustTrack();
+    });
+  }
   // 4) v239: 砍对记录冗余天数 Top10（横向条形，复现缺货的标琥珀色）
   if (rdVals.length) {
     const top10 = rdVals.slice().sort(function(a, b) { return b.redundantDays - a.redundantDays; }).slice(0, 10);
