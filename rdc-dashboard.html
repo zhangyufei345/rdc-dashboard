@@ -799,7 +799,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 390; // v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层 total仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高，图形传达的是错误信息（看图上 总仓紧张 与 总仓缺货 一模一样，实际 18.21% vs 15.83%）。修法：删掉多余回查，直接遍历 prof.cells 一次进桶（与结论②同源同口径）。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键** —— 必须用 dataIndex 回查源数组。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（formatter 只在真实 hover 时才执行）→ 新增常驻工具 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描 + tooltip 内容断言），已用「未修复的线上版」反向验证过能复现该报错。｜ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）落到看板。新增 ME_PARAMS/ME_QUAD 常量块 + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis 渲染 + exportMonthendCSV 导出。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A象限=重点关注（压货高+缺货高），并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天（关账集中放行实测仅2~8天）；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义，实测312条100%如此）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据（1-4月缺货汇总为空），故相关统计一律限定5-9月内比较以消除月份混淆。与「长期高严重度分析」是两个独立模块（脉冲口径 vs 缺口径），不可互推（Spearman ρ≈0）。｜ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 391; // v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -1414,8 +1414,24 @@ function parseInventoryTurnoverSheet(shI) {
       else if (c > 1 && monthCount > 0) break;          // 遇到非日期列（左右表之间的空列）即停止
     }
   }
-  if (monthCount < 7) monthCount = 7;                    // 兜底旧模板至少 7 月
+  // 🔴 v391: 删除旧的 `if (monthCount < 7) monthCount = 7;` 兜底。
+  //   该兜底会把「表头根本没探到月份列」的 sheet 也硬造出 7 个「X月」标签，
+  //   把「这不是周转表」伪装成「这张表有 7 个月的数据」——用户看到的「7月」就是这么来的。
+  //   实测 data-2026-05.json 的「库存分析」表头为 ['仓库','12月',46023,46026,46028,46011,46014]，
+  //   col1 是字符串 '12月'（非日期列），只能探到 6 列 → 旧代码兜底成 7 →
+  //   月份标签显示 7月、而数据只到第 6 列 → rowVals(...,1,7) 末位恒为 null
+  //   → 三张汇总行（全库位/共享仓/总仓）在最新月全为 null（= 用户截图里 3 个 KPI 显示 null）。
+  //   现在探测不足直接判「非周转表」并 return null，交由调用方跳过（不覆盖已有正确数据）。
+  const MIN_MONTH_COLS = 7;
+  if (monthCount < MIN_MONTH_COLS) {
+    console.warn('[parseInventoryTurnoverSheet] 表头仅探测到 ' + monthCount + ' 个月份列（< ' + MIN_MONTH_COLS + '），判定为非周转 sheet，返回 null');
+    return null;
+  }
   for (let c = 1; c <= monthCount; c++) invData.months.push(c + '月');
+
+  // 🔴 v391: 统计「确实匹配上周转表行」的数量。返回 null 而非半成品对象，
+  //   让调用方无法把一张无关 sheet（如 data-2026-0X.json 的「库存分析」）当成周转数据写进 dataStore。
+  let matchedRows = 0;
 
   for (let i=0;i<shI.length;i++){
     const r=shI[i]; if(!r) continue;
@@ -1423,16 +1439,16 @@ function parseInventoryTurnoverSheet(shI) {
     const right = r[rightStartCol]!=null ? String(r[rightStartCol]).trim() : '';
 
     // 左表：周转天数（B-G 列）
-    if (left === 'RDC（全库位）') invData.totalAllLocation = rowVals(r,1,monthCount);
-    else if (left === 'RDC（共享仓）') invData.totalSharedLocation = rowVals(r,1,monthCount);
-    else if (left === '总仓') invData.headquarters = rowVals(r,1,monthCount);
+    if (left === 'RDC（全库位）') { invData.totalAllLocation = rowVals(r,1,monthCount); matchedRows++; }
+    else if (left === 'RDC（共享仓）') { invData.totalSharedLocation = rowVals(r,1,monthCount); matchedRows++; }
+    else if (left === '总仓') { invData.headquarters = rowVals(r,1,monthCount); matchedRows++; }
     else if (left.indexOf('RDC分仓')>=0 && (sharedHeaderRow<0 || i<sharedHeaderRow)) {
       const idx = RDC_SHORT.findIndex(x=>left.indexOf(x)===0);
-      if (idx>=0){ const name=RDC_FULL[idx]; invData.allLocation[name]=rowVals(r,1,monthCount); if(invData.rdcOrder.indexOf(name)<0) invData.rdcOrder.push(name); }
+      if (idx>=0){ const name=RDC_FULL[idx]; invData.allLocation[name]=rowVals(r,1,monthCount); if(invData.rdcOrder.indexOf(name)<0) invData.rdcOrder.push(name); matchedRows++; }
     }
     else if (sharedHeaderRow>=0 && i>sharedHeaderRow) {
       const idx = RDC_SHORT.findIndex(x=>left===x);
-      if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,monthCount); }
+      if (idx>=0){ invData.subLocation[RDC_FULL[idx]]=rowVals(r,1,monthCount); matchedRows++; }
     }
 
     // 右表：库存金额（出货成本统计之前，仅 1-6月 6 列）/ 出货成本（之后，1-monthCount 月）
@@ -1458,6 +1474,17 @@ function parseInventoryTurnoverSheet(shI) {
     if(r && r[8] && String(r[8]).indexOf('周转天数=')>=0){ invData.formula=String(r[8]); break; }
   }
   if (invData.rdcOrder.length===0) invData.rdcOrder = ['东北RDC','华北RDC','华南RDC','华中RDC','西南RDC','西北RDC'];
+  // 🔴 v391: 一个行都没匹配上 ⇒ 这根本不是周转表（只是名字里带了「库存/周转」）。
+  //   返回 null，调用方 `if (invData)` / `if (turnoverData)` 就不会覆盖掉已有的正确数据。
+  //   ⚠️ 注意本守卫**不足以**拦截 data-2026-05.json 的「库存分析」sheet ——
+  //   那张表的行标签恰好也是 'RDC（全库位）'/'RDC（共享仓）'/'总仓'/'东北RDC分仓'（实测 matchedRows=15）。
+  //   它真正被拦下靠的是上方「月份列探测不足 7 列 → return null」。
+  //   两者互补：本守卫拦「行标签完全不像周转表」的 sheet，月份守卫拦「列结构不是周转表」的 sheet。
+  invData.matchedRows = matchedRows;
+  if (matchedRows === 0) {
+    console.warn('[parseInventoryTurnoverSheet] 未匹配到任何周转表行，判定为非周转 sheet，返回 null（matchedRows=0）');
+    return null;
+  }
   return invData;
 }
 
@@ -2002,11 +2029,25 @@ function parseExcel(rawData, mode, options) {
     }
 
     // Sheet: 库存周转（按名称查找）
-    const invSheet = sheetNames.findIndex(function(n) { return n.indexOf('库存') >= 0 || n.indexOf('周转') >= 0; });
+    // 🔴 v391 根因修复（用户 2026-09-30 报「库存周转数据为乱码 / 全 null」）：
+    //   原条件 = `n.indexOf('库存') >= 0 || n.indexOf('周转') >= 0` —— 只要名字里带「库存」就算命中，
+    //   而 data-2026-01~05.json 里恰恰有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行 / 7 列），
+    //   于是它被当成周转表解析；更糟的是下方是**无条件赋值** dataStore.inventoryTurnover = invData
+    //   → 直接把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。
+    //   实测误解析结果（与用户截图逐项吻合）：月份退化成「7月」（monthCount 兜底值）、
+    //   RDC（全库位）/RDC（共享仓）/总仓 三张汇总行在最新月**全为 null**（→ 3 个 KPI 显示 null）、
+    //   最快/慢 RDC = 9999/0（所有 RDC 的最新月都是 null → 从未进入 min/max 更新）。
+    //   现在只认「周转」（周转表名恒为 2026周转 / 2025周转，findIndex 保证优先取到当年的那张）。
+    //   ⚠️ 铁律：跨文件解析同名概念时，**sheet 名匹配串必须写到能唯一区分**，
+    //   「库存」「分析」这类高频词不能当唯一标识——本项目已有 v381（列名重复）同类教训。
+    const invSheet = sheetNames.findIndex(function(n) { return String(n == null ? '' : n).indexOf('周转') >= 0; });
     if (invSheet >= 0 && !options.skipInventory) {
       const shI = sheetToArray(wb.Sheets[sheetNames[invSheet]]);
       const invData = parseInventoryTurnoverSheet(shI);
-      if (invData) dataStore.inventoryTurnover = invData;
+      // v391: parseInventoryTurnoverSheet 现在对「一行都没匹配上」返回 null，
+      //   再加一道显式断言，避免将来函数签名变化时又出现静默覆盖。
+      if (invData && invData.matchedRows > 0) dataStore.inventoryTurnover = invData;
+      else if (invData) console.warn('[parseExcel] 周转表解析结果 matchedRows=0，拒绝覆盖 dataStore.inventoryTurnover');
     }
 
     // v203: 切出本次解析新增的按月数据（见上方 _capStart 说明）
@@ -14300,6 +14341,29 @@ function init() {
               });
             }
           })();
+          // 🔴 v391: 库存周转「中毒缓存」自愈（与上方两条同款范式）。
+          //   背景：v391 之前的 parseExcel 用 `name.indexOf('库存')>=0 || indexOf('周转')>=0` 挑周转表，
+          //   而 data-2026-01~05.json 里有一张「库存分析」sheet 被误当成周转表解析，并把结果**无条件**
+          //   写进 dataStore.inventoryTurnover → 覆盖掉 inventory-core.json 的正确数据。
+          //   中毒值已被 saveToIDB 持久化到 current_data，而 inventory-core.json 的哈希没有变
+          //   → 增量比对判「无变化」→ 永不重新解析 → **用户端没有任何自愈路径**
+          //   （这正是 v382「纯代码修复对老用户不可见」陷阱的第二次出现：修了代码但老用户看不到）。
+          //   中毒特征（可无歧义判定）：三张汇总行（全库位/共享仓/总仓）在**最新月全为 null**
+          //   —— 真实周转表这三行恒有数，三者同时为空说明这份数据是废的（页面 4 个 KPI 里 3 个显示 null）。
+          //   处理：强制把 inventory-core.json 塞进重拉列表，重新解析出正确周转数据（只多解析一次库存，无副作用）。
+          (function() {
+            const _it = dataStore.inventoryTurnover;
+            if (!_it || !Array.isArray(_it.months) || _it.months.length === 0) return; // 合法为 null（未部署库存文件）→ 不动
+            const _li = _it.months.length - 1;
+            const _at = function(a) { return (Array.isArray(a) && a.length > _li) ? a[_li] : null; };
+            const _anyNum = [_at(_it.totalAllLocation), _at(_it.totalSharedLocation), _at(_it.headquarters)]
+              .some(function(v) { return typeof v === 'number' && isFinite(v); });
+            if (restored && !_anyNum && manifest.files['inventory-core.json'] && changed.indexOf('inventory-core.json') < 0) {
+              changed.push('inventory-core.json');
+              console.warn('[refreshFromManifest] v391 库存周转三张汇总行最新月全空（中毒缓存），强制补拉 inventory-core.json 重新解析');
+            }
+          })();
+
           // v235: 补货调整记录自愈——adjustRecords 为空且 manifest 列有 adjustments.json 时强制补拉。
           //   根因：该文件 manifest 哈希口径历史上是「源 xlsx 哈希」（generate_data_json 成功分支 sha256File(adjSrc)），
           //   失败/缺源分支是「旧 JSON 哈希」，v208 全量重导出（xlsx 未命中）与今日更新之间哈希 A→B→A 跳变；
@@ -15609,9 +15673,11 @@ function parseInventoryExcel(rawData, merge) {
     });
 
     // Sheet: 库存周转（按名称查找，供库存周转模块使用；华东仓保留）
+    // v391: 与 parseExcel 同款防护——matchedRows=0 说明这张 sheet 不是周转表（只是名字带「周转」），
+    //   拒绝覆盖已有数据。parseInventoryTurnoverSheet 内部已 return null，这里再显式断言一次。
     const invTurnoverSheet = findByName('周转');
     const turnoverData = invTurnoverSheet ? parseInventoryTurnoverSheet(invTurnoverSheet) : null;
-    if (turnoverData) dataStore.inventoryTurnover = turnoverData;
+    if (turnoverData && turnoverData.matchedRows > 0) dataStore.inventoryTurnover = turnoverData;
 
     // 库存状态分析 → 按 RDC+SKU 聚合「效期风险」指标：可销售库存中 临期天数/总货架寿命 < 2/3 的金额占比
     // 兼容 6月（状态列 ∈ {计划可用库存,7~1/2效期,可用库存}）与 7月（快报月报-红橙黄预警 === '可用库存'，最严格口径）
