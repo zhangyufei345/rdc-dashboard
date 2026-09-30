@@ -799,7 +799,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 387; // v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 388; // v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）落到看板。新增 ME_PARAMS/ME_QUAD 常量块 + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis 渲染 + exportMonthendCSV 导出。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A象限=重点关注（压货高+缺货高），并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天（关账集中放行实测仅2~8天）；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义，实测312条100%如此）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据（1-4月缺货汇总为空），故相关统计一律限定5-9月内比较以消除月份混淆。与「长期高严重度分析」是两个独立模块（脉冲口径 vs 缺口径），不可互推（Spearman ρ≈0）。｜ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -5661,6 +5661,53 @@ var LT_TIER = {
   none:     { label: '—',      bg: 'transparent', color: '#CBD5E1', tip: '该 SKU 在长期画像中无有效数据（多为 1–4 月无有效记录）' }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// v388: 月底压货商品分析 —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）
+//
+// 业务背景（用户 2026-09-29）：经销商为完成月度业绩，会把月中/月初的正常订单
+//   挪到「关账当天」集中放行（关账日基本在 24-27 日）。所以「月末 10 天放行量
+//   远高于当月其余日子」= 压货信号。但用户强调：
+//     「压货多但缺货不多的 SKU 不是最需要关注的，反而是压货多且缺货也多的
+//       SKU 需要重点关注；同时要匹配总仓供应，因为总仓缺货分仓也无能为力」
+//
+// 两个关键口径铁律（离线分析已实测，勿回退）：
+//   ① 阈值必须「各月独立算分位」——固定倍数会让跨月命中率漂移 13 倍
+//      （实测各月 P75：01=1.51 / 02=7.21(春节) / 09=3.24）
+//   ② 窗口分母必须用「窗口内实际有单天数」——关账集中放行导致实际仅 2~8 天，
+//      用固定 10 天会把「只放 3 天但量很大」的真实脉冲稀释掉
+//
+// 压货脉冲刻意「不过滤双休日」：经销商月末冲量不看工作日（与补货/缺货口径不同）。
+// 缺货率沿用 isWorkday 过滤（v292 用户定的「首日未满足不含非工作日放行订单」）。
+// ═══════════════════════════════════════════════════════════════════════════
+var ME_PARAMS = {
+  TAIL_DAYS: 10,          // 月末窗口 = 最后 10 个自然日
+  TAIL_DAYS_MIN: 3,       // 窗口内实际有单天数下限（低于此不给指数，避免小样本噪声）
+  DAILY_MIN: 500,         // 窗口放行量下限（支），过滤极小单
+  MIN_MONTHS: 3,          // SKU×RDC 需观测满 3 个月才进清单
+  HIT_TH: 0.40,           // 压货高：达标月占比 >= 40%（与离线长期线同门槛）
+  SHORT_PCTL: 0.75,       // 缺货高：全期缺货率 >= 全体 P75
+  PULSE_PCTL: 0.75,       // 单月压货达标线 = 该月脉冲指数的 P75
+  SEVERE_PCTL: 0.90,      // 严重档 = 该月 P90
+  EXCLUDE_RDC: ['华东RDC'],
+  CHANNEL: '经销商',       // 压货是经销商行为（KA 是直营，逻辑不同）
+  WH_MONTHS: ['2026-05','2026-06','2026-07','2026-08','2026-09'],
+  WH_INV_P25: 0.25,       // 大仓库存低于该 SKU 该月 P25 → 记「低库存日」
+  WH_LOW_DAY_RATIO: 0.30, // 窗口内低库存日占比 >= 30% → 总仓紧张
+  WH_TAG_RATIO: 0.20,     // 「整体缺货/供应紧张」天数占比 >= 20% → 总仓缺货
+  WH_SAMPLE_MIN: 3        // 总仓观测天数下限
+};
+// 四象限定义（用户选定 2×2）：X=压货强度，Y=缺货程度
+var ME_QUAD = {
+  A: { label: '重点关注', desc: '压货高 + 缺货高', bg: '#FEE2E2', color: '#A32D2D',
+       tip: '既要冲量又供不上 —— 优先干预对象' },
+  B: { label: '可放',     desc: '压货高 + 缺货低', bg: '#D1FAE5', color: '#065F46',
+       tip: '冲量但供应跟得上 —— 不是当前优先级' },
+  C: { label: '另有原因', desc: '缺货高 + 压货低', bg: '#FEF3C7', color: '#92400E',
+       tip: '缺货不是压货造成的 —— 多为常规供应能力问题' },
+  D: { label: '忽略',     desc: '双低',           bg: '#F1EFE8', color: '#5F5E5A',
+       tip: '既不压货也不缺货' }
+};
+
 // targetMonth: 可选，格式 'YYYY-MM'。传入后只使用 <= targetMonth 的月度数据，
 //   并以该月为「当月」重算收缩值/分型/连续月数/LSI（等同于「回到该月月底看当时的清单」）。
 //   不传则默认用最新月（原行为）。
@@ -5976,6 +6023,314 @@ function getLongTermProfileByRdc(targetMonth) {
   return _ltByRdcCache.data;
 }
 window.getLongTermProfileByRdc = getLongTermProfileByRdc;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v388: 月底压货商品分析 —— 计算层
+// 本函数头部标注模块边界：**月底压货商品分析（renderMonthendAnalysis）**
+//   与「长期高严重度分析（renderShortageLongTerm）」是两个独立模块，口径不同：
+//   - 长期高严重度：看「缺货严重度百分位」的持续/反复（缺口径，isWorkday 过滤）
+//   - 月底压货分析：看「月末放行量脉冲」× 缺货 × 总仓（脉冲口径，不过滤工作日）
+//   两者不可互推：实测「压货强度」与「缺货程度」线性相关 ≈ 0（Spearman -0.02~-0.04）
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 数值安全：返回 Number 或 null（0 是合法值，不能用 || 兜底）
+function meNum(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  var n = Number(v);
+  return isNaN(n) ? 0 : n;
+}
+
+// 取某月「月末窗口起始日」（最后 TAIL_DAYS 个自然日的第一天）
+function meTailStart(ym) {
+  var y = parseInt(ym.slice(0, 4), 10), m = parseInt(ym.slice(5, 7), 10);
+  var last = new Date(y, m, 0).getDate();          // 下月 0 日 = 本月最后一天
+  return last - (ME_PARAMS.TAIL_DAYS - 1);
+}
+
+// 分位数（线性插值，与离线分析 pct 实现一致）。vals 需已剔 null。
+function mePct(vals, p) {
+  if (!vals || !vals.length) return null;
+  var s = vals.slice().sort(function(a, b) { return a - b; });
+  var n = s.length;
+  var k = p * (n - 1);
+  var lo = Math.floor(k), hi = Math.min(lo + 1, n - 1);
+  return s[lo] + (s[hi] - s[lo]) * (k - lo);
+}
+
+// SKU 主数据名称回退：订单明细里可能缺名称，用缺货汇总/基础数据补
+function meSkuNameFallback() {
+  if (window._meNameMap && window._meNameMapLen === (dataStore.orderDetail || []).length) {
+    return window._meNameMap;
+  }
+  var map = {};
+  (dataStore.orderDetail || []).forEach(function(d) {
+    if (d.skuCode && d.skuName && !map[d.skuCode]) map[d.skuCode] = d.skuName;
+  });
+  window._meNameMap = map;
+  window._meNameMapLen = (dataStore.orderDetail || []).length;
+  return map;
+}
+
+// ── 因素①压货脉冲 + 因素②缺货程度 ────────────────────────────────────────
+// 返回 { cells: {'ym|rdc|sku': {...}}, months: [...], thresholds: {ym:{p75,p90,n}} }
+function buildMonthendCells() {
+  var src = dataStore.orderDetail || [];
+  var cacheKey = src.length + '|' + (window._meWhStamp || '');
+  if (window._meCells && window._meCellsKey === cacheKey) return window._meCells;
+
+  var cells = {}, months = {};
+  for (var i = 0; i < src.length; i++) {
+    var d = src[i];
+    if (!d || !d.dateStr || !d.skuCode || !d.warehouse) continue;
+    if (d.channel !== ME_PARAMS.CHANNEL) continue;         // 压货只算经销商
+    var rdc = normalizeRdcName(d.warehouse);
+    if (!rdc || ME_PARAMS.EXCLUDE_RDC.indexOf(rdc) >= 0) continue;
+    var ym = d.dateStr.slice(0, 7);
+    var tailStart = meTailStart(ym);
+    var day = parseInt(d.dateStr.slice(8, 10), 10);
+    var key = ym + '|' + rdc + '|' + d.skuCode;
+    var c = cells[key];
+    if (!c) {
+      c = cells[key] = { ym: ym, rdc: rdc, sku: d.skuCode, name: d.skuName || '',
+        qtyWin: 0, qtyOut: 0, winDays: {}, outDays: {}, total: 0,
+        oq: 0, shortQty: 0, winOq: 0, winShort: 0, isWork: {} };
+    }
+    if (!c.name && d.skuName) c.name = d.skuName;
+    var q = meNum(d.orderQty);
+    c.total += q;
+    if (day >= tailStart) {
+      c.qtyWin += q; c.winDays[day] = 1;
+      c.winOq += q; c.winShort += meNum(d.firstDayShort);
+    } else {
+      c.qtyOut += q; c.outDays[day] = 1;
+    }
+    // 缺货率口径（因素②）：沿用看板 isWorkday 过滤，与长期模块同源
+    if (isWorkday(d.dateStr)) {
+      c.oq += q;
+      c.shortQty += meNum(d.firstDayShort);
+    }
+    months[ym] = 1;
+  }
+
+  // 派生指数 + 各月独立分位阈值
+  var idxByMonth = {};
+  var keys = Object.keys(cells);
+  for (var k = 0; k < keys.length; k++) {
+    var cc = cells[keys[k]];
+    cc.winDaysN = Object.keys(cc.winDays).length;
+    cc.outDaysN = Object.keys(cc.outDays).length;
+    cc.winAvg = cc.winDaysN > 0 ? cc.qtyWin / cc.winDaysN : 0;
+    cc.outAvg = cc.outDaysN > 0 ? cc.qtyOut / cc.outDaysN : 0;
+    // 分母用「窗口内实际有单天数」而非固定 TAIL_DAYS（口径铁律②）
+    cc.idx = cc.outAvg > 0 ? cc.winAvg / cc.outAvg : null;
+    cc.shortRate = cc.oq > 0 ? cc.shortQty / cc.oq : null;
+    cc.winShortRate = cc.winOq > 0 ? cc.winShort / cc.winOq : null;
+    if (cc.idx !== null && cc.winDaysN >= ME_PARAMS.TAIL_DAYS_MIN && cc.qtyWin >= ME_PARAMS.DAILY_MIN) {
+      (idxByMonth[cc.ym] = idxByMonth[cc.ym] || []).push(cc.idx);
+    }
+  }
+  var thresholds = {};
+  Object.keys(idxByMonth).forEach(function(ym) {
+    var v = idxByMonth[ym];
+    thresholds[ym] = { p75: mePct(v, ME_PARAMS.PULSE_PCTL), p90: mePct(v, ME_PARAMS.SEVERE_PCTL), n: v.length };
+  });
+
+  // 打标：是否达标（各月独立 P75）/ 是否严重（P90）
+  keys.forEach(function(k) {
+    var c = cells[k], t = thresholds[c.ym];
+    c.eligible = c.idx !== null && c.winDaysN >= ME_PARAMS.TAIL_DAYS_MIN && c.qtyWin >= ME_PARAMS.DAILY_MIN;
+    c.hit = !!(c.eligible && t && t.p75 !== null && c.idx >= t.p75);
+    c.severe = !!(c.eligible && t && t.p90 !== null && c.idx >= t.p90);
+  });
+
+  var res = { cells: cells, months: Object.keys(months).sort(), thresholds: thresholds };
+  window._meCells = res;
+  window._meCellsKey = cacheKey;
+  return res;
+}
+
+// ── 因素③总仓供应（仅 5-9 月，源 dataStore.shortage）──────────────────────
+// 🔴 语义坑：缺货汇总只登记「当天有缺货」的 SKU（截断数据）。某 SKU 在窗口内
+//   没出现 = 窗口内没缺货（NOT 缺数据）。离线实测 312 条「窗口内 0 天」的条目
+//   100% 都是「缺货记录全发生在窗口之前」。故 winDays==0 且有全月记录 → 判「总仓正常」。
+function buildMonthendWarehouse() {
+  var src = dataStore.shortage || [];
+  var cacheKey = src.length;
+  if (window._meWh && window._meWhKey === cacheKey) return window._meWh;
+
+  // {sku: {ym: {inv:{day:qty}, tags:{day:label}}}}
+  var daily = {};
+  for (var i = 0; i < src.length; i++) {
+    var d = src[i];
+    if (!d || !d.dateStr || !d.materialCode) continue;
+    var ym = d.dateStr.slice(0, 7);
+    if (ME_PARAMS.WH_MONTHS.indexOf(ym) < 0) continue;
+    var day = parseInt(d.dateStr.slice(8, 10), 10);
+    var s = daily[d.materialCode] || (daily[d.materialCode] = {});
+    var m = s[ym] || (s[ym] = { inv: {}, tags: {} });
+    m.inv[day] = meNum(d.dcStock);
+    m.tags[day] = d.dcSupply || '';
+  }
+
+  // SKU×月 聚合打分
+  var out = {};
+  Object.keys(daily).forEach(function(sku) {
+    var bym = daily[sku];
+    Object.keys(bym).forEach(function(ym) {
+      var m = bym[ym];
+      var dayKeys = Object.keys(m.inv).map(Number).sort(function(a, b) { return a - b; });
+      if (!dayKeys.length) return;
+      var vals = dayKeys.map(function(dy) { return m.inv[dy]; }).sort(function(a, b) { return a - b; });
+      var p25 = mePct(vals, ME_PARAMS.WH_INV_P25);
+      var tailStart = meTailStart(ym);
+      var winDays = dayKeys.filter(function(dy) { return dy >= tailStart; });
+      var wd = winDays.length;
+      var lowDays = winDays.filter(function(dy) { return m.inv[dy] < p25; }).length;
+      var tagDays = winDays.filter(function(dy) {
+        var t = m.tags[dy]; return t === '整体缺货' || t === '供应紧张';
+      }).length;
+      var rec = {
+        p25: p25, fullDays: dayKeys.length, winDays: wd,
+        lowDays: lowDays, tagDays: tagDays,
+        lowRatio: wd > 0 ? lowDays / wd : null,
+        tagRatio: wd > 0 ? tagDays / wd : null,
+        winInvMean: wd > 0 ? winDays.reduce(function(s2, dy) { return s2 + m.inv[dy]; }, 0) / wd : null
+      };
+      // 分级（双口径取更严者）
+      if (wd === 0) {
+        // 截断语义：窗口内无缺货记录 → 总仓在该窗口供应正常
+        rec.level = '总仓正常'; rec.code = 1; rec.censored = true;
+        rec.lowRatio = 0; rec.tagRatio = 0;
+      } else if (wd < ME_PARAMS.WH_SAMPLE_MIN) {
+        rec.level = '样本不足'; rec.code = 0; rec.censored = false;
+      } else {
+        var low = rec.lowRatio || 0, tag = rec.tagRatio || 0;
+        if (tag >= ME_PARAMS.WH_TAG_RATIO || low >= 0.60) { rec.level = '总仓缺货'; rec.code = 3; }
+        else if (low >= ME_PARAMS.WH_LOW_DAY_RATIO) { rec.level = '总仓紧张'; rec.code = 2; }
+        else { rec.level = '总仓正常'; rec.code = 1; }
+        rec.censored = false;
+      }
+      out[ym + '|' + sku] = rec;
+    });
+  });
+
+  window._meWh = out;
+  window._meWhKey = cacheKey;
+  return out;
+}
+
+// ── 聚合到 SKU×RDC + 四象限 ───────────────────────────────────────────────
+function buildMonthendProfile() {
+  var M = buildMonthendCells();
+  var WH = buildMonthendWarehouse();
+  var nameMap = meSkuNameFallback();
+  var agg = {};
+  Object.keys(M.cells).forEach(function(k) {
+    var c = M.cells[k];
+    var a = agg[c.rdc + '|' + c.sku];
+    if (!a) {
+      a = agg[c.rdc + '|' + c.sku] = { rdc: c.rdc, sku: c.sku, name: c.name || nameMap[c.sku] || '',
+        nMonths: 0, nHit: 0, nSevere: 0, hitMonths: [], severeMonths: [],
+        oq: 0, shortQty: 0, winOq: 0, winShort: 0,
+        idxVals: [], winAvgVals: [], whBad: 0, whAvail: 0, whLevels: {} };
+    }
+    if (!a.name && (c.name || nameMap[c.sku])) a.name = c.name || nameMap[c.sku];
+    // 只有 eligible（有指数）的月份才计入观测月数与达标统计
+    if (!c.eligible) return;
+    a.nMonths++;
+    a.idxVals.push(c.idx);
+    a.winAvgVals.push(c.winAvg);
+    if (c.hit) { a.nHit++; a.hitMonths.push(c.ym); }
+    if (c.severe) a.nSevere++;
+    a.oq += c.oq; a.shortQty += c.shortQty;
+    a.winOq += c.winOq; a.winShort += c.winShort;
+    var w = WH[c.ym + '|' + c.sku];
+    if (w && w.level !== '样本不足') {
+      a.whAvail++; a.whLevels[w.level] = (a.whLevels[w.level] || 0) + 1;
+      if (w.level === '总仓缺货' || w.level === '总仓紧张') a.whBad++;
+    }
+  });
+
+  var rows = [];
+  Object.keys(agg).forEach(function(k) {
+    var a = agg[k];
+    if (a.nMonths < ME_PARAMS.MIN_MONTHS) return;
+    rows.push({
+      rdc: a.rdc, sku: a.sku, name: a.name,
+      nMonths: a.nMonths, nHit: a.nHit, nSevere: a.nSevere,
+      hitRate: a.nMonths > 0 ? a.nHit / a.nMonths : 0,
+      hitMonths: a.hitMonths.sort(),
+      oq: a.oq, shortQty: a.shortQty,
+      shortRate: a.oq > 0 ? a.shortQty / a.oq : null,
+      winOq: a.winOq, winShort: a.winShort,
+      winShortRate: a.winOq > 0 ? a.winShort / a.winOq : null,
+      idxMed: mePct(a.idxVals, 0.5),
+      winAvgMed: mePct(a.winAvgVals, 0.5),
+      whBad: a.whBad, whAvail: a.whAvail, whLevels: a.whLevels
+    });
+  });
+
+  // 缺货门槛 = 全体缺货率 P75（与离线一致）
+  var srVals = rows.map(function(r) { return r.shortRate; }).filter(function(v) { return v !== null; });
+  var shortTh = mePct(srVals, ME_PARAMS.SHORT_PCTL);
+
+  rows.forEach(function(r) {
+    r.xHigh = r.hitRate >= ME_PARAMS.HIT_TH;
+    r.yHigh = r.shortRate !== null && shortTh !== null && r.shortRate >= shortTh;
+    r.quad = r.xHigh && r.yHigh ? 'A' : r.xHigh ? 'B' : r.yHigh ? 'C' : 'D';
+    if (r.whAvail === 0) r.whConcl = '总仓未覆盖';
+    else r.whConcl = r.whBad > 0 ? '总仓受限' : '总仓正常';
+    if (r.quad === 'A') {
+      r.attr = r.whConcl === '总仓受限' ? '总仓所致 → 找大仓/CDC'
+             : r.whConcl === '总仓正常' ? '分仓自身问题 → 找RDC'
+             : '待确认（总仓未覆盖）';
+    } else r.attr = '';
+  });
+
+  var counts = { A: 0, B: 0, C: 0, D: 0 };
+  rows.forEach(function(r) { counts[r.quad]++; });
+
+  // 检验：压货强度 vs 缺货程度 的秩相关（用于页面如实披露「两者非线性相关」）
+  var rho = null;
+  var pair = rows.filter(function(r) { return r.shortRate !== null; });
+  if (pair.length > 10) {
+    function rank(arr, key) {
+      var idx = arr.map(function(_, i) { return i; })
+        .sort(function(a, b) { return arr[a][key] - arr[b][key]; });
+      var rk = new Array(arr.length);
+      idx.forEach(function(orig, pos) { rk[orig] = pos; });
+      return rk;
+    }
+    var rx = rank(pair, 'nHit'), ry = rank(pair, 'shortRate');
+    var n = pair.length;
+    var mx = rx.reduce(function(s, v) { return s + v; }, 0) / n;
+    var my = ry.reduce(function(s, v) { return s + v; }, 0) / n;
+    var num = 0, dx = 0, dy = 0;
+    for (var i = 0; i < n; i++) {
+      var a2 = rx[i] - mx, b2 = ry[i] - my;
+      num += a2 * b2; dx += a2 * a2; dy += b2 * b2;
+    }
+    rho = (dx > 0 && dy > 0) ? num / Math.sqrt(dx * dy) : null;
+  }
+
+  return { rows: rows, counts: counts, shortTh: shortTh, rho: rho,
+           months: M.months, thresholds: M.thresholds, cells: M.cells, wh: WH };
+}
+
+var _meProfileCache = { len: -1, whLen: -1, data: null };
+function getMonthendProfile() {
+  var n = (dataStore.orderDetail || []).length;
+  var w = (dataStore.shortage || []).length;
+  if (_meProfileCache.data && _meProfileCache.len === n && _meProfileCache.whLen === w) {
+    return _meProfileCache.data;
+  }
+  _meProfileCache.len = n; _meProfileCache.whLen = w;
+  _meProfileCache.data = buildMonthendProfile();
+  return _meProfileCache.data;
+}
+window.getMonthendProfile = getMonthendProfile;
+window.buildMonthendCells = buildMonthendCells;
+
 
 // 长期标记徽章 HTML（四象限清单与新 TAB 共用，保证两处视觉与口径一致）
 function ltTierBadge(tier, withTip) {
@@ -6340,6 +6695,7 @@ function shortageTabBarHtml(active) {
     btn('customer-dim', '客户维度缺货分析') +
     btn('monthly', '缺货四象限分析') +
     btn('longterm', '长期高严重度分析') +
+    btn('monthend', '月底压货商品分析') +
     '</div>';
 }
 
@@ -6408,6 +6764,12 @@ function renderShortage() {
   // Tab切换：长期高严重度分析（v176 新增）
   if (window._shortageTab === 'longterm') {
     renderShortageLongTerm();
+    return;
+  }
+
+  // Tab切换：月底压货商品分析（v388 新增）
+  if (window._shortageTab === 'monthend') {
+    renderMonthendAnalysis();
     return;
   }
 
@@ -7633,6 +7995,548 @@ function renderShortageLongTerm() {
   `;
 }
 window.renderShortageLongTerm = renderShortageLongTerm;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v388: 月底压货商品分析（TAB）—— 三因素：压货脉冲 × 缺货程度 × 总仓供应
+//   模块边界：本模块看的是「月末冲量行为 + 由此产生的缺货 + 总仓能否支撑」，
+//   与「长期高严重度分析」（跨月缺货严重度百分位的持续性）口径不同、不可互推。
+//   页面分页/排序状态：window._meQuad / _meSort / _mePage / _meRdc / _meWhOnly
+// ═══════════════════════════════════════════════════════════════════════════
+function renderMonthendAnalysis() {
+  setTitle('月底压货商品分析');
+  const page = document.getElementById('page-shortage');
+  if (!page) return;
+  if (!dataStore.loaded || (dataStore.orderDetail || []).length === 0) {
+    page.innerHTML = shortageTabBarHtml('monthend') +
+      '<div style="text-align:center;padding:80px;color:var(--text-secondary)">请先导入包含订单明细的数据</div>';
+    return;
+  }
+
+  const prof = getMonthendProfile();
+  const rowsAll = prof.rows || [];
+  if (!rowsAll.length) {
+    page.innerHTML = shortageTabBarHtml('monthend') +
+      '<div style="text-align:center;padding:80px;color:var(--text-secondary)">当前数据不足（SKU×RDC 观测满 ' +
+      ME_PARAMS.MIN_MONTHS + ' 个月才进清单），无法生成月底压货画像</div>';
+    return;
+  }
+
+  const _fmtN = function(n) {
+    if (n === null || n === undefined) return '—';
+    return ('' + Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  };
+  const _pct1 = function(v) { return v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '%'; };
+
+  // ── 总仓分级统计（仅 5-9 月有数据）────────────────────────────────────
+  //   口径：把每个 SKU×月 的总仓分级当作一个「格」，按格聚合缺货率
+  const whBuckets = {};   // level -> {oq, sh, n, wq, ws, nA}
+  rowsAll.forEach(function(r) {
+    // 用 cells 拿不到逐月总仓，改从 prof.wh 反查（key = ym|sku）
+    Object.keys(prof.wh).forEach(function(k) {
+      var sp = k.split('|');
+      if (sp[1] !== r.sku) return;
+      var rec = prof.wh[k];
+      if (rec.level === '样本不足') return;
+      var b = whBuckets[rec.level] || (whBuckets[rec.level] = { oq: 0, sh: 0, n: 0 });
+      b.n++;
+    });
+  });
+
+  // ── 筛选与排序状态 ────────────────────────────────────────────────────
+  window._meQuad = window._meQuad || 'A';
+  window._meSort = window._meSort || 'short';
+  window._meView = window._meView || 'list';   // list | chart
+  const quad = window._meQuad;
+  const sortKey = window._meSort;
+
+  let rows = rowsAll.slice();
+  if (quad !== 'all') rows = rows.filter(function(r) { return r.quad === quad; });
+  const filterRdc = window._meRdc || 'all';
+  if (filterRdc !== 'all') rows = rows.filter(function(r) { return r.rdc === filterRdc; });
+  if (window._meWhBadOnly) rows = rows.filter(function(r) { return r.whConcl === '总仓受限'; });
+
+  if (sortKey === 'short') rows.sort(function(a, b) { return (b.shortRate || 0) - (a.shortRate || 0); });
+  else if (sortKey === 'hit') rows.sort(function(a, b) { return b.hitRate - a.hitRate || (b.shortRate || 0) - (a.shortRate || 0); });
+  else if (sortKey === 'qty') rows.sort(function(a, b) { return b.shortQty - a.shortQty; });
+  else if (sortKey === 'mon') rows.sort(function(a, b) { return b.nMonths - a.nMonths || (b.shortRate || 0) - (a.shortRate || 0); });
+  else rows.sort(function(a, b) { return (b.shortRate || 0) - (a.shortRate || 0); });
+
+  window._meExportList = rows;
+
+  const perPage = 20;
+  window._mePage = window._mePage || 1;
+  const totalPages = Math.ceil(rows.length / perPage) || 1;
+  if (window._mePage > totalPages) window._mePage = totalPages;
+  if (window._mePage < 1) window._mePage = 1;
+  const st = (window._mePage - 1) * perPage;
+  const pageData = rows.slice(st, st + perPage);
+
+  const counts = prof.counts || { A: 0, B: 0, C: 0, D: 0 };
+  const shortTh = prof.shortTh;
+  const rho = prof.rho;
+  const A_rows = rowsAll.filter(function(r) { return r.quad === 'A'; });
+  const A_whBad = A_rows.filter(function(r) { return r.whConcl === '总仓受限'; }).length;
+
+  // A vs B 缺货率对比（验证「压货多且缺货多才要盯」）
+  const A_short = A_rows.length ? A_rows.reduce(function(s, r) { return s + (r.shortRate || 0); }, 0) / A_rows.length : null;
+  const B_rows = rowsAll.filter(function(r) { return r.quad === 'B'; });
+  const B_short = B_rows.length ? B_rows.reduce(function(s, r) { return s + (r.shortRate || 0); }, 0) / B_rows.length : null;
+  const ABratio = (A_short !== null && B_short) ? A_short / B_short : null;
+
+  // 总仓受限 vs 正常：限定 5-9 月窗口内比较（消除月份混淆）
+  const whMonthsSet = {};
+  ME_PARAMS.WH_MONTHS.forEach(function(m) { whMonthsSet[m] = 1; });
+  let whBadOq = 0, whBadSh = 0, whOkOq = 0, whOkSh = 0;
+  let whBadWOq = 0, whBadWSh = 0, whOkWOq = 0, whOkWSh = 0;
+  let whBadN = 0, whOkN = 0;
+  const _cellKeys = Object.keys(prof.cells);
+  _cellKeys.forEach(function(k) {
+    var c = prof.cells[k];
+    if (!c.eligible) return;
+    if (!whMonthsSet[c.ym]) return;
+    var w = prof.wh[c.ym + '|' + c.sku];
+    if (!w || w.level === '样本不足') return;
+    var bad = (w.level === '总仓缺货' || w.level === '总仓紧张');
+    if (bad) {
+      whBadOq += c.oq; whBadSh += c.shortQty; whBadWOq += c.winOq; whBadWSh += c.winShort; whBadN++;
+    } else {
+      whOkOq += c.oq; whOkSh += c.shortQty; whOkWOq += c.winOq; whOkWSh += c.winShort; whOkN++;
+    }
+  });
+  const whBadRate = whBadOq > 0 ? whBadSh / whBadOq : null;
+  const whOkRate = whOkOq > 0 ? whOkSh / whOkOq : null;
+  const whMulti = (whBadRate !== null && whOkRate) ? whBadRate / whOkRate : null;
+  const whBadWinRate = whBadWOq > 0 ? whBadWSh / whBadWOq : null;
+  const whOkWinRate = whOkWOq > 0 ? whOkWSh / whOkWOq : null;
+  const whWinMulti = (whBadWinRate !== null && whOkWinRate) ? whBadWinRate / whOkWinRate : null;
+
+  const rdcs = [...new Set(rowsAll.map(function(r) { return r.rdc; }))].sort();
+
+  // ── RDC × 象限 堆叠数据 ──────────────────────────────────────────────
+  const rdcQuad = {};
+  rowsAll.forEach(function(r) {
+    if (!rdcQuad[r.rdc]) rdcQuad[r.rdc] = { A: 0, B: 0, C: 0, D: 0 };
+    rdcQuad[r.rdc][r.quad]++;
+  });
+
+  // ── 逐月压货达标率（各月独立 P75）────────────────────────────────────
+  const monthStat = {};
+  Object.keys(prof.thresholds).forEach(function(ym) { monthStat[ym] = { n: 0, hit: 0, p75: prof.thresholds[ym].p75 }; });
+  Object.keys(prof.cells).forEach(function(k) {
+    var c = prof.cells[k];
+    if (!c.eligible) return;
+    if (!monthStat[c.ym]) monthStat[c.ym] = { n: 0, hit: 0, p75: null };
+    monthStat[c.ym].n++;
+    if (c.hit) monthStat[c.ym].hit++;
+  });
+
+  // ── 表体 ──────────────────────────────────────────────────────────────
+  const quadStyle = function(q) {
+    var d = ME_QUAD[q] || ME_QUAD.D;
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:' + d.bg + ';color:' + d.color + '" title="' + d.desc + '：' + d.tip + '">' + q + ' · ' + d.label + '</span>';
+  };
+  const whStyle = function(r) {
+    if (r.whConcl === '总仓受限') return '<span style="color:#A32D2D;font-weight:600" title="观察窗口内出现过总仓缺货/紧张（' + r.whBad + '/' + r.whAvail + ' 个可观测月）。总仓缺了，分仓再补也无能为力。">总仓受限 ' + r.whBad + '/' + r.whAvail + '</span>';
+    if (r.whConcl === '总仓正常') return '<span style="color:#065F46" title="可观测月内总仓均正常（' + r.whAvail + ' 个月）→ 缺货更可能是分仓自身问题（安全库存/分仓比例/订单结构）。">总仓正常 ' + r.whAvail + '</span>';
+    return '<span style="color:#94A3B8" title="1-4 月缺货汇总为空，总仓字段无数据；该 SKU 未有落在 5-9 月窗口的可观测月。">未覆盖</span>';
+  };
+
+  const rowHtml = pageData.map(function(r) {
+    return '<tr>' +
+      '<td style="text-align:left">' + (r.rdc || '') + '</td>' +
+      '<td style="text-align:left;font-family:monospace">' + r.sku + '</td>' +
+      '<td style="text-align:left;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.name || '') + '">' + (r.name || '') + '</td>' +
+      '<td style="text-align:center">' + quadStyle(r.quad) + '</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + (r.hitRate >= 0.6 ? '#A32D2D' : r.hitRate >= 0.4 ? '#B45309' : 'inherit') + '" title="压货达标月数 / 观测月数。达标 = 该月脉冲指数 ≥ 该月 P75（各月独立阈值）。">' + (r.hitRate * 100).toFixed(0) + '% <span style="font-weight:400;color:var(--text-secondary);font-size:11px">(' + r.nHit + '/' + r.nMonths + ')</span></td>' +
+      '<td style="text-align:right" title="各观测月脉冲指数的中位数。脉冲指数 = 月末 ' + ME_PARAMS.TAIL_DAYS + ' 个自然日的日均放行量 ÷ 窗口外日均放行量（分母不含窗口内天数）。">' + (r.idxMed === null ? '—' : r.idxMed.toFixed(2) + 'x') + '</td>' +
+      '<td style="text-align:right;font-weight:600;color:' + ((r.shortRate || 0) >= (shortTh || 1) ? '#A32D2D' : 'inherit') + '" title="首日缺货量 ÷ 订单量（均为已放行口径、已剔除非工作日）。缺货高门槛 = 全体 P75 = ' + _pct1(shortTh) + '">' + _pct1(r.shortRate) + '</td>' +
+      '<td style="text-align:right;color:var(--color-red)" title="全窗口累计首日缺货量（支）">' + _fmtN(r.shortQty) + '</td>' +
+      '<td style="text-align:right" title="月末窗口内首日缺货率（仅 ' + ME_PARAMS.TAIL_DAYS + ' 个自然日窗口，用于识别「冲量当期就缺」）">' + _pct1(r.winShortRate) + '</td>' +
+      '<td style="text-align:left">' + whStyle(r) + '</td>' +
+      '<td style="text-align:left;font-size:11px;color:' + (r.quad === 'A' ? '#A32D2D' : 'var(--text-secondary)') + '">' + (r.attr || '—') + '</td>' +
+      '<td style="text-align:right" title="观测月数（窗口内实际有单 ≥ ' + ME_PARAMS.TAIL_DAYS_MIN + ' 天且窗口放行量 ≥ ' + ME_PARAMS.DAILY_MIN + ' 支）">' + r.nMonths + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const quadCard = function(q, extra) {
+    var d = ME_QUAD[q];
+    var act = quad === q;
+    return '<div class="card" style="text-align:center;cursor:pointer;background:' + d.bg + ';border:2px solid ' + (act ? d.color : 'transparent') + '" ' +
+      'onclick="window._meQuad=\'' + q + '\';window._mePage=1;renderShortage()" title="' + d.desc + '　' + d.tip + '">' +
+      '<div style="font-size:22px;font-weight:700;color:' + d.color + '">' + counts[q] + '</div>' +
+      '<div style="font-size:12px;font-weight:600;color:' + d.color + '">' + q + ' · ' + d.label + '</div>' +
+      '<div style="font-size:11px;color:' + d.color + ';opacity:.85">' + d.desc + '</div>' +
+      (extra ? '<div style="font-size:11px;color:' + d.color + ';opacity:.8;margin-top:4px;border-top:1px dashed ' + d.color + '55;padding-top:4px">' + extra + '</div>' : '') +
+      '</div>';
+  };
+
+  const sortBtn = function(id, label) {
+    return '<button class="btn-export" style="font-size:11px;padding:3px 10px;' +
+      (sortKey === id ? 'background:var(--color-blue);color:#fff;' : '') +
+      '" onclick="window._meSort=\'' + id + '\';window._mePage=1;renderShortage()">' + label + '</button>';
+  };
+
+  page.innerHTML = `
+    ${shortageTabBarHtml('monthend')}
+
+    <div style="background:#FAFBFC;border:1px solid #E5E7EB;border-left:3px solid #5B8DEF;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#475569;line-height:1.7">
+      <b style="color:#1F2937">这一页回答的问题</b>：月底<b>冲量压货</b>的 SKU 里，哪些<b>同时还在缺货</b>、且<b>总仓也供不上</b>。
+      压货多但缺货不多的 SKU 不是当前的优先级；<b>压货多 + 缺货多 + 总仓受限</b>才是真正该盯的。
+      与「长期高严重度分析」是两套视角——那边看<b>跨月缺货严重度的持续性</b>，本页看<b>月末冲量行为与供应能力的错配</b>。
+      <details style="margin-top:8px;padding-top:8px;border-top:1px dashed #E5E7EB">
+        <summary style="cursor:pointer;font-weight:500;color:#475569;user-select:none;outline:none;list-style:none">
+          <span style="color:#3B82F6">▶</span> <span style="color:#1F2937;font-weight:600">三个因素怎么算的？点击展开完整口径</span>
+        </summary>
+        <div style="margin-top:10px;padding:10px 14px;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:6px;line-height:1.7;font-size:11px">
+          <div style="margin-bottom:8px"><b>因素① 压货脉冲指数</b>：
+          <code style="background:#F1F5F9;padding:1px 6px;border-radius:3px">脉冲 = 月末 ${ME_PARAMS.TAIL_DAYS} 个自然日日均放行量 ÷ 窗口外日均放行量</code><br>
+          为什么只算<b>经销商</b>：KA 是直营、按合同走，不存在「月底冲业绩」；经销商月末冲量是真实的商业行为。<br>
+          <b>为什么分母用「窗口内实际有单天数」而不是固定 ${ME_PARAMS.TAIL_DAYS} 天</b>：月底关账当天放行集中爆发，实测窗口内实际有单仅 <b>2~8 天</b>，
+          用固定 10 天会把「只放 3 天但量很大」的真实脉冲稀释掉。<br>
+          <b>为什么用各月独立 P75 而不是固定倍数</b>：实测各月 P75 漂移达 <b>13 倍</b>（<span style="color:#A32D2D">02 月 7.21（春节）/ 01 月 1.51</span>），固定 3.0x 在 2 月会命中一片、1 月几乎不命中。
+          各月 P75 / P90 独立计算（与「缺货四象限」「长期高严重度」同一套自适应思路）。<br>
+          <b>本环境实测各月 P75</b>：${Object.keys(monthStat).filter(function(m){return monthStat[m].p75!==null;}).sort().map(function(m){ return m.slice(5) + '=' + monthStat[m].p75.toFixed(2); }).join(' / ')}</div>
+          <div style="margin-bottom:8px"><b>因素② 缺货程度</b>：缺货率 = 首日缺货量 ÷ 订单量（<b>均为已放行口径</b>，且<b>沿用 isWorkday 过滤</b>，与长期模块同源）。
+          「缺货高」门槛 = 全体 SKU×RDC 缺货率的 <b>P75 = ${_pct1(shortTh)}</b>。
+          <span style="color:#64748B">注意本因素刻意<b>不过滤双休日</b>的是因素①（经销商冲量不看工作日），因素②沿用工作日口径以保证与全站缺货口径可比。</span></div>
+          <div><b>因素③ 总仓供应</b>：数据来自缺货汇总的 <code style="background:#F1F5F9;padding:1px 6px;border-radius:3px">dcStock</code>(大仓库存箱数) 与 <code style="background:#F1F5F9;padding:1px 6px;border-radius:3px">dcSupply</code>(大仓供应情况)。
+          <b>双口径取更严者</b>：① 窗口内「大仓库存 &lt; 该 SKU 该月 P25」的天数占比 ≥ ${(ME_PARAMS.WH_LOW_DAY_RATIO*100).toFixed(0)}% → 总仓紧张；② 窗口内 dcSupply 含「整体缺货 / 供应紧张」的天数占比 ≥ ${(ME_PARAMS.WH_TAG_RATIO*100).toFixed(0)}% → 总仓缺货。<br>
+          <span style="color:#B45309"><b>⚠ 只有 5-9 月有数据</b>——1-4 月的缺货汇总为空 list，总仓字段不存在。所以因素③是「部分月份覆盖」，显示「未覆盖」的 SKU 不代表总仓正常，只代表无法判定。</span><br>
+          <span style="color:#B45309"><b>⚠ 截断数据语义</b>：缺货汇总只登记「当天有缺货」的 SKU。某 SKU 在窗口内没出现 = <b>窗口内没缺货</b>（不是缺数据）。
+          离线实测 312 条「窗口内 0 天」的条目 <b>100% 都是缺货记录全发生在窗口之前</b>，方向相反 → 判「总仓正常」而非「样本不足」。</span></div>
+        </div>
+      </details>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px">
+      ${quadCard('A', '缺货率均值 ' + _pct1(A_short) + (ABratio ? '<br>= B 象限的 ' + ABratio.toFixed(1) + ' 倍' : '') + '<br>其中 ' + A_whBad + '/' + A_rows.length + ' 总仓受限')}
+      ${quadCard('B', '缺货率均值 ' + _pct1(B_short) + '<br>冲量但供得上 → 非优先级')}
+      ${quadCard('C', '缺货高但压货低<br>→ 多为常规供应问题')}
+      ${quadCard('D', '双低 → 忽略')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px">
+      <div class="card" style="text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#A32D2D">${_pct1(shortTh)}</div>
+        <div style="font-size:11px;color:var(--text-secondary)">缺货高门槛（全体 P75）</div>
+      </div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#A32D2D">${whMulti ? whMulti.toFixed(2) + 'x' : '—'}</div>
+        <div style="font-size:11px;color:var(--text-secondary)" title="限定 5-9 月窗口内比较（消除月份混淆）：总仓受限格的缺货率 ÷ 总仓正常格的缺货率">总仓受限缺货倍数（全月）</div>
+      </div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#A32D2D">${whWinMulti ? whWinMulti.toFixed(2) + 'x' : '—'}</div>
+        <div style="font-size:11px;color:var(--text-secondary)" title="同上，但缺货率只在月末窗口内计算 → 与压货脉冲同时段，因果更贴近">总仓受限缺货倍数（窗口）</div>
+      </div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#475569">${rho === null ? '—' : rho.toFixed(3)}</div>
+        <div style="font-size:11px;color:var(--text-secondary)" title="压货达标月数 与 缺货率 的 Spearman 秩相关系数">压货 vs 缺货 ρ</div>
+      </div>
+    </div>
+
+    <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#7C2D12;line-height:1.75">
+      <b>三条实测结论（先说结果，再看清单）</b>
+      <div style="margin-top:6px">
+      <b>① 「压货多且缺货多才要重点盯」成立。</b>
+      A 象限（压货高+缺货高）<b>${counts.A} 条</b>，缺货率均值 <b>${_pct1(A_short)}</b>；
+      B 象限（压货高+缺货低）<b>${counts.B} 条</b>，缺货率均值 <b>${_pct1(B_short)}</b>
+      → <b>差 ${ABratio ? ABratio.toFixed(1) : '—'} 倍</b>。若只看压货强度，B 象限 ${counts.B} 条会全部混进来。</div>
+      <div style="margin-top:6px">
+      <b>② 「总仓缺了分仓无能为力」成立（最强的信号）。</b>
+      限定 5-9 月窗口内比较：总仓受限格的缺货率 <b>${_pct1(whBadRate)}</b> vs 总仓正常格 <b>${_pct1(whOkRate)}</b>
+      → <b>${whMulti ? whMulti.toFixed(2) : '—'} 倍</b>；只看月末窗口内则为 <b>${whWinMulti ? whWinMulti.toFixed(2) : '—'} 倍</b>。
+      A 象限 ${A_rows.length} 条里 <b>${A_whBad} 条（${A_rows.length ? (A_whBad / A_rows.length * 100).toFixed(0) : 0}%）指向总仓受限</b> ——
+      这些 SKU 在分仓层面加补货是无效动作，必须先解决大仓/CDC 供给。</div>
+      <div style="margin-top:6px">
+      <b>③ 压货强度推不出缺货排名（反直觉，但恰好证明要取交集）。</b>
+      压货达标月数与缺货率的 Spearman 秩相关 <b>ρ = ${rho === null ? '—' : rho.toFixed(4)}</b>（≈0，无线性关系）。
+      正因两者<b>独立</b>，才必须取交集——这也是 A 只有 ${counts.A} 条而 B 有 ${counts.B} 条的原因。若两者同步，根本不需要引入缺货因素。</div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">四象限分布（X = 压货强度，Y = 缺货程度）</span></div>
+      <div id="chart-me-quad" style="height:400px"></div>
+      <div style="font-size:11px;color:var(--text-secondary);padding:6px 4px 2px;line-height:1.7">
+        散点 = 一个 SKU×RDC。横轴 = 压货达标月占比（门槛 ${(ME_PARAMS.HIT_TH*100).toFixed(0)}%），纵轴 = 缺货率（门槛 ${_pct1(shortTh)}）
+        → 右上角 <b style="color:#A32D2D">A 象限</b> 才是重点跟进对象。点大小 = 累计首日缺货量。
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">总仓供应分级 vs 缺货率（仅 5-9 月）</span></div>
+        <div id="chart-me-wh" style="height:280px"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">逐月压货达标率（各月独立 P75）</span></div>
+        <div id="chart-me-month" style="height:280px"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">各 RDC 象限构成</span></div>
+      <div id="chart-me-rdc" style="height:280px"></div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:8px 12px;background:#FAFBFC;border:1px solid #E5E7EB;border-radius:6px">
+      <span style="font-size:12px;color:var(--text-secondary);font-weight:500">📌 筛选：</span>
+      <button class="btn-export" style="font-size:11px;padding:3px 10px;${quad==='all'?'background:var(--color-blue);color:#fff;':''}" onclick="window._meQuad='all';window._mePage=1;renderShortage()">全部 ${rowsAll.length}</button>
+      <button class="btn-export" style="font-size:11px;padding:3px 10px;${quad==='A'?'background:#A32D2D;color:#fff;':''}" onclick="window._meQuad='A';window._mePage=1;renderShortage()">A 重点 ${counts.A}</button>
+      <button class="btn-export" style="font-size:11px;padding:3px 10px;${quad==='B'?'background:#065F46;color:#fff;':''}" onclick="window._meQuad='B';window._mePage=1;renderShortage()">B 可放 ${counts.B}</button>
+      <button class="btn-export" style="font-size:11px;padding:3px 10px;${quad==='C'?'background:#92400E;color:#fff;':''}" onclick="window._meQuad='C';window._mePage=1;renderShortage()">C 另有原因 ${counts.C}</button>
+      <button class="btn-export" style="font-size:11px;padding:3px 10px;${quad==='D'?'background:#5F5E5A;color:#fff;':''}" onclick="window._meQuad='D';window._mePage=1;renderShortage()">D 忽略 ${counts.D}</button>
+      <span style="width:1px;height:18px;background:#E5E7EB"></span>
+      <label style="font-size:12px;color:var(--text-secondary)">RDC：
+        <select onchange="window._meRdc=this.value;window._mePage=1;renderShortage()" style="padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px;background:#FFFFFF;cursor:pointer">
+          <option value="all"${filterRdc==='all'?' selected':''}>全部</option>
+          ${rdcs.map(function(rd){ return '<option value="'+rd+'"'+(filterRdc===rd?' selected':'')+'>'+rd+'</option>'; }).join('')}
+        </select>
+      </label>
+      <button class="btn-export" style="font-size:11px;padding:3px 10px;${window._meWhBadOnly?'background:#A32D2D;color:#fff;':''}" onclick="window._meWhBadOnly=${window._meWhBadOnly?'false':'true'};window._mePage=1;renderShortage()">只看总仓受限</button>
+      <span style="font-size:11px;color:#94A3B8;margin-left:auto">共 ${rowsAll.length} 个 SKU×RDC → 筛选后 ${rows.length} 个${(quad!=='all'||filterRdc!=='all'||window._meWhBadOnly)?' · <a style="color:#3B82F6;cursor:pointer;text-decoration:underline" onclick="window._meQuad=\'all\';window._meRdc=\'all\';window._meWhBadOnly=false;window._mePage=1;renderShortage()">清空筛选</a>':''}</span>
+    </div>
+
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span class="card-title">${quad === 'all' ? '全部' : quad + ' · ' + ME_QUAD[quad].label}清单（${rows.length} 个）</span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
+          ${sortBtn('short', '缺货率')}${sortBtn('hit', '压货达标率')}${sortBtn('qty', '累计缺货量')}${sortBtn('mon', '观测月数')}
+          <button class="btn-export" style="font-size:11px;padding:3px 12px;background:var(--color-green);color:#fff" onclick="exportMonthendCSV()">⬇ 导出CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:520px;overflow:auto">
+        <table class="data-table" style="font-size:12px">
+          <thead><tr>
+            <th style="text-align:left">RDC</th>
+            <th style="text-align:left">SKU编码</th>
+            <th style="text-align:left">SKU名称</th>
+            <th style="text-align:center">象限</th>
+            <th style="text-align:right" title="压货达标月数 ÷ 观测月数。达标 = 该月脉冲指数 ≥ 该月 P75">压货达标率</th>
+            <th style="text-align:right" title="各观测月脉冲指数的中位数">脉冲中位</th>
+            <th style="text-align:right" title="首日缺货量 ÷ 订单量（已放行口径、已剔非工作日）">缺货率</th>
+            <th style="text-align:right" title="累计首日缺货量（支）">累计缺货量</th>
+            <th style="text-align:right" title="仅月末窗口内的首日缺货率">窗口缺货率</th>
+            <th style="text-align:left" title="总仓供应：受限 = 可观测月内出现过总仓缺货/紧张；正常 = 可观测月内均正常；未覆盖 = 该 SKU 无可观测月（1-4 月无数据）">总仓供应</th>
+            <th style="text-align:left" title="A 象限的处置归因：总仓所致 → 找大仓/CDC；分仓自身问题 → 找 RDC">归因</th>
+            <th style="text-align:right" title="观测月数">月数</th>
+          </tr></thead>
+          <tbody>
+            ${pageData.length > 0 ? rowHtml : '<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--text-secondary)">当前筛选下无数据</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;justify-content:center;gap:8px;padding:8px;align-items:center">
+        <button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._mePage=Math.max(1,${window._mePage - 1});renderShortage()" ${window._mePage <= 1 ? 'disabled' : ''}>上一页</button>
+        <span style="font-size:12px;color:var(--text-secondary)">第 ${window._mePage}/${totalPages} 页</span>
+        <button class="btn-export" style="padding:3px 10px;font-size:11px" onclick="window._mePage=Math.min(${totalPages},${window._mePage + 1});renderShortage()" ${window._mePage >= totalPages ? 'disabled' : ''}>下一页</button>
+        <span style="font-size:11px;color:var(--text-secondary)">共 ${rows.length} 个</span>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;padding:10px 12px;background:#F8FAFC;border:1px dashed var(--border-card);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.75">
+      <strong>口径说明与诚实边界：</strong><br>
+      · <strong>这不是预测</strong>。本页是对<b>已发生</b>的 1-9 月数据的结构化复盘。离线回测「连中 2 个月」的精度约 29.4%（基线 24.6%），<b>不足以支撑「下月一定压货」的断言</b>，请作为筛查线索而非预测结论。<br>
+      · <strong>压货强度推不出缺货排名</strong>（ρ ≈ ${rho === null ? '—' : rho.toFixed(3)}）：不要用「脉冲指数高」直接推导「这个 SKU 会缺货」。本页的价值在于<b>取交集</b>，不在单因素排序。<br>
+      · <strong>总仓仅 5-9 月有数据</strong>：1-4 月的缺货汇总为空，总仓字段不存在。显示「未覆盖」的 SKU <b>不代表总仓正常</b>，只代表无法判定。因素③参与的统计一律<b>限定 5-9 月内比较</b>（否则「未覆盖组」会因 1-4 月缺货率天然偏低而得出「总仓未覆盖反而更安全」的假结论）。<br>
+      · <strong>A 象限样本薄</strong>：本期仅 ${counts.A} 条，占比 ${(counts.A / rowsAll.length * 100).toFixed(1)}%。月内新增/减少一条就会明显改变比例，<b>不要把它当稳定指标做趋势对比</b>。<br>
+      · <strong>缺货率口径</strong>：首日缺货量 ÷ 订单量，分子分母均为已放行口径、已剔除非工作日（与长期高严重度、缺货四象限同源）。<strong>压货脉冲不过滤双休日</strong>（经销商冲量不看工作日），两者刻意不同口径，页内已分别标注。<br>
+      · <strong>已剔除华东仓</strong>（仅 1-4 月存在，不剔除则全周期不同口径）。<strong>压货只算经销商渠道</strong>（KA 为直营，无月末冲量动机）。<br>
+      · <strong>观测月数下限 ${ME_PARAMS.MIN_MONTHS} 个月</strong>：不足 3 个月的组合不进清单（小样本下「1 次达标 1 次缺货 = 100%」噪声过大）。窗口内实际有单天数 &lt; ${ME_PARAMS.TAIL_DAYS_MIN} 天或窗口放行量 &lt; ${ME_PARAMS.DAILY_MIN} 支的月份不计入观测。<br>
+      · <strong>归因列只对 A 象限给出</strong>：C 象限（缺货高但压货低）的缺货另有原因，不在本页的处置范围。
+    </div>
+  `;
+
+  // ── 图表 1：四象限散点 ────────────────────────────────────────────────
+  try {
+    var chQ = initChart('chart-me-quad');
+    if (chQ) {
+      var mkPts = function(q) {
+        return rowsAll.filter(function(r) { return r.quad === q; }).map(function(r) {
+          return { value: [r.hitRate, r.shortRate || 0, r.shortQty || 0], rdc: r.rdc, sku: r.sku, nm: r.name,
+                   wh: r.whConcl, attr: r.attr, nMonths: r.nMonths, idxMed: r.idxMed };
+        });
+      };
+      chQ.setOption({
+        tooltip: {
+          trigger: 'item', confine: true, textStyle: { fontSize: 11 },
+          formatter: function(p) {
+            var o = p.data;
+            return '<strong>' + o.sku + ' ' + (o.nm || '') + '</strong><br>' + o.rdc +
+              '<hr style="border:none;border-top:1px solid #eee;margin:4px 0">' +
+              '压货达标率：' + (o.value[0] * 100).toFixed(0) + '%（观测 ' + o.nMonths + ' 个月）<br>' +
+              '脉冲中位：' + (o.idxMed === null ? '—' : o.idxMed.toFixed(2) + 'x') + '<br>' +
+              '缺货率：' + (o.value[1] * 100).toFixed(1) + '%<br>' +
+              '累计缺货量：' + _fmtN(o.value[2]) + ' 支<br>' +
+              '总仓供应：' + o.wh +
+              (o.attr ? '<br><span style="color:#A32D2D">归因：' + o.attr + '</span>' : '');
+          }
+        },
+        legend: { top: 0, textStyle: { fontSize: 11 }, data: ['A 重点关注', 'B 可放', 'C 另有原因', 'D 忽略'] },
+        grid: { left: 55, right: 25, top: 38, bottom: 48 },
+        xAxis: {
+          type: 'value', name: '压货达标率', nameLocation: 'middle', nameGap: 28, nameTextStyle: { fontSize: 11 },
+          min: 0, max: 1.05, axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 10 },
+          splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } }
+        },
+        yAxis: {
+          type: 'value', name: '缺货率', nameLocation: 'middle', nameGap: 42, nameTextStyle: { fontSize: 11 },
+          max: function(v) { return Math.min(1, Math.max(0.3, v.max * 1.15)); },
+          axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 10 },
+          splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } }
+        },
+        series: [
+          { name: 'A 重点关注', type: 'scatter', data: mkPts('A'),
+            symbolSize: function(v) { return Math.max(7, Math.min(30, Math.sqrt(v[2]) / 5)); },
+            itemStyle: { color: '#DC2626', opacity: 0.9 },
+            markLine: { silent: true, symbol: 'none', lineStyle: { color: '#94A3B8', type: 'dashed', width: 1 },
+              label: { fontSize: 10, formatter: '门槛 ' + (ME_PARAMS.HIT_TH*100).toFixed(0) + '% / ' + (shortTh*100).toFixed(1) + '%' },
+              data: [{ xAxis: ME_PARAMS.HIT_TH }, { yAxis: shortTh }] } },
+          { name: 'B 可放', type: 'scatter', data: mkPts('B'),
+            symbolSize: function(v) { return Math.max(5, Math.min(22, Math.sqrt(v[2]) / 6)); },
+            itemStyle: { color: '#10B981', opacity: 0.7 } },
+          { name: 'C 另有原因', type: 'scatter', data: mkPts('C'),
+            symbolSize: function(v) { return Math.max(5, Math.min(22, Math.sqrt(v[2]) / 6)); },
+            itemStyle: { color: '#F59E0B', opacity: 0.7 } },
+          { name: 'D 忽略', type: 'scatter', data: mkPts('D'),
+            symbolSize: function(v) { return Math.max(4, Math.min(18, Math.sqrt(v[2]) / 8)); },
+            itemStyle: { color: '#94A3B8', opacity: 0.35 } }
+        ]
+      }, true);
+    }
+  } catch (e) { console.warn('[monthend] quadrant chart failed', e); }
+
+  // ── 图表 2：总仓分级 vs 缺货率 ────────────────────────────────────────
+  try {
+    var chW = initChart('chart-me-wh');
+    if (chW) {
+      var order = ['总仓缺货', '总仓紧张', '总仓正常'];
+      var bars = order.map(function(lv) {
+        var b = whBuckets[lv] || { n: 0 };
+        var rate = null, winRate = null;
+        if (lv === '总仓缺货' || lv === '总仓紧张') {
+          rate = whBadRate; winRate = whBadWinRate;
+        } else {
+          rate = whOkRate; winRate = whOkWinRate;
+        }
+        return { name: lv, n: b.n, rate: rate, winRate: winRate };
+      });
+      chW.setOption({
+        tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
+          formatter: function(ps) {
+            var d = bars[ps[0].dataIndex];
+            return '<strong>' + d.name + '</strong><br>可观测 SKU×月：' + d.n + ' 个<br>' +
+              '全月缺货率：' + _pct1(d.rate) + '<br>窗口内缺货率：' + _pct1(d.winRate);
+          } },
+        legend: { top: 0, textStyle: { fontSize: 11 } },
+        grid: { left: 55, right: 20, top: 34, bottom: 32 },
+        xAxis: { type: 'category', data: bars.map(function(b) { return b.name; }), axisLabel: { fontSize: 11 } },
+        yAxis: { type: 'value', name: '缺货率', axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 10 },
+          splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } } },
+        series: [
+          { name: '全月缺货率', type: 'bar', data: bars.map(function(b) { return b.rate; }), barWidth: 22,
+            itemStyle: { color: '#5B8DEF' }, label: { show: true, position: 'top', fontSize: 10, formatter: function(p) { return (p.value * 100).toFixed(1) + '%'; } },
+            markLine: { silent: true, symbol: 'none', lineStyle: { color: '#94A3B8', type: 'dashed' },
+              label: { fontSize: 10, formatter: '5-9月基线' },
+              data: [{ yAxis: whOkRate }] } },
+          { name: '窗口内缺货率', type: 'bar', data: bars.map(function(b) { return b.winRate; }), barWidth: 22,
+            itemStyle: { color: '#F59E0B' }, label: { show: true, position: 'top', fontSize: 10, formatter: function(p) { return (p.value * 100).toFixed(1) + '%'; } } }
+        ]
+      }, true);
+    }
+  } catch (e) { console.warn('[monthend] warehouse chart failed', e); }
+
+  // ── 图表 3：逐月压货达标率 ────────────────────────────────────────────
+  try {
+    var chM = initChart('chart-me-month');
+    if (chM) {
+      var mKeys = Object.keys(monthStat).sort();
+      chM.setOption({
+        tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
+          formatter: function(ps) {
+            var ym = ps[0].name, s = monthStat[ym];
+            return '<strong>' + ym + '</strong><br>可观测组合：' + s.n + ' 个<br>' +
+              '达标率：' + (s.n ? (s.hit / s.n * 100).toFixed(1) : '—') + '%<br>' +
+              '该月 P75 阈值：' + (s.p75 === null ? '—' : s.p75.toFixed(2) + 'x');
+          } },
+        grid: { left: 52, right: 46, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: mKeys.map(function(m) { return m.slice(5); }), axisLabel: { fontSize: 10 } },
+        yAxis: [
+          { type: 'value', name: '达标率', axisLabel: { formatter: function(v) { return (v * 100).toFixed(0) + '%'; }, fontSize: 10 }, splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } } },
+          { type: 'value', name: '阈值x', axisLabel: { fontSize: 10 }, splitLine: { show: false } }
+        ],
+        series: [
+          { name: '达标率', type: 'bar', barWidth: 18, itemStyle: { color: '#5B8DEF' },
+            data: mKeys.map(function(m) { var s = monthStat[m]; return s.n ? s.hit / s.n : null; }),
+            label: { show: true, position: 'top', fontSize: 9, formatter: function(p) { return p.value === null ? '' : (p.value * 100).toFixed(0) + '%'; } } },
+          { name: '该月 P75 阈值(x)', type: 'line', yAxisIndex: 1, symbolSize: 6, lineStyle: { width: 2, color: '#DC2626' }, itemStyle: { color: '#DC2626' },
+            data: mKeys.map(function(m) { return monthStat[m].p75; }) }
+        ]
+      }, true);
+    }
+  } catch (e) { console.warn('[monthend] month chart failed', e); }
+
+  // ── 图表 4：各 RDC 象限构成 ───────────────────────────────────────────
+  try {
+    var chR = initChart('chart-me-rdc');
+    if (chR) {
+      var rKeys = rdcs;
+      var mkSeries = function(q) {
+        return { name: q + ' · ' + ME_QUAD[q].label, type: 'bar', stack: 'total', barWidth: 26,
+          itemStyle: { color: q === 'A' ? '#DC2626' : q === 'B' ? '#10B981' : q === 'C' ? '#F59E0B' : '#94A3B8' },
+          label: { show: true, fontSize: 10, color: '#fff', formatter: function(p) { return p.value > 0 ? p.value : ''; } },
+          data: rKeys.map(function(rd) { return (rdcQuad[rd] || {})[q] || 0; }) };
+      };
+      chR.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true, textStyle: { fontSize: 11 } },
+        legend: { top: 0, textStyle: { fontSize: 11 } },
+        grid: { left: 50, right: 20, top: 34, bottom: 30 },
+        xAxis: { type: 'category', data: rKeys, axisLabel: { fontSize: 10 } },
+        yAxis: { type: 'value', name: 'SKU×RDC 数', axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { type: 'dashed', opacity: 0.4 } } },
+        series: [mkSeries('A'), mkSeries('B'), mkSeries('C'), mkSeries('D')]
+      }, true);
+    }
+  } catch (e) { console.warn('[monthend] rdc chart failed', e); }
+}
+window.renderMonthendAnalysis = renderMonthendAnalysis;
+
+// v388: 月底压货清单导出 CSV（与表体同源：导出当前筛选+排序后的全部行，非当前页）
+function exportMonthendCSV() {
+  const list = window._meExportList || [];
+  if (!list.length) { showToast('当前筛选下无数据可导出', true); return; }
+  function esc(s) {
+    const v = s == null ? '' : String(s);
+    if (/[",\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  }
+  const head = ['A_RDC', 'B_SKU编码', 'C_SKU名称', 'D_象限', 'E_象限含义', 'F_压货达标率(%)',
+    'G_压货达标月数', 'H_观测月数', 'I_脉冲中位数', 'J_缺货率(%)', 'K_累计缺货量(支)',
+    'L_窗口缺货率(%)', 'M_总仓供应', 'N_总仓受限月数', 'O_总仓可观测月数', 'P_归因',
+    'Q_达标月份', 'R_出货口径_订单量(支)', 'S_出货口径_首日缺货量(支)'];
+  const quadLabel = function(q) { return (ME_QUAD[q] || ME_QUAD.D).label; };
+  const rows = list.map(function(r) {
+    return [
+      esc(r.rdc), esc(r.sku), esc(r.name), r.quad, esc(quadLabel(r.quad)),
+      r.hitRate === null ? '' : (r.hitRate * 100).toFixed(1),
+      r.nHit, r.nMonths,
+      r.idxMed === null ? '' : r.idxMed.toFixed(3),
+      r.shortRate === null ? '' : (r.shortRate * 100).toFixed(2),
+      r.shortQty,
+      r.winShortRate === null ? '' : (r.winShortRate * 100).toFixed(2),
+      esc(r.whConcl), r.whBad, r.whAvail,
+      esc(r.attr || ''),
+      esc((r.hitMonths || []).join(' ')),
+      r.oq, r.shortQty
+    ].join(',');
+  });
+  const csv = '\uFEFF' + head.join(',') + '\n' + rows.join('\n') + '\n';
+  const today = new Date().toISOString().slice(0, 10);
+  const q = window._meQuad || 'A';
+  const fname = '月底压货商品清单_' + (q === 'all' ? '全部' : q) + '_' + list.length + '行_' + today + '.csv';
+  downloadFile(fname, csv);
+  showToast('已导出 ' + list.length + ' 行');
+}
+window.exportMonthendCSV = exportMonthendCSV;
 
 // v176: 长期高严重度清单导出 CSV（与表体同源，导出当前筛选+排序后的全部行，非当前页）
 function exportLongTermCSV() {
