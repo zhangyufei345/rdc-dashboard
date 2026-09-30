@@ -799,7 +799,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 388; // v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）落到看板。新增 ME_PARAMS/ME_QUAD 常量块 + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis 渲染 + exportMonthendCSV 导出。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A象限=重点关注（压货高+缺货高），并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天（关账集中放行实测仅2~8天）；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义，实测312条100%如此）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据（1-4月缺货汇总为空），故相关统计一律限定5-9月内比较以消除月份混淆。与「长期高严重度分析」是两个独立模块（脉冲口径 vs 缺口径），不可互推（Spearman ρ≈0）。｜ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 389; // v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键** —— 必须用 dataIndex 回查源数组。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（formatter 只在真实 hover 时才执行）→ 新增常驻工具 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描 + tooltip 内容断言），已用「未修复的线上版」反向验证过能复现该报错。｜ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）落到看板。新增 ME_PARAMS/ME_QUAD 常量块 + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis 渲染 + exportMonthendCSV 导出。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A象限=重点关注（压货高+缺货高），并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天（关账集中放行实测仅2~8天）；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义，实测312条100%如此）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据（1-4月缺货汇总为空），故相关统计一律限定5-9月内比较以消除月份混淆。与「长期高严重度分析」是两个独立模块（脉冲口径 vs 缺口径），不可互推（Spearman ρ≈0）。｜ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -8451,13 +8451,20 @@ function renderMonthendAnalysis() {
     var chM = initChart('chart-me-month');
     if (chM) {
       var mKeys = Object.keys(monthStat).sort();
+      // 🔴 v388.1 修复 tooltip 报错「Cannot read properties of undefined (reading 'n')」：
+      //   旧代码 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，
+      //   而 monthStat 的键是完整的 '2026-01' → 查不到 → s 为 undefined → s.n 抛错。
+      //   修法：用 ps[0].dataIndex 回查完整键（不要用被截断的显示名当查表键）。
       chM.setOption({
         tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
           formatter: function(ps) {
-            var ym = ps[0].name, s = monthStat[ym];
-            return '<strong>' + ym + '</strong><br>可观测组合：' + s.n + ' 个<br>' +
+            if (!ps || !ps.length) return '';
+            var full = mKeys[ps[0].dataIndex];
+            var s = full ? monthStat[full] : null;
+            if (!s) return '<strong>' + (full || ps[0].name) + '</strong><br>无数据';
+            return '<strong>' + full + '</strong><br>可观测组合：' + s.n + ' 个<br>' +
               '达标率：' + (s.n ? (s.hit / s.n * 100).toFixed(1) : '—') + '%<br>' +
-              '该月 P75 阈值：' + (s.p75 === null ? '—' : s.p75.toFixed(2) + 'x');
+              '该月 P75 阈值：' + (s.p75 === null || s.p75 === undefined ? '—' : s.p75.toFixed(2) + 'x');
           } },
         grid: { left: 52, right: 46, top: 30, bottom: 30 },
         xAxis: { type: 'category', data: mKeys.map(function(m) { return m.slice(5); }), axisLabel: { fontSize: 10 } },
