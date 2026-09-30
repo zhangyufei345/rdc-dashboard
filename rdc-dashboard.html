@@ -799,7 +799,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 389; // v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键** —— 必须用 dataIndex 回查源数组。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（formatter 只在真实 hover 时才执行）→ 新增常驻工具 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描 + tooltip 内容断言），已用「未修复的线上版」反向验证过能复现该报错。｜ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）落到看板。新增 ME_PARAMS/ME_QUAD 常量块 + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis 渲染 + exportMonthendCSV 导出。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A象限=重点关注（压货高+缺货高），并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天（关账集中放行实测仅2~8天）；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义，实测312条100%如此）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据（1-4月缺货汇总为空），故相关统计一律限定5-9月内比较以消除月份混淆。与「长期高严重度分析」是两个独立模块（脉冲口径 vs 缺口径），不可互推（Spearman ρ≈0）。｜ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 390; // v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层 total仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高，图形传达的是错误信息（看图上 总仓紧张 与 总仓缺货 一模一样，实际 18.21% vs 15.83%）。修法：删掉多余回查，直接遍历 prof.cells 一次进桶（与结论②同源同口径）。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键** —— 必须用 dataIndex 回查源数组。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（formatter 只在真实 hover 时才执行）→ 新增常驻工具 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描 + tooltip 内容断言），已用「未修复的线上版」反向验证过能复现该报错。｜ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）落到看板。新增 ME_PARAMS/ME_QUAD 常量块 + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis 渲染 + exportMonthendCSV 导出。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A象限=重点关注（压货高+缺货高），并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天（关账集中放行实测仅2~8天）；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义，实测312条100%如此）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据（1-4月缺货汇总为空），故相关统计一律限定5-9月内比较以消除月份混淆。与「长期高严重度分析」是两个独立模块（脉冲口径 vs 缺口径），不可互推（Spearman ρ≈0）。｜ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -8028,19 +8028,17 @@ function renderMonthendAnalysis() {
   const _pct1 = function(v) { return v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '%'; };
 
   // ── 总仓分级统计（仅 5-9 月有数据）────────────────────────────────────
-  //   口径：把每个 SKU×月 的总仓分级当作一个「格」，按格聚合缺货率
-  const whBuckets = {};   // level -> {oq, sh, n, wq, ws, nA}
-  rowsAll.forEach(function(r) {
-    // 用 cells 拿不到逐月总仓，改从 prof.wh 反查（key = ym|sku）
-    Object.keys(prof.wh).forEach(function(k) {
-      var sp = k.split('|');
-      if (sp[1] !== r.sku) return;
-      var rec = prof.wh[k];
-      if (rec.level === '样本不足') return;
-      var b = whBuckets[rec.level] || (whBuckets[rec.level] = { oq: 0, sh: 0, n: 0 });
-      b.n++;
-    });
-  });
+  //   🔴 v390 修复（用户 2026-09-30 从截图看出三根柱等高）：
+  //   旧代码在**此处**遍历 rowsAll 再回查 prof.wh：`var sp = k.split('|'); if (sp[1] !== r.sku) return;`
+  //   —— prof.wh 的 key 是 `ym + '|' + sku`，sp[1] 是**月**不是 SKU，`ym === sku` 恒假
+  //   → 循环体永不执行 → whBuckets 三项只有 n 有值、oq/sh 恒 0（下面读 oq/sh 是死代码）。
+  //   而柱值走的是「总仓缺货+总仓紧张」合并的 whBadRate 与「总仓正常」的 whOkRate
+  //   → 前两根柱必然同值同高（图上 16.73%/16.73%/12.51%，真实值 15.83%/18.21%/12.51%）。
+  //   修法：删除这段恒空的回查，分桶统计**下沉到 whMonthsSet 定义之后**统一做一次
+  //   （即下面「总仓受限 vs 正常」那段，与结论② 完全同源同口径），图形与结论不再各算一套。
+  //   ⚠️ 铁律①：用 `a|b` 拼接的复合 key 反查时必须确认拼接顺序，别凭字段名猜下标。
+  //   ⚠️ 铁律②：const 只声明一次、且必须在对齐的使用点之前（此处曾因把循环上移而触发
+  //      `Cannot access 'whMonthsSet' before initialization` TDZ，靠运行时探针才抓到）。
 
   // ── 筛选与排序状态 ────────────────────────────────────────────────────
   window._meQuad = window._meQuad || 'A';
@@ -8089,6 +8087,9 @@ function renderMonthendAnalysis() {
   let whBadOq = 0, whBadSh = 0, whOkOq = 0, whOkSh = 0;
   let whBadWOq = 0, whBadWSh = 0, whOkWOq = 0, whOkWSh = 0;
   let whBadN = 0, whOkN = 0;
+  // v390: 逐档分桶（供「总仓供应分级 vs 缺货率」图使用）—— 与下面 bad/ok 汇总同一趟循环、同一口径，
+  //       这样图形与结论② 不可能再出现「各算一套」。原实现放在前面且回查 key 下标写错 → 柱值为空退化。
+  const whBuckets = {};   // level -> {oq, sh, n, wq, ws}
   const _cellKeys = Object.keys(prof.cells);
   _cellKeys.forEach(function(k) {
     var c = prof.cells[k];
@@ -8096,6 +8097,8 @@ function renderMonthendAnalysis() {
     if (!whMonthsSet[c.ym]) return;
     var w = prof.wh[c.ym + '|' + c.sku];
     if (!w || w.level === '样本不足') return;
+    var bk = whBuckets[w.level] || (whBuckets[w.level] = { oq: 0, sh: 0, n: 0, wq: 0, ws: 0 });
+    bk.oq += c.oq; bk.sh += c.shortQty; bk.wq += c.winOq; bk.ws += c.winShort; bk.n++;
     var bad = (w.level === '总仓缺货' || w.level === '总仓紧张');
     if (bad) {
       whBadOq += c.oq; whBadSh += c.shortQty; whBadWOq += c.winOq; whBadWSh += c.winShort; whBadN++;
@@ -8412,14 +8415,11 @@ function renderMonthendAnalysis() {
     if (chW) {
       var order = ['总仓缺货', '总仓紧张', '总仓正常'];
       var bars = order.map(function(lv) {
-        var b = whBuckets[lv] || { n: 0 };
-        var rate = null, winRate = null;
-        if (lv === '总仓缺货' || lv === '总仓紧张') {
-          rate = whBadRate; winRate = whBadWinRate;
-        } else {
-          rate = whOkRate; winRate = whOkWinRate;
-        }
-        return { name: lv, n: b.n, rate: rate, winRate: winRate };
+        var b = whBuckets[lv] || { n: 0, oq: 0, sh: 0, wq: 0, ws: 0 };
+        // v390: 每根柱用自己的桶算率（旧代码让前两根柱共用合并值 → 必然等高）
+        return { name: lv, n: b.n,
+          rate: b.oq > 0 ? b.sh / b.oq : null,
+          winRate: b.wq > 0 ? b.ws / b.wq : null };
       });
       chW.setOption({
         tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },

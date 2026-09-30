@@ -238,6 +238,70 @@ function chk(name, cond, detail) {
   charts.forEach(c => chk('图表 ' + c.id + ' 已实例化且有 series', c.exists && c.hasInst && c.seriesN > 0,
     `exists=${c.exists} inst=${c.hasInst} series=${c.seriesN} ${c.w}x${c.h}`));
 
+  // ── 🔴 v390 图表「值正确性」断言（补上只看 series>0 的盲区）──────────────
+  //   背景：v388 上线时「总仓供应分级 vs 缺货率」图三根柱中前两根完全等高，
+  //   原因是用 rowsAll×prof.wh 回查时 sp[1] 拿的是「月」不是 SKU → 分桶恒空 →
+  //   柱值退化成全局合并值。34 项探针全绿却没发现，因为只断言了「图表实例化 + series>0」。
+  //   教训：图表断言必须**读柱/点的实际值**并与同源复算对拍，不能只验容器和 series 数。
+  const whChart = await page.evaluate(() => {
+    const el = document.getElementById('chart-me-wh');
+    // 🔴 getInstanceByDom 对「已脱离 DOM 的节点」会抛 TypeError（内部读 el.getAttribute）→ 必须先判 isConnected
+    if (!el || !el.isConnected) return { ok: false };
+    let inst = null;
+    try { inst = (typeof echarts !== 'undefined') ? echarts.getInstanceByDom(el) : null; } catch (e) { return { ok: false }; }
+    if (!inst) return { ok: false };
+    const op = inst.getOption();
+    const cats = (op.xAxis && op.xAxis[0] && op.xAxis[0].data) || [];
+    const full = (op.series.find(s => s.name === '全月缺货率') || {}).data || [];
+    const win = (op.series.find(s => s.name === '窗口内缺货率') || {}).data || [];
+    return { ok: true, cats: cats.slice(), full: full.slice(), win: win.slice() };
+  });
+  if (!whChart.ok) chk('总仓图 option 可读', false);
+  else {
+    chk('总仓图 x 轴为「总仓缺货/总仓紧张/总仓正常」三档',
+      whChart.cats.join(',') === '总仓缺货,总仓紧张,总仓正常', whChart.cats.join(','));
+    // ① 三根柱的值不能重复（v390 bug 的确切特征：前两根共用合并值 → 必然相等）
+    const vals = whChart.full.filter(v => v !== null && v !== undefined);
+    const uniq = [...new Set(vals.map(v => Number(v).toFixed(6)))];
+    chk('🔴 总仓图三根柱「全月缺货率」值互不相同（v390：前两根曾完全等高）',
+      vals.length === 3 && uniq.length === 3, 'vals=' + vals.map(v => (v * 100).toFixed(2) + '%').join(' / '));
+    // ② 与「同源复算」逐位对拍：直接按 cells×wh 逐格进桶重算
+    const recalc = await page.evaluate(() => {
+      const p = getMonthendProfile();
+      const SET = {}; ME_PARAMS.WH_MONTHS.forEach(m => SET[m] = 1);
+      const bk = {};
+      Object.keys(p.cells).forEach(k => {
+        const c = p.cells[k];
+        if (!c.eligible || !SET[c.ym]) return;
+        const w = p.wh[c.ym + '|' + c.sku];
+        if (!w || w.level === '样本不足') return;
+        const b = bk[w.level] || (bk[w.level] = { oq: 0, sh: 0, wq: 0, ws: 0, n: 0 });
+        b.oq += c.oq; b.sh += c.shortQty; b.wq += c.winOq; b.ws += c.winShort; b.n++;
+      });
+      const mk = lv => { const b = bk[lv] || { oq: 0, sh: 0, wq: 0, ws: 0, n: 0 };
+        return { full: b.oq > 0 ? b.sh / b.oq : null, win: b.wq > 0 ? b.ws / b.wq : null, n: b.n }; };
+      return { 总仓缺货: mk('总仓缺货'), 总仓紧张: mk('总仓紧张'), 总仓正常: mk('总仓正常') };
+    });
+    ['总仓缺货', '总仓紧张', '总仓正常'].forEach((lv, i) => {
+      const exp = recalc[lv];
+      const gotF = whChart.full[i], gotW = whChart.win[i];
+      const okF = (exp.full === null && (gotF === null || gotF === undefined)) ||
+        (exp.full !== null && gotF !== null && Math.abs(gotF - exp.full) < 1e-9);
+      const okW = (exp.win === null && (gotW === null || gotW === undefined)) ||
+        (exp.win !== null && gotW !== null && Math.abs(gotW - exp.win) < 1e-9);
+      chk('🔴 总仓图「' + lv + '」柱值 == 同源逐格复算（n=' + exp.n + '）', okF && okW,
+        '页面=' + (gotF === null ? '—' : (gotF * 100).toFixed(2) + '%') +
+        ' 复算=' + (exp.full === null ? '—' : (exp.full * 100).toFixed(2) + '%') +
+        ' ｜ 窗口 页面=' + (gotW === null ? '—' : (gotW * 100).toFixed(2) + '%') +
+        ' 复算=' + (exp.win === null ? '—' : (exp.win * 100).toFixed(2) + '%'));
+    });
+    // ③ 门槛方向：总仓受限（缺货/紧张）两档都必须高于总仓正常
+    const okN = recalc['总仓正常'].full, badN = recalc['总仓缺货'].full, tigN = recalc['总仓紧张'].full;
+    chk('🔴 总仓缺货 & 总仓紧张 均高于 总仓正常（信号方向）',
+      badN > okN && tigN > okN,
+      `缺货=${(badN * 100).toFixed(2)}% 紧张=${(tigN * 100).toFixed(2)}% 正常=${(okN * 100).toFixed(2)}%`);
+  }
+
   // ── 表格与分页 ───────────────────────────────────────────────────────
   const tbl = await page.evaluate(() => {
     const t = document.querySelector('#page-shortage table.data-table');
