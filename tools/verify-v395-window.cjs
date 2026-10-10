@@ -56,7 +56,10 @@ function startServer() {
 (async () => {
   const { chromium } = require('playwright-core');
   let server = null, URL;
-  if (BASE) URL = BASE + '/rdc-dashboard.html';
+  // 🔴 线上验版必须走根路径 `/`：Cloudflare Pages 开了「去扩展名」，请求 /rdc-dashboard.html 会 308
+  //    跳到 /rdc-dashboard（多一次重定向，且容易把「验的不是同一份文件」混进来）。
+  //    本地模式仍直接开 /rdc-dashboard.html（本地静态服务不做 pretty URL）。
+  if (BASE) URL = BASE + (process.env.RDC_PATH || '/');
   else { server = await startServer(); URL = 'http://127.0.0.1:' + server.address().port + '/rdc-dashboard.html'; }
   console.log('目标:', URL, '\n');
 
