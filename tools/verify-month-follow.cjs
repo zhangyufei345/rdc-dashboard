@@ -16,6 +16,8 @@ const http = require('http');
 const { chromium } = require('C:/Users/zhangyufei1/.workbuddy/binaries/node/workspace/node_modules/playwright-core');
 
 const ROOT = process.env.VERIFY_ROOT || 'C:/Users/zhangyufei1/WorkBuddy/2026-06-30-09-24-40';
+// VERIFY_URL=https://rdc-dashboard.pages.dev → 跳过本地服务，直测线上（线上复跑用）
+const ONLINE = process.env.VERIFY_URL || '';
 const SHOT = path.join(ROOT, '.cache');
 const LATEST = '2026-10';   // 本次数据最新月；换月时同步前移
 const OLD = '2026-09';
@@ -39,8 +41,6 @@ const R = [];
 function ck(name, ok, detail) { R.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail) }); }
 
 (async () => {
-  const srv = await serve();
-  const port = srv.address().port;
   const exe = (() => {
     if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH;
     const base = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
@@ -53,13 +53,16 @@ function ck(name, ok, detail) { R.push({ name, ok: !!ok, detail: detail === unde
   })();
   const browser = await chromium.launch({ headless: true, executablePath: exe, args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
+  const srv = ONLINE ? null : await serve();
+  const base = ONLINE ? ONLINE.replace(/\/+$/, '') : ('http://127.0.0.1:' + srv.address().port);
+  console.log('目标: ' + (ONLINE ? '线上 ' + base : '本地 ' + base));
   const errs = [], badRes = [];
   page.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push(m.text()); });
   page.on('response', r => { if (r.status() >= 400) badRes.push(r.status() + ' ' + r.url().slice(-40)); });
 
   console.log('=== v394 跨月自动跟随回归探针 ===');
-  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.fill('#login-user', 'admin').catch(() => {});
   await page.fill('#login-pass', 'admin123').catch(() => {});
   await page.click('#login-page button').catch(() => {});
@@ -137,7 +140,7 @@ function ck(name, ok, detail) { R.push({ name, ok: !!ok, detail: detail === unde
   ck('无资源加载失败（除 favicon）', realBad.length === 0, realBad.slice(0, 4).join(' | '));
 
   await browser.close();
-  srv.close();
+  if (srv) srv.close();
 
   console.log('');
   R.forEach(r => console.log((r.ok ? '✅ ' : '❌ ') + r.name + (r.detail ? '  → ' + r.detail : '')));
