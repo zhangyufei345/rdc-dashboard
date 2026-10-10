@@ -1,0 +1,36 @@
+修复: v394 跨月部署后「总仪表盘停在旧月」—— 月份自动跟随判据由「是否仍为 all」改为「用户是否手动选过」
+
+【用户报告】2026-10-10 上午「更新订单部署」（9月→10月首次跨月切换）后，用户报「总仪表盘还是9月的数据」：
+缺货日期 2026-09-28、月度订单满足率 98.2%（9 月值），而当时线上数据文件已 100% 是 10 月。
+
+【排查结论：服务端无问题】
+- 线上 data.json / data-2026-09.json / manifest.json 三者哈希与本地逐字节一致；
+- 响应头 cache-control: no-cache, no-store, must-revalidate（无 CDN/HTTP 缓存层），前端 fetch 亦带 cache:'no-cache'；
+- 全新上下文访问线上可正常看到 2026-10-09（verify-odeploy-1010-live 6/6 全绿）。
+- 用 Playwright 同 profile 两轮回放（先 9 月数据建缓存 → 换 10 月文件 → 重开）稳定复现：
+  数据已自愈到 10 月（shortage 9950 行 / 最新 2026-10-09 / 可用月份含 2026-10），
+  但 filters.dataMonth 仍为 '2026-09' → 页面所有口径按 9 月渲染。
+
+【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾 detectAllMonths() 在「后台补拉新数据之前」
+就把 _latestMonth 判为 '2026-09' → 紧随其后的自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；
+随后 refreshFromManifest 拉到 10 月、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是
+`filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → 数据自愈了但 dataMonth 拉不回来。
+月内更新时 _latestMonth 不变，故只在**首次跨月切换**时暴露，且用户端无任何自愈路径。
+
+【修复】判据改为「用户是否手动选过月份」：
+- 新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()；
+- 5 处自动跟随点（parseExcel / bootLoad / refreshFromManifest×3）统一改走它；
+- onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true，尊重用户选择不被后台刷新覆盖。
+DB_VERSION 不动（无 sheet/字段语义变更），BUILD_VERSION 393 → 394。
+
+【验证】
+1) 双向复现：同一「老用户跨月重开」场景 —— v393 下 filters.dataMonth=2026-09（bug 现场），v394 下 =2026-10；
+   总览缺货日期同步由 2026-09-28 变为 2026-10-09。
+2) 新增 tools/verify-month-follow.cjs（9 项行为契约断言）：v394 正向全绿；
+   对 git HEAD 的 v393 版本反向跑 4/8 失败（B/C/D/E 四项精确变红、命中修改点）→ 证明探针有效而非假绿。
+3) 全套回归 149 项零退化：verify-page-runtime 14/14、verify-odeploy-1010 15/15、
+   verify-monthend-tab 40/40、verify-inv-turnover 26/26、verify-demand-merge 门控通过、
+   verify-monthend-quadcount 54/54。
+4) 截图目视核对：总览缺货日期 2026-10-09、月度满足率 90.7%（原 9 月的 98.2%）、趋势图 10-06~10-09。
+
+【用户侧生效方式】需重新加载页面（HTML 已更新）；重开后 dataMonth 会自动跟随到 2026-10，无需手动切换月份下拉。
