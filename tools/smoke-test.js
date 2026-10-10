@@ -719,12 +719,22 @@ try {
 //      （v191 同款死状态）。
 try {
   const rmIdx = html.indexOf('async function refreshFromManifest');
-  const rm = html.slice(rmIdx, rmIdx + 16000);
+  // 🔴 2026-10-10（v395）修正：原来写死 `slice(rmIdx, rmIdx + 16000)` —— 而该函数体已长到 17783 字符，
+  //   标记点落在窗口之外 → markAt 恒 -1 → **长期假红**（用 HEAD 版跑同一探针结果完全一致，确认非回归）。
+  //   假红会让真回归被淹没（v393 铁律），故改为「按函数体真实范围取窗」：从起点找到下一个顶层
+  //   `async function` / `function` 行（列 0 起）作为结束边界，函数再长也不会失效。
+  let rmEnd = html.length;
+  for (const kw of ['\nasync function ', '\nfunction ']) {
+    const at = html.indexOf(kw, rmIdx + 1);
+    if (at > 0 && at < rmEnd) rmEnd = at;
+  }
+  const rm = html.slice(rmIdx, rmEnd);
+  if (rmIdx < 0 || rmEnd - rmIdx < 100) throw new Error('refreshFromManifest 函数体定位失败（rmIdx=' + rmIdx + '）');
   const firstLoopAt = rm.indexOf('for (const f of first)');
   const markAt = rm.indexOf('first.forEach(function(f) { _markHash(f); });');
   const restoreAt = rm.indexOf('历史月份已从本地快照回填');
   if (firstLoopAt >= 0 && markAt > firstLoopAt && restoreAt > 0 && markAt > restoreAt) {
-    log('ok', 'R25: data.json 哈希延后到历史月回填之后标记（防残缺缓存固化）');
+    log('ok', 'R25: data.json 哈希延后到历史月回填之后标记（防残缺缓存固化）；窗口=' + (rmEnd - rmIdx) + ' 字符，mark@' + markAt + ' > restore@' + restoreAt);
   } else if (markAt < 0) {
     log('err', 'R25: 未找到延后的 data.json 哈希标记（历史月回填前标记会固化残缺数据）');
   } else {

@@ -85,6 +85,21 @@ function chk(n, c, d) { c ? R.pass++ : R.fail++; console.log((c ? '  ✅ ' : '  
   const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data-2026-05.json'), 'utf8')).sheets['库存分析'];
   const goodSheet = JSON.parse(fs.readFileSync(path.join(ROOT, 'inventory-core.json'), 'utf8')).sheets['2026周转'];
 
+  // 🔴 v395（2026-10-10）修正：原来把「月份数 == 8」写死在 4 处断言里 —— 那是 v391 时点（8月窗口）的
+  //   常量，9月库存部署后周转表变成 1-9 月共 9 列，4 项断言长期假红（memory 铁律 #15：行为变更必须同步
+  //   探针期望，否则假红把真回归淹没）。
+  //   改为**从源数据同源推导**：周转表第 2 行（r[1]）是 Excel 日期序列号列头，逐列换算成月份标签，
+  //   页面月份数/标签都必须与之逐位相等。断言不再随月份增长而失效。
+  function serToMonthNum(n) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86400000);
+    return d.getUTCMonth() + 1;
+  }
+  const hdrSerials = (goodSheet[1] || []).slice(1).filter(v => typeof v === 'number' && v > 20000 && v < 60000);
+  const EXP_LABELS = hdrSerials.map(v => serToMonthNum(v) + '月');
+  const EXP_MONTHS = EXP_LABELS.length;
+  if (EXP_MONTHS < 2) throw new Error('周转表表头日期列识别失败（EXP_MONTHS=' + EXP_MONTHS + '）');
+  console.log('源表头日期列 → 期望月份: ' + JSON.stringify(EXP_LABELS));
+
   // ── A. 解析器层 ──────────────────────────────────────────────────────
   console.log('\n===== A. 解析器层 =====');
   const A = await p.evaluate(([bad, good]) => {
@@ -100,7 +115,8 @@ function chk(n, c, d) { c ? R.pass++ : R.fail++; console.log((c ? '  ✅ ' : '  
   }, [src, goodSheet]);
   chk('🔴 误匹配的「库存分析」sheet 解析结果必须为 null（原来会产出废数据）', A.badIsNull, 'matchedRows=' + A.badMatched);
   chk('真周转表「2026周转」解析正常（matchedRows >= 9）', A.goodMatched >= 9, 'matchedRows=' + A.goodMatched);
-  chk('真周转表月份数 == 8（1月~8月）', Array.isArray(A.goodMonths) && A.goodMonths.length === 8, JSON.stringify(A.goodMonths));
+  chk('真周转表月份数 == 表头日期列数 ' + EXP_MONTHS, Array.isArray(A.goodMonths) && A.goodMonths.length === EXP_MONTHS, JSON.stringify(A.goodMonths));
+  chk('真周转表月份标签 == 表头序列号换算值', JSON.stringify(A.goodMonths) === JSON.stringify(EXP_LABELS), JSON.stringify(A.goodMonths) + ' vs ' + JSON.stringify(EXP_LABELS));
 
   // ── B. 运行时层 ──────────────────────────────────────────────────────
   console.log('\n===== B. 运行时层 =====');
@@ -117,7 +133,7 @@ function chk(n, c, d) { c ? R.pass++ : R.fail++; console.log((c ? '  ✅ ' : '  
     };
   });
   chk('dataStore.inventoryTurnover 存在', B.hasInv);
-  chk('月份数 == 8（不是中毒态的 7）', Array.isArray(B.months) && B.months.length === 8, JSON.stringify(B.months));
+  chk('月份数 == 表头日期列数 ' + EXP_MONTHS + '（不是中毒态的 7）', Array.isArray(B.months) && B.months.length === EXP_MONTHS, JSON.stringify(B.months));
   chk('🔴 全库位汇总行最新月非 null（中毒态为 null）', typeof B.totalAll === 'number' && isFinite(B.totalAll), 'v=' + B.totalAll);
   chk('🔴 共享库汇总行最新月非 null', typeof B.totalShared === 'number' && isFinite(B.totalShared), 'v=' + B.totalShared);
   chk('🔴 总仓汇总行最新月非 null', typeof B.hq === 'number' && isFinite(B.hq), 'v=' + B.hq);
@@ -189,7 +205,7 @@ function chk(n, c, d) { c ? R.pass++ : R.fail++; console.log((c ? '  ✅ ' : '  
     await saveToIDB();
     return { months: dataStore.inventoryTurnover.months.length };
   });
-  chk('已把中毒数据写入 IDB（months=7）', poisoned.months === 7);
+  chk('已把中毒数据写入 IDB（合成的 months=7）', poisoned.months === 7);
 
   logs = [];
   await p.reload({ waitUntil: 'domcontentloaded', timeout: 120000 });
@@ -199,24 +215,24 @@ function chk(n, c, d) { c ? R.pass++ : R.fail++; console.log((c ? '  ✅ ' : '  
   // 等自愈把 inventory-core.json 拉回并重解析
   let healed = false;
   for (let i = 0; i < 40 && !healed; i++) {
-    healed = await p.evaluate(() => {
+    healed = await p.evaluate((exp) => {
       const inv = dataStore.inventoryTurnover;
-      if (!inv || !Array.isArray(inv.months) || inv.months.length !== 8) return false;
+      if (!inv || !Array.isArray(inv.months) || inv.months.length !== exp) return false;
       const li = inv.months.length - 1;
       return [inv.totalAllLocation, inv.totalSharedLocation, inv.headquarters]
         .every(a => Array.isArray(a) && typeof a[li] === 'number' && isFinite(a[li]));
-    });
+    }, EXP_MONTHS);
     if (!healed) await p.waitForTimeout(500);
   }
   const healMsg = logs.find(l => l.indexOf('v391 库存周转') >= 0);
   chk('🔴 自愈日志出现（判定中毒缓存并强制补拉 inventory-core.json）', !!healMsg, healMsg || logs.slice(-3).join(' | '));
-  chk('🔴 reload 后库存周转数据被修复（months=8 且汇总行非 null）', healed);
+  chk('🔴 reload 后库存周转数据被修复（months=' + EXP_MONTHS + ' 且汇总行非 null）', healed);
   const after = await p.evaluate(() => {
     const inv = dataStore.inventoryTurnover; const li = inv.months.length - 1;
     return { months: inv.months.length, all: inv.totalAllLocation[li], shared: inv.totalSharedLocation[li], hq: inv.headquarters[li] };
   });
   console.log('  reload 后:', JSON.stringify(after));
-  chk('reload 后月份数 == 8', after.months === 8, 'months=' + after.months);
+  chk('reload 后月份数 == 表头日期列数 ' + EXP_MONTHS, after.months === EXP_MONTHS, 'months=' + after.months);
   chk('reload 后汇总行均为数值', [after.all, after.shared, after.hq].every(v => typeof v === 'number'));
 
   // ── E. 无副作用检查 ──────────────────────────────────────────────────
