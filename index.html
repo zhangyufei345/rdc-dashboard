@@ -818,7 +818,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 395; // v395: 9月库存部署 —— 本机首次「库存月份窗口整体平移」（8月窗口 → 9月窗口）。①数据侧：inventory.xlsx 换为 9月版（合并保留历史：拉回数据含 1-9月、转储数据含 7-9月、库存金额保留 2025 全年 + 2026 1-9月，新增「9月库存覆盖数据」「9月库存状态分析」两表）。②代码侧：cov5/6/7 三个「位置语义」槽位指向的表整体右移一月（cov7 从 8月表 → 9月表），全站约 30 处月份硬编码改为**按数据自带的 reportMonth 推导**（新增 covSnapMonthLabel / covFutureRangeText / covFutureFieldRange 助手；parseCoverageSheet 增产 reportMonth + monthHint；parseCoverageSheet 的 COV_MONTH_MAP 补 cov15=2027-03）。③顺带修掉三个「模板一换月就静默错」的老 bug：(a) `parseInventoryTurnoverSheet` 右表探测上界写死 `c<=10`，9月模板「出货成本统计」在**索引11** → 右表(出货成本)整段读错，放宽到 c<=20；(b) v276 起 cov7 槽装的已是当月新表，但「未来6月需求」硬编码 cov08..cov13 未跟着平移 → 一直多算当月、少算最后一个需求月，改按数据推导；(c) getCovMonthConfig 三分支按「covN 的 N 直接当月份」写，与 v276 后的实际装表错位一月 → 仅作老缓存兜底并已按新窗口改写。④端点文案（卡片标题/口径说明/讲解页）全部改为动态取值，避免下次换月再手改。DB_VERSION 234→235（cov 槽位语义与新增字段变化，老 IDB 无法自愈）。│ v394: 🔴 修复「跨月部署后老用户永远停在旧月」（用户 2026-10-10 报「总仪表盘还是9月的数据」，当天正是 9月→10月 的首次跨月切换）。现象：线上数据文件已 100% 是 10 月（三个 json 哈希全对、响应头 no-cache 无任何 CDN/HTTP 缓存层），新用户/清缓存用户看到 2026-10-09，而老用户仍显示 2026-09-28、月度满足率 98.2%（9 月值）。【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾的 detectAllMonths() 在「后台补拉新数据之前」就把 _latestMonth 判为 '2026-09' → 紧随其后的 bootLoad 自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；随后 refreshFromManifest 拉到 10 月数据、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是 `filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → **数据其实已经自愈到 10 月，只是没有任何地方把 dataMonth 拉回来**，于是总览/缺货日期/各页月度口径全部停在 9 月，且用户端没有任何自愈路径。【为何直到今天才暴露】月内更新时 _latestMonth 不变，只有跨月切换（最新月变化）才会触发，所以这是首次出现。【修法】判据从「filters.dataMonth 是否仍为 all」改为「用户是否手动选过月份」：新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()，5 处自动跟随点统一改走它（没选过 → 每次都跟随最新月；选过 → 尊重用户选择不被后台刷新覆盖）；onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true。DB_VERSION 不动（无 sheet/字段语义变更）。│ v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 396; // v396: 库存覆盖图新增「按品牌堆叠」维度（用户 2026-10-10 要求：「红框处增加一个按品牌展示库存覆盖的维度。选择按品牌展示，则柱状图切换为品牌展示。数据同样要求能下钻，下钻后先展示RDC维度数据，再展示SKU明细」）。①原图只有「按 RDC 堆叠」一维，现于图例区新增「展示维度：按 RDC / 按品牌」切换按钮组（常驻显示），色块图例跟随维度切换；②按品牌展示时堆叠段 = 归一化品牌 —— 走全局 normalizeBrandName（百爱神/海鸥/雅霜/友谊/春蕾/传统品牌 一并归入「传统」，即页面既有口径；用户点名的 5 个小品牌在 9月覆盖表里本就已合并为「传统品牌」）；玉泽/佰草集按用户口径不参与展示（9月覆盖金额仅 65 元 / 1,165 元）；③品牌颜色按「金额降序」固定绑定，勾选切换时柱子不串色；④点击品牌柱下钻 → 「库存覆盖明细」页改造为两层：先给「① RDC 维度」汇总表（RDC / 可用库存金额 / 占比 / SKU 数，点行可再筛到该 RDC 的 SKU 明细，带「已筛选 ✕」可退），再给「② SKU 明细」；⑤绘图逻辑收敛为 renderCovStackedChart 单一入口（原 renderCovChartFromData 与 renderInventoryStructure 内联版两份重复代码合并，避免今后两处漂移）；⑥ structCacheKey 纳入 _covDim / _covSelectedBrands（否则切换维度会读到旧 HTML 缓存）。DB_VERSION 不动（无 sheet/字段语义变更，纯前端维度扩展）。│ v395: 9月库存部署 —— 本机首次「库存月份窗口整体平移」（8月窗口 → 9月窗口）。①数据侧：inventory.xlsx 换为 9月版（合并保留历史：拉回数据含 1-9月、转储数据含 7-9月、库存金额保留 2025 全年 + 2026 1-9月，新增「9月库存覆盖数据」「9月库存状态分析」两表）。②代码侧：cov5/6/7 三个「位置语义」槽位指向的表整体右移一月（cov7 从 8月表 → 9月表），全站约 30 处月份硬编码改为**按数据自带的 reportMonth 推导**（新增 covSnapMonthLabel / covFutureRangeText / covFutureFieldRange 助手；parseCoverageSheet 增产 reportMonth + monthHint；parseCoverageSheet 的 COV_MONTH_MAP 补 cov15=2027-03）。③顺带修掉三个「模板一换月就静默错」的老 bug：(a) `parseInventoryTurnoverSheet` 右表探测上界写死 `c<=10`，9月模板「出货成本统计」在**索引11** → 右表(出货成本)整段读错，放宽到 c<=20；(b) v276 起 cov7 槽装的已是当月新表，但「未来6月需求」硬编码 cov08..cov13 未跟着平移 → 一直多算当月、少算最后一个需求月，改按数据推导；(c) getCovMonthConfig 三分支按「covN 的 N 直接当月份」写，与 v276 后的实际装表错位一月 → 仅作老缓存兜底并已按新窗口改写。④端点文案（卡片标题/口径说明/讲解页）全部改为动态取值，避免下次换月再手改。DB_VERSION 234→235（cov 槽位语义与新增字段变化，老 IDB 无法自愈）。│ v394: 🔴 修复「跨月部署后老用户永远停在旧月」（用户 2026-10-10 报「总仪表盘还是9月的数据」，当天正是 9月→10月 的首次跨月切换）。现象：线上数据文件已 100% 是 10 月（三个 json 哈希全对、响应头 no-cache 无任何 CDN/HTTP 缓存层），新用户/清缓存用户看到 2026-10-09，而老用户仍显示 2026-09-28、月度满足率 98.2%（9 月值）。【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾的 detectAllMonths() 在「后台补拉新数据之前」就把 _latestMonth 判为 '2026-09' → 紧随其后的 bootLoad 自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；随后 refreshFromManifest 拉到 10 月数据、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是 `filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → **数据其实已经自愈到 10 月，只是没有任何地方把 dataMonth 拉回来**，于是总览/缺货日期/各页月度口径全部停在 9 月，且用户端没有任何自愈路径。【为何直到今天才暴露】月内更新时 _latestMonth 不变，只有跨月切换（最新月变化）才会触发，所以这是首次出现。【修法】判据从「filters.dataMonth 是否仍为 all」改为「用户是否手动选过月份」：新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()，5 处自动跟随点统一改走它（没选过 → 每次都跟随最新月；选过 → 尊重用户选择不被后台刷新覆盖）；onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true。DB_VERSION 不动（无 sheet/字段语义变更）。│ v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -14785,7 +14785,10 @@ function structCacheKey() {
     window._invHainan || 'all',
     window._isRdc || 'all',
     window._invStatus || 'all',
-    (window._covSelectedRdcs || []).join(',')
+    (window._covSelectedRdcs || []).join(','),
+    // v396: 库存覆盖图的展示维度与品牌勾选也是「派生状态」，必须进 key，否则切换维度后读到旧 HTML
+    window._covDim || 'rdc',
+    (window._covSelectedBrands || []).join(',')
   ].join('|');
 }
 function getStructCache() {
@@ -14866,17 +14869,26 @@ function renderStackedChartFromData(monthLabels, totals) {
   });
 }
 
-// 库存覆盖堆叠柱状图（从缓存数据重建）
-function renderCovChartFromData(covDisplayRdcs, covLabels, covAgg) {
+// 库存覆盖堆叠柱状图（统一渲染入口，v396 起支持「按 RDC / 按品牌」两个维度）
+//   dim='rdc'   → 堆叠段 = RDC；点击柱段 → 该 RDC × 覆盖周期 的 SKU 明细
+//   dim='brand' → 堆叠段 = 归一化品牌；点击柱段 → 该品牌 × 覆盖周期
+//                 （明细页先给「RDC 维度」汇总，再给 SKU 明细）
+// 复用点：① renderInventoryStructure 首次渲染 ② 缓存命中时从 structCache.cov 重建
+function renderCovStackedChart(cfg) {
   const covChartEl = document.getElementById('chart-cov-stacked');
   if (!covChartEl) return;
-  const rdcColors = ['#EF4444','#F97316','#FACC15','#10B981','#3B82F6','#8B5CF6','#06B6D4'];
+  const dim = (cfg && cfg.dim) || 'rdc';
+  // 兼容 v395 及更早缓存里的字段名（covDisplayRdcs/covLabels/covAgg），旧缓存仍可正常重建
+  const names = (cfg && (cfg.names || cfg.covDisplayRdcs)) || [];
+  const labels = (cfg && (cfg.labels || cfg.covLabels)) || [];
+  const agg = (cfg && (cfg.agg || cfg.covAgg)) || {};
+  const colors = (cfg && cfg.colors) || [];
   function covKey(cov, l) { return cov[l] ? l : (l === '≤1个月' && cov['0~1个月'] ? '0~1个月' : null); }
   const c2 = initChart('chart-cov-stacked');
   c2.setOption({
     tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
       formatter: function(params) {
-        let h = '<strong>' + params[0].axisValue + '</strong> <span style="color:#9aa7b4;font-size:10px">(点击下钻SKU)</span>';
+        let h = '<strong>' + params[0].axisValue + '</strong> <span style="color:#9aa7b4;font-size:10px">(' + (dim === 'brand' ? '点击下钻该品牌明细' : '点击下钻SKU') + ')</span>';
         const sorted = params.slice().sort((a, b) => (b.value || 0) - (a.value || 0));
         let sum = 0;
         sorted.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
@@ -14886,24 +14898,26 @@ function renderCovChartFromData(covDisplayRdcs, covLabels, covAgg) {
     },
     legend: { show: false },
     grid: { left: 70, right: 30, top: 50, bottom: 45 },
-    xAxis: { type: 'category', data: covLabels, axisLabel: { fontSize: 10, rotate: 30, interval: 0 } },
+    xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, rotate: 30, interval: 0 } },
     yAxis: { type: 'value', name: '元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : v } },
-    series: (covDisplayRdcs || []).map((rdc, idx) => ({
-      name: rdc, type: 'bar', stack: 'cov',
-      data: (covLabels || []).map(l => {
-        const cov = (covAgg && covAgg[rdc]) || {};
+    series: names.map((n, idx) => ({
+      name: n, type: 'bar', stack: 'cov',
+      data: labels.map(l => {
+        const cov = agg[n] || {};
         const key = covKey(cov, l);
         return key ? (cov[key] || 0) : 0;
       }),
-      color: rdcColors[idx % rdcColors.length],
+      color: colors[idx % (colors.length || 1)],
       cursor: 'pointer',
       itemStyle: { borderRadius: 0 },
       emphasis: { focus: 'series' }
     }))
   });
+  // 点击柱段按当前维度下钻（dim 变化时 initChart 会 dispose 旧实例，不会重复绑定）
   c2.on('click', function(p) {
     if (!p || !p.seriesName || p.value == null) return;
-    drillRdcPeriodCovDetail(p.seriesName, p.name);
+    if (dim === 'brand') drillBrandPeriodCovDetail(p.seriesName, p.name);
+    else drillRdcPeriodCovDetail(p.seriesName, p.name);
   });
 }
 
@@ -16774,7 +16788,7 @@ function renderInventoryStructure() {
   if (structCache && structCache.html) {
     page.innerHTML = structCache.html;
     if (structCache.stacked) renderStackedChartFromData(structCache.stacked.monthLabels, structCache.stacked.totals);
-    if (structCache.cov) renderCovChartFromData(structCache.cov.covDisplayRdcs, structCache.cov.covLabels, structCache.cov.covAgg);
+    if (structCache.cov) renderCovStackedChart(structCache.cov);
     return;
   }
 
@@ -16920,6 +16934,31 @@ function renderInventoryStructure() {
       covAgg[d.rdc][lv] = (covAgg[d.rdc][lv] || 0) + (d.planAmt || 0);
     });
 
+    // v396: 品牌维度聚合（库存覆盖图「按品牌展示」用）——与 RDC 维度同源同口径（同一 cov7 SKU 明细、同样跟海南筛选）
+    //   ① 品牌名统一走全局 normalizeBrandName：百爱神 / 海鸥 / 雅霜 / 友谊 / 春蕾 / 传统品牌 → 「传统」（页面既有口径）
+    //   ② 玉泽 / 佰草集 按用户口径不参与展示（9月覆盖金额仅 65 元 / 1,165 元）
+    //   ③ 顶部 RDC 下拉选具体 RDC 时，品牌金额只算该 RDC（与「RDC 维度只显示该仓」语义对齐）
+    const covBrandHidden = ['玉泽', '佰草集'];
+    const covBrandAgg = {}; // {品牌: {覆盖分类: 可用库存金额}}
+    cov7All.forEach(d => {
+      if (!d || !d.rdc) return;
+      if (hainanFilter === 'yes' && d.isHainan !== true) return;
+      if (hainanFilter === 'no' && d.isHainan === true) return;
+      if (rdcFilter !== 'all' && d.rdc !== rdcFilter) return;
+      const b = normalizeBrandName(String(d.brand || '').trim()) || '(未知品牌)';
+      if (covBrandHidden.indexOf(b) >= 0) return;
+      const lv = normCovLabel(String(d.coverageLevel || '').trim());
+      if (!covBrandAgg[b]) covBrandAgg[b] = {};
+      covBrandAgg[b][lv] = (covBrandAgg[b][lv] || 0) + (d.planAmt || 0);
+    });
+    // 品牌固定顺序 = 按总金额降序（不随勾选变化 → 颜色稳定，勾选切换时柱子不串色）
+    const covBrandAll = Object.keys(covBrandAgg).sort((a, b) => {
+      const sa = Object.values(covBrandAgg[a]).reduce((s, v) => s + v, 0);
+      const sb = Object.values(covBrandAgg[b]).reduce((s, v) => s + v, 0);
+      return sb - sa;
+    });
+    const covBrandColors = ['#EF4444','#F97316','#FACC15','#10B981','#3B82F6','#8B5CF6','#06B6D4','#EC4899','#14B8A6','#F59E0B','#6366F1'];
+
     // 筛选栏：海南花露水 + RDC
     const hainanOptions = '<option value="all"' + (hainanFilter==='all'?' selected':'') + '>全部</option>' +
       '<option value="yes"' + (hainanFilter==='yes'?' selected':'') + '>仅海南花露水</option>' +
@@ -16942,6 +16981,29 @@ function renderInventoryStructure() {
     // 已不在 allRdcs 内的脏数据清理
     window._covSelectedRdcs = window._covSelectedRdcs.filter(r => allRdcs.indexOf(r) >= 0);
     const covDisplayRdcs = rdcFilter === 'all' ? window._covSelectedRdcs : [rdcFilter];
+
+    // v396: 展示维度（'rdc' | 'brand'）+ 品牌勾选态（与 _covSelectedRdcs 同语义：空数组 = 全取消，是合法状态）
+    window._covDim = (window._covDim === 'brand') ? 'brand' : 'rdc';
+    if (!Array.isArray(window._covSelectedBrands)) window._covSelectedBrands = covBrandAll.slice();
+    // 清掉已不存在的品牌（换月/换筛选后可能整类消失），保留空数组语义
+    window._covSelectedBrands = window._covSelectedBrands.filter(b => covBrandAll.indexOf(b) >= 0);
+    const covDim = window._covDim;
+    // 图表三要素按维度切换（其余绘图逻辑完全共用 renderCovStackedChart）
+    const covDisplayNames = covDim === 'brand' ? window._covSelectedBrands : covDisplayRdcs;
+    const covDisplayAgg = covDim === 'brand' ? covBrandAgg : covAgg;
+    const covDisplayColors = covDim === 'brand' ? covBrandColors : rdcColors;
+    // v396: 品牌维度勾选（与 _covToggle 同语义；定义在所有品牌常量之后，闭包引用安全）
+    window._covToggleBrand = function(brand, checked) {
+      if (!Array.isArray(window._covSelectedBrands)) window._covSelectedBrands = [];
+      const i = window._covSelectedBrands.indexOf(brand);
+      if (checked && i < 0) window._covSelectedBrands.push(brand);
+      else if (!checked && i >= 0) window._covSelectedBrands.splice(i, 1);
+      renderInventoryStructure();
+    };
+    window._covToggleAllBrand = function() {
+      window._covSelectedBrands = (window._covSelectedBrands && window._covSelectedBrands.length === covBrandAll.length) ? [] : covBrandAll.slice();
+      renderInventoryStructure();
+    };
     const covTableRows = covDisplayRdcs.map(rdc => {
       const cov = covAgg[rdc] || {};
       const vals = covLabels.map(l => {
@@ -16952,6 +17014,53 @@ function renderInventoryStructure() {
       return { rdc, vals, total: rowTotal };
     });
     const covGrandTotal = covTableRows.reduce((s, r) => s + r.total, 0);
+
+    // v396: 库存覆盖图的「展示维度切换 + 该维度色块显隐」控件
+    //   原控件只有 RDC 色块（且仅在顶端 RDC=全部 时出现），现改为：维度切换常驻 + 色块跟随维度
+    const covBtnBase = 'padding:3px 10px;font-size:11px;border-radius:4px;cursor:pointer';
+    const covDimSwitchHtml = (function () {
+      function mkBtn(val, label) {
+        const st = covDim === val
+          ? covBtnBase + ';border:1px solid #3B82F6;background:#EFF6FF;color:#1D4ED8;font-weight:600'
+          : covBtnBase + ';border:1px solid #D1D5DB;background:#FFF;color:#374151';
+        return '<button onclick="window._covDim=\'' + val + '\';renderInventoryStructure()" style="' + st + '">' + label + '</button>';
+      }
+      let legend = '';
+      if (covDim === 'brand') {
+        // 品牌维度：色块 = 品牌（固定按金额降序 → 颜色稳定），点击色块切换该品牌显隐
+        legend = '<span style="color:#6B7280">点击色块切换品牌显示：</span>' +
+          '<button onclick="window._covToggleAllBrand()" style="' + covBtnBase + ';border:1px solid #D1D5DB;background:#FFF;color:#374151">' +
+          (window._covSelectedBrands.length === covBrandAll.length ? '全取消' : '全选') + '</button>' +
+          covBrandAll.map(function (name, i) {
+            const c = covBrandColors[i % covBrandColors.length];
+            const on = window._covSelectedBrands.indexOf(name) >= 0;
+            const ls = on
+              ? 'opacity:1;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px'
+              : 'opacity:0.35;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px;text-decoration:line-through';
+            return '<span onclick="window._covToggleBrand(\'' + name + '\', ' + !on + ')" style="' + ls + '" title="' + name + '">' +
+              '<span style="display:inline-block;width:12px;height:12px;background:' + c + ';border-radius:2px"></span>' + name + '</span>';
+          }).join('');
+      } else if (rdcFilter === 'all') {
+        // RDC 维度：沿用原「点击色块切换RDC显示」控件
+        legend = '<span style="color:#6B7280">点击色块切换RDC显示：</span>' +
+          '<button onclick="window._covToggleAll()" style="' + covBtnBase + ';border:1px solid #D1D5DB;background:#FFF;color:#374151">' +
+          (window._covSelectedRdcs.length === allRdcs.length ? '全取消' : '全选') + '</button>' +
+          rdcColors.map(function (c, i) {
+            const name = allRdcs[i];
+            if (!name) return '';
+            const on = window._covSelectedRdcs.indexOf(name) >= 0;
+            const ls = on
+              ? 'opacity:1;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px'
+              : 'opacity:0.35;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px;text-decoration:line-through';
+            return '<span data-rdc="' + name + '" onclick="window._covToggle(\'' + name + '\', ' + !on + ')" style="' + ls + '">' +
+              '<span style="display:inline-block;width:12px;height:12px;background:' + c + ';border-radius:2px"></span>' + name + '</span>';
+          }).join('');
+      }
+      return '<div style="display:flex;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:11px;width:100%">' +
+        '<span style="color:#6B7280">展示维度：</span>' + mkBtn('rdc', '按 RDC') + mkBtn('brand', '按品牌') +
+        (legend ? '<span style="color:#E5E7EB;margin:0 2px">|</span>' + legend : '') +
+        '</div>';
+    })();
 
     // 风险库存 SKU 变动（上月 → 当前月）：按 SKU 聚合风险金额(stale+expired+return+near)差值，跟随海南+RDC筛选
     // v285 月份动态化：原硬编码「6月→7月」改为 prevMonth/latestMonth（跟随 _curMonth 自动扩展）
@@ -17072,23 +17181,9 @@ function renderInventoryStructure() {
       // 库存覆盖-可用库存：堆叠柱状图（元）
       '<div class="card" style="margin-bottom:16px">' +
       '<div class="card-header" style="display:flex;flex-direction:column;gap:6px">' +
-        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📦 库存覆盖-可用库存（2026年' + (covSnapMonthLabel('cov7') || '9月') + ' · 按RDC堆叠）</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：元 · 数据源：' + (covSnapMonthLabel('cov7') || '9月') + '库存覆盖数据(SKU级，跟随海南筛选)</span></div>' +
-      // RDC 切换控件：仅在顶部 RDC=全部 时启用；点击色块/RDC名 整体切换显示
-      (rdcFilter === 'all' ? ('<div style="display:flex;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:11px;width:100%">' +
-        '<span style="color:#6B7280">点击色块切换RDC显示：</span>' +
-        '<button onclick="window._covToggleAll()" style="padding:3px 10px;font-size:11px;border:1px solid #D1D5DB;border-radius:4px;background:#FFF;cursor:pointer">' +
-        (window._covSelectedRdcs.length === allRdcs.length ? '全取消' : '全选') +
-        '</button>' +
-        rdcColors.map((c, i) => {
-          const name = allRdcs[i];
-          if (!name) return '';
-          const on = window._covSelectedRdcs.indexOf(name) >= 0;
-          const labelStyle = on
-            ? 'opacity:1;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px'
-            : 'opacity:0.35;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px;text-decoration:line-through';
-          return '<span data-rdc="' + name + '" onclick="window._covToggle(\'' + name + '\', ' + !on + ')" style="' + labelStyle + '"><span style="display:inline-block;width:12px;height:12px;background:' + c + ';border-radius:2px"></span>' + name + '</span>';
-        }).join('') +
-      '</div>') : '') +
+        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="card-title">📦 库存覆盖-可用库存（2026年' + (covSnapMonthLabel('cov7') || '9月') + ' · 按' + (covDim === 'brand' ? '品牌' : 'RDC') + '堆叠）</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcFilter==='all'?'全部RDC':rdcFilter) + ' · ' + (hainanFilter==='all'?'全部':(hainanFilter==='yes'?'仅海南花露水':'不含海南花露水')) + ' · 单位：元 · 数据源：' + (covSnapMonthLabel('cov7') || '9月') + '库存覆盖数据(SKU级，跟随海南筛选)' + (covDim === 'brand' ? ' · 品牌口径：小品牌已并入「传统」，不含玉泽/佰草集' : '') + '</span></div>' +
+      // v396: 展示维度切换（按 RDC / 按品牌）+ 该维度的色块显隐控件
+      covDimSwitchHtml +
       '</div>' +
       '<div class="chart-container" style="height:360px;max-width:75%;min-width:480px" id="chart-cov-stacked"></div>' +
       '</div>' +
@@ -17111,7 +17206,13 @@ function renderInventoryStructure() {
       setStructCache({
         html: page.innerHTML,
         stacked: { monthLabels: monthLabels.slice(), totals: totals },
-        cov: { covDisplayRdcs: covDisplayRdcs.slice(), covLabels: covLabels.slice(), covAgg: covAgg }
+        cov: {
+          dim: covDim,
+          names: covDisplayNames.slice(),
+          labels: covLabels.slice(),
+          agg: covDisplayAgg,
+          colors: covDisplayColors.slice()
+        }
       });
     } catch (e) { /* 缓存失败不影响展示 */ }
 
@@ -17167,45 +17268,15 @@ function renderInventoryStructure() {
       });
     }
 
-    // 库存覆盖堆叠柱状图（元）：横轴=覆盖周期，堆叠段=RDC（rdcColors 已提前定义在 page.innerHTML 之前）
-    const covChartEl = document.getElementById('chart-cov-stacked');
-    if (covChartEl) {
-      const c2 = initChart('chart-cov-stacked');
-      c2.setOption({
-        tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 11 },
-          formatter: function(params) {
-            let h = '<strong>' + params[0].axisValue + '</strong> <span style="color:#9aa7b4;font-size:10px">(点击下钻SKU)</span>';
-            // 按金额降序排序
-            const sorted = params.slice().sort((a, b) => (b.value || 0) - (a.value || 0));
-            let sum = 0;
-            sorted.forEach(p => { sum += (p.value || 0); h += '<br/>' + p.marker + p.seriesName + '：' + (p.value == null ? '-' : Math.round(p.value).toLocaleString() + ' 元'); });
-            h += '<br/><strong style="color:#1E293B">合计：' + Math.round(sum).toLocaleString() + ' 元</strong>';
-            return h;
-          }
-        },
-        legend: { show: false },
-        grid: { left: 70, right: 30, top: 50, bottom: 45 },
-        xAxis: { type: 'category', data: covLabels, axisLabel: { fontSize: 10, rotate: 30, interval: 0 } },
-        yAxis: { type: 'value', name: '元', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10, formatter: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : v } },
-        series: covDisplayRdcs.map((rdc, idx) => ({
-          name: rdc, type: 'bar', stack: 'cov',
-          data: covLabels.map(l => {
-            const cov = covAgg[rdc] || {};
-            const key = covKey(cov, l);
-            return key ? (cov[key] || 0) : 0;
-          }),
-          color: rdcColors[idx % rdcColors.length],
-          cursor: 'pointer',
-          itemStyle: { borderRadius: 0 },
-          emphasis: { focus: 'series' }
-        }))
-      });
-      // 点击柱状段下钻到 SKU 明细页（RDC × 周期）
-      c2.on('click', function(p) {
-        if (!p || !p.seriesName || p.value == null) return;
-        drillRdcPeriodCovDetail(p.seriesName, p.name);
-      });
-    }
+    // 库存覆盖堆叠柱状图（元）：横轴=覆盖周期，堆叠段=当前展示维度（RDC 或 品牌）
+    // v396: 绘图逻辑统一收敛到 renderCovStackedChart —— 与「缓存命中重建」路径共用同一份代码，避免两处漂移
+    renderCovStackedChart({
+      dim: covDim,
+      names: covDisplayNames,
+      labels: covLabels,
+      agg: covDisplayAgg,
+      colors: covDisplayColors
+    });
   } catch (e) {
     console.error('renderInventoryStructure error:', e);
     if (page) {
@@ -17234,6 +17305,10 @@ function drillCoverageDetail(data, label, source) {
   if (h === 'no') data = data.filter(d => d.isHainan !== true);
   window._invCoverageDetailTitle = (label || '覆盖周期') + '明细（共' + data.length + '条）';
   window._invCoverageDetailSource = source || 'cov7';
+  // v396: 明细页按 ctx 决定是否展示「① RDC 维度」层；此处无单一来源维度 → 显式清空，避免显示上一次的下钻来源
+  window._invCoverageDetailCtx = null;
+  window._invCoverageDetailRdc = 'all';
+  window._invCoverageDetailPage = 1;
   window._invCoverageDetailData = data.slice().sort((a,b) => (b.planAmt || 0) - (a.planAmt || 0));
   navigateTo('inventory-coverage-detail');
 }
@@ -17245,6 +17320,9 @@ function drillRdcCovDetail(rdc) {
   if (h === 'no') data = data.filter(d => d.isHainan !== true);
   window._invCoverageDetailTitle = rdc + ' 覆盖明细（共' + data.length + '条）';
   window._invCoverageDetailSource = 'cov7';
+  window._invCoverageDetailCtx = { dim: 'rdc', value: rdc, period: '全部周期' };
+  window._invCoverageDetailRdc = 'all';
+  window._invCoverageDetailPage = 1;
   window._invCoverageDetailData = data.slice().sort((a,b) => (b.planAmt || 0) - (a.planAmt || 0));
   navigateTo('inventory-coverage-detail');
 }
@@ -17321,7 +17399,7 @@ function drillRiskSkuDetail(sku) {
   renderDrillModal();
 }
 
-// 库存覆盖图点击下钻：RDC + 周期 → SKU 明细
+// 库存覆盖图点击下钻（RDC 维度）：RDC + 周期 → SKU 明细
 function drillRdcPeriodCovDetail(rdc, periodLabel) {
   // 兼容 "0~1个月" 与 "≤1个月"
   let data = (dataStore.inventory.cov7 || []).filter(d => d.rdc === rdc && (d.coverageLevel === periodLabel || (periodLabel === '≤1个月' && d.coverageLevel === '0~1个月')));
@@ -17330,8 +17408,33 @@ function drillRdcPeriodCovDetail(rdc, periodLabel) {
   if (h === 'no') data = data.filter(d => d.isHainan !== true);
   window._invCoverageDetailTitle = rdc + ' · ' + periodLabel + ' 明细（共' + data.length + '条）';
   window._invCoverageDetailSource = 'cov7';
+  window._invCoverageDetailCtx = { dim: 'rdc', value: rdc, period: periodLabel };
+  window._invCoverageDetailRdc = 'all';   // 换一次下钻就重置 ① 的行筛选，避免残留旧筛选
+  window._invCoverageDetailPage = 1;
   window._invCoverageDetailData = data.slice().sort((a,b) => (b.planAmt || 0) - (a.planAmt || 0));
   if (data.length === 0) { showToast(rdc + ' · ' + periodLabel + ' 暂无SKU明细'); return; }
+  navigateTo('inventory-coverage-detail');
+}
+
+// v396: 库存覆盖图点击下钻（品牌维度）：品牌 + 覆盖周期 → 明细页
+//   明细页按用户要求分两层：先给「RDC 维度」汇总（该品牌该周期落在各 RDC 的金额/占比/SKU数），再给 SKU 明细
+//   与图表严格同源：品牌名走 normalizeBrandName；跟海南筛选；顶端 RDC 下拉锁单仓时同步只取该仓
+function drillBrandPeriodCovDetail(brand, periodLabel) {
+  let data = (dataStore.inventory.cov7 || []).filter(d =>
+    normalizeBrandName(String(d.brand || '').trim()) === brand &&
+    (d.coverageLevel === periodLabel || (periodLabel === '≤1个月' && d.coverageLevel === '0~1个月')));
+  const h = window._invHainan || 'all';
+  if (h === 'yes') data = data.filter(d => d.isHainan === true);
+  if (h === 'no') data = data.filter(d => d.isHainan !== true);
+  const r = window._isRdc || 'all';
+  if (r !== 'all') data = data.filter(d => d.rdc === r);
+  window._invCoverageDetailTitle = brand + ' · ' + periodLabel + ' 明细（共' + data.length + '条）';
+  window._invCoverageDetailSource = 'cov7';
+  window._invCoverageDetailCtx = { dim: 'brand', value: brand, period: periodLabel };
+  window._invCoverageDetailRdc = 'all';   // 换一次下钻就重置 ① 的行筛选，避免残留旧筛选
+  window._invCoverageDetailPage = 1;
+  window._invCoverageDetailData = data.slice().sort((a,b) => (b.planAmt || 0) - (a.planAmt || 0));
+  if (data.length === 0) { showToast(brand + ' · ' + periodLabel + ' 暂无SKU明细'); return; }
   navigateTo('inventory-coverage-detail');
 }
 
@@ -17566,14 +17669,20 @@ function _defaultPlanMonthIdx(cfg) {
 function renderInventoryCoverageDetail() {
   setTitle('库存覆盖明细');
   const page = document.getElementById('page-inventory-coverage-detail');
-  const data = window._invCoverageDetailData || [];
+  const allData = window._invCoverageDetailData || [];
   const title = window._invCoverageDetailTitle || '覆盖明细';
+  const ctx = window._invCoverageDetailCtx || null;   // v396: 下钻来源（品牌/RDC × 覆盖周期），用于分层展示
   const cfg = getCovMonthConfig(window._invCoverageDetailSource || 'cov7');
 
-  if (!dataStore.inventory || data.length === 0) {
+  if (!dataStore.inventory || allData.length === 0) {
     page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)"><div style="font-size:48px;margin-bottom:16px">📦</div><div>暂无覆盖明细数据</div></div>';
     return;
   }
+
+  // v396 分层下钻：① RDC 维度（全量 allData 聚合）→ ② SKU 明细（跟随 RDC 行筛选）
+  //   _invCoverageDetailRdc = 'all' 时 SKU 明细看本次下钻的全部 RDC
+  const rdcPick = window._invCoverageDetailRdc || 'all';
+  const data = rdcPick === 'all' ? allData : allData.filter(d => d.rdc === rdcPick);
 
   const pageLen = 25;
   window._invCoverageDetailPage = window._invCoverageDetailPage || 1;
@@ -17586,15 +17695,54 @@ function renderInventoryCoverageDetail() {
   html += '<div style="padding:16px 20px;background:var(--bg-card);border-radius:12px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
   html += '<button class="btn-export" onclick="navigateTo(\'inventory-structure\')" style="display:flex;align-items:center;gap:4px">← 返回库存结构分析</button>';
   html += '<span style="font-size:14px;font-weight:600;color:var(--text-primary)">' + title + '</span>';
+  if (ctx) {
+    html += '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#F1F5F9;color:#334155;border:1px solid #E2E8F0">下钻来源：按' + (ctx.dim === 'brand' ? '品牌' : 'RDC') + '「' + (ctx.value || '') + '」· 覆盖周期「' + (ctx.period || '') + '」</span>';
+  }
   html += '<button class="btn-export" onclick="exportInventoryCoverageDetail()">导出CSV</button>';
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">按金额降序 · 共 ' + data.length + ' 条</span>';
   html += '</div>';
 
-  // 聚合数据（可用库存金额口径）
+  // v396 ① RDC 维度（用户要求：下钻后先展示 RDC 维度数据，再展示 SKU 明细）
+  //   数据同源 = allData（本次下钻的全部 SKU 行）按 RDC 聚合；点行 → ② 的 SKU 明细只看该 RDC
+  const pickRow = (r) => 'window._invCoverageDetailRdc=\'' + r + '\';window._invCoverageDetailPage=1;renderInventoryCoverageDetail()';
+  if (ctx) {
+    const amtByRdc = {}, cntByRdc = {};
+    allData.forEach(d => {
+      if (!d || !d.rdc) return;
+      amtByRdc[d.rdc] = (amtByRdc[d.rdc] || 0) + (d.planAmt || 0);
+      cntByRdc[d.rdc] = (cntByRdc[d.rdc] || 0) + 1;
+    });
+    const rdcKeys = Object.keys(amtByRdc).sort((a, b) => amtByRdc[b] - amtByRdc[a]);
+    const rdcTotal = rdcKeys.reduce((s, r) => s + amtByRdc[r], 0);
+    html += '<div class="card" style="margin-bottom:16px">';
+    html += '<div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<span class="card-title">① RDC 维度（' + (ctx.value || '') + ' · 覆盖周期：' + (ctx.period || '') + '）</span>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">点击行 → 下方 ② SKU 明细只看该 RDC</span>' +
+      (rdcPick !== 'all'
+        ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE;margin-left:auto">已筛选：' + rdcPick +
+          ' <span onclick="event.stopPropagation();' + pickRow('all') + '" style="cursor:pointer;font-weight:700;padding:0 3px" title="取消筛选">✕</span></span>'
+        : '') +
+      '</div>';
+    html += '<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th class="num">可用库存金额</th><th class="num">占比</th><th class="num">SKU 数</th><th style="width:96px"></th></tr></thead><tbody>';
+    html += '<tr style="cursor:pointer;background:' + (rdcPick === 'all' ? '#EFF6FF' : '') + '" onclick="' + pickRow('all') + '">' +
+      '<td style="font-weight:600">全部 RDC</td><td class="num" style="font-weight:600">' + formatMoney(rdcTotal) + '</td><td class="num">100%</td><td class="num">' + allData.length + '</td>' +
+      '<td style="font-size:11px;color:#1D4ED8">' + (rdcPick === 'all' ? '✓ 全部' : '查看全部') + '</td></tr>';
+    rdcKeys.forEach(r => {
+      const amt = amtByRdc[r];
+      const pct = rdcTotal > 0 ? (amt / rdcTotal * 100).toFixed(1) + '%' : '-';
+      html += '<tr style="cursor:pointer;background:' + (rdcPick === r ? '#EFF6FF' : '') + '" onclick="' + pickRow(r) + '">' +
+        '<td>' + r + '</td><td class="num">' + formatMoney(amt) + '</td><td class="num">' + pct + '</td><td class="num">' + (cntByRdc[r] || 0) + '</td>' +
+        '<td style="font-size:11px;color:#1D4ED8">' + (rdcPick === r ? '✓ 已筛选' : '查看明细 →') + '</td></tr>';
+    });
+    html += '</tbody></table></div></div>';
+  }
+
+  // 聚合数据（可用库存金额口径）—— 分布图看本次下钻全貌，不随 ① 的 RDC 行筛选变化
   const rdcAmt = {}, brandAmt = {};
-  data.forEach(d => {
+  allData.forEach(d => {
     rdcAmt[d.rdc] = (rdcAmt[d.rdc] || 0) + (d.planAmt || 0);
-    brandAmt[d.brand] = (brandAmt[d.brand] || 0) + (d.planAmt || 0);
+    const bn = normalizeBrandName(String(d.brand || '').trim()) || '(未知品牌)';
+    brandAmt[bn] = (brandAmt[bn] || 0) + (d.planAmt || 0);
   });
   const rdcData = Object.entries(rdcAmt).sort((a,b) => b[1] - a[1]).map(([k,v]) => ({name: k, value: Math.round(v)}));
   const brandData = Object.entries(brandAmt).sort((a,b) => b[1] - a[1]).map(([k,v]) => ({name: k, value: Math.round(v)}));
@@ -17613,7 +17761,7 @@ function renderInventoryCoverageDetail() {
     html += '</div>';
   }
 
-  html += '<div class="card"><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">可用库存金额</th>' + cfg.labels.map(l => '<th class="num">' + l + '</th>').join('') + '<th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
+  html += '<div class="card"><div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="card-title">② SKU 明细</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcPick === 'all' ? '全部 RDC' : '仅 ' + rdcPick) + ' · 共 ' + data.length + ' 条 · 按金额降序</span></div><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">可用库存金额</th>' + cfg.labels.map(l => '<th class="num">' + l + '</th>').join('') + '<th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
     pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availQtyPlan || 0) + '</td><td class="num">' + formatMoney(d.planAmt || 0) + '</td>' + cfg.fields.map(f => '<td class="num">' + formatNum(d[f]) + '</td>').join('') + '<td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table></div>';
 
   html += '<div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center">' +

@@ -128,7 +128,12 @@ function startServer() {
   chk(A.cov15sum_cov5 === 0 && A.cov07sum_cov5 === 0, 'cov5(7月表) 上 cov15=' + A.cov15sum_cov5 + ' / cov07=' + A.cov07sum_cov5 + '（都必须为 0，7月表只含 cov08..cov13）');
   chk(A.cov13sum_cov5 > 0, 'cov5(7月表) 上 cov13 合计=' + A.cov13sum_cov5.toLocaleString() + '（7月表末月=2027-01，>0）');
   chk(A.DB_VERSION === 235, 'DB_VERSION=' + A.DB_VERSION + '（期望 235，老缓存必须作废）');
-  chk(A.BUILD_VERSION === 395, 'BUILD_VERSION=' + A.BUILD_VERSION + '（期望 395）');
+  // ⚠ 这里**不能**写死 === 395：每次部署都会 bump（v396 一改就假红，属铁律「探针里的固定常量会静默失效」）。
+  //   本探针要验的是「9月窗口已生效」，版本只需 ≥395（即不早于本次部署）且与 title 一致。
+  chk(typeof A.BUILD_VERSION === 'number' && A.BUILD_VERSION >= 395,
+    'BUILD_VERSION=' + A.BUILD_VERSION + '（期望 ≥395，即不早于 v395 部署）');
+  const titleVer = await p.title();
+  chk(titleVer.indexOf('v' + A.BUILD_VERSION) === 0, '页面 title 版本号与 BUILD_VERSION 一致 → ' + titleVer);
 
   // ══════════ B. 助手层 ══════════
   console.log('\n=== B. 助手层：covNN ↔ YYYY-MM 双向映射 ===');
