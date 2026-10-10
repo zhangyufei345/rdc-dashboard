@@ -1,0 +1,12 @@
+数据更新: 10月订单部署（10月首个部署）—— data.json 当月切至 2026-10（订单明细 2458 行 / 10-06~10-09、缺货汇总 121 行 / 10-08+10-09、分仓需求表头 2026-10/11/12 且实际出货=10月）
+
+新增 data-2026-09.xlsx + data-2026-09.json 归档 9 月（订单明细 25328 行 / 09-01~09-29，与旧 data.json 逐 sheet 逐行一致）
+manifest 13→14 项 → 新用户/清缓存用户不再缺 9 月（老用户原本靠 IDB 快照回填，新用户会断档）
+
+分仓计划/实际出货刷新：计划 417 SKU / 2429 SKU×仓 × [2026-10,11,12]，实际出货 232 SKU / 744 SKU×仓
+广东RDC→华南RDC 别名归一化命中 780 行（export_demand.py 门控生效，6 大标准 RDC 齐全）
+demand-history 追加 10-10 MTD 快照（跨月保留：2026-09 共9天 + 2026-10 共1天，不串月）
+
+验证：verify-page-runtime 14/14、verify-demand-merge 门控通过、verify-odeploy-1010 15/15、
+verify-monthend-tab 40/40、verify-inv-turnover 26/26，零运行时错误。
+不 bump 版本号（BUILD_VERSION 393 / DB_VERSION 234 均不动）
