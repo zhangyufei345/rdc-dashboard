@@ -818,7 +818,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 396; // v396: 库存覆盖图新增「按品牌堆叠」维度（用户 2026-10-10 要求：「红框处增加一个按品牌展示库存覆盖的维度。选择按品牌展示，则柱状图切换为品牌展示。数据同样要求能下钻，下钻后先展示RDC维度数据，再展示SKU明细」）。①原图只有「按 RDC 堆叠」一维，现于图例区新增「展示维度：按 RDC / 按品牌」切换按钮组（常驻显示），色块图例跟随维度切换；②按品牌展示时堆叠段 = 归一化品牌 —— 走全局 normalizeBrandName（百爱神/海鸥/雅霜/友谊/春蕾/传统品牌 一并归入「传统」，即页面既有口径；用户点名的 5 个小品牌在 9月覆盖表里本就已合并为「传统品牌」）；玉泽/佰草集按用户口径不参与展示（9月覆盖金额仅 65 元 / 1,165 元）；③品牌颜色按「金额降序」固定绑定，勾选切换时柱子不串色；④点击品牌柱下钻 → 「库存覆盖明细」页改造为两层：先给「① RDC 维度」汇总表（RDC / 可用库存金额 / 占比 / SKU 数，点行可再筛到该 RDC 的 SKU 明细，带「已筛选 ✕」可退），再给「② SKU 明细」；⑤绘图逻辑收敛为 renderCovStackedChart 单一入口（原 renderCovChartFromData 与 renderInventoryStructure 内联版两份重复代码合并，避免今后两处漂移）；⑥ structCacheKey 纳入 _covDim / _covSelectedBrands（否则切换维度会读到旧 HTML 缓存）。DB_VERSION 不动（无 sheet/字段语义变更，纯前端维度扩展）。│ v395: 9月库存部署 —— 本机首次「库存月份窗口整体平移」（8月窗口 → 9月窗口）。①数据侧：inventory.xlsx 换为 9月版（合并保留历史：拉回数据含 1-9月、转储数据含 7-9月、库存金额保留 2025 全年 + 2026 1-9月，新增「9月库存覆盖数据」「9月库存状态分析」两表）。②代码侧：cov5/6/7 三个「位置语义」槽位指向的表整体右移一月（cov7 从 8月表 → 9月表），全站约 30 处月份硬编码改为**按数据自带的 reportMonth 推导**（新增 covSnapMonthLabel / covFutureRangeText / covFutureFieldRange 助手；parseCoverageSheet 增产 reportMonth + monthHint；parseCoverageSheet 的 COV_MONTH_MAP 补 cov15=2027-03）。③顺带修掉三个「模板一换月就静默错」的老 bug：(a) `parseInventoryTurnoverSheet` 右表探测上界写死 `c<=10`，9月模板「出货成本统计」在**索引11** → 右表(出货成本)整段读错，放宽到 c<=20；(b) v276 起 cov7 槽装的已是当月新表，但「未来6月需求」硬编码 cov08..cov13 未跟着平移 → 一直多算当月、少算最后一个需求月，改按数据推导；(c) getCovMonthConfig 三分支按「covN 的 N 直接当月份」写，与 v276 后的实际装表错位一月 → 仅作老缓存兜底并已按新窗口改写。④端点文案（卡片标题/口径说明/讲解页）全部改为动态取值，避免下次换月再手改。DB_VERSION 234→235（cov 槽位语义与新增字段变化，老 IDB 无法自愈）。│ v394: 🔴 修复「跨月部署后老用户永远停在旧月」（用户 2026-10-10 报「总仪表盘还是9月的数据」，当天正是 9月→10月 的首次跨月切换）。现象：线上数据文件已 100% 是 10 月（三个 json 哈希全对、响应头 no-cache 无任何 CDN/HTTP 缓存层），新用户/清缓存用户看到 2026-10-09，而老用户仍显示 2026-09-28、月度满足率 98.2%（9 月值）。【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾的 detectAllMonths() 在「后台补拉新数据之前」就把 _latestMonth 判为 '2026-09' → 紧随其后的 bootLoad 自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；随后 refreshFromManifest 拉到 10 月数据、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是 `filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → **数据其实已经自愈到 10 月，只是没有任何地方把 dataMonth 拉回来**，于是总览/缺货日期/各页月度口径全部停在 9 月，且用户端没有任何自愈路径。【为何直到今天才暴露】月内更新时 _latestMonth 不变，只有跨月切换（最新月变化）才会触发，所以这是首次出现。【修法】判据从「filters.dataMonth 是否仍为 all」改为「用户是否手动选过月份」：新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()，5 处自动跟随点统一改走它（没选过 → 每次都跟随最新月；选过 → 尊重用户选择不被后台刷新覆盖）；onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true。DB_VERSION 不动（无 sheet/字段语义变更）。│ v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 397; // v397: 「常规品」名单 —— 用户 2026-10-11 在产品数据里新增「常规品」sheet（28 个 SKU），原话：「这里面的产品都是现在是促销装和新品，但是是按分仓需求补货的，因此在慢动品分析和补货建议模块将这些SKU也当做常规品计算。后续我会在这个sheet中定期更新数据」。①数据链路做成**纯数据驱动**（禁止前端硬编码 SKU）：产品.xlsx「常规品」sheet（无表头两列 产品编码/产品名称）→ generate_data_json.mjs buildProductMaster() 产出 conventionalSkus → data.json.conventionalSkus → parseExcel(data.json) → dataStore.conventionalSkus（saveToIDB/loadFromIDB 成对持久化，v179/v181 铁律）→ isConventionalSku()。②生效点为**两处同源副本**：isExcludedProduct()（慢动品分析）与 computeStatusDerived 内的 _isExcluded()（慢动诊断 / 分仓计划监控慢动徽标 / 分仓计划优化建议 C6）；命中名单即直接判「不排除」，覆盖 供应链属性 / 生命周期标签 / 覆盖周数分类 三处判据。补货建议页 renderReplenishment 自身**无品类排除逻辑**（已 grep 确认 L12120~12970 无 促销装/非卖品/新品期），其受影响路径是该页「下调预警」所复用的 buildPlanOptimAdvice C6 慢动品维。③顺带修一个静默陷阱：源哈希记忆此前只记 data*.xlsx 自身哈希，而 data.json 的产物还依赖 产品.xlsx → 用户「只更新产品数据、不更新订单」时会被**静默跳过**、新名单永远进不了 data.json（同类静默陷阱见 v391）。现把 产品.xlsx 哈希并入 data.json 的跳过键。④实测影响面（9月/8月库存覆盖表，离线复刻前端口径复算）：9月表名单内 21 个 SKU 的「供应链属性」**本就是常规品**、当前 0 行被排除 → 本次零变化；8月表有 15 行被标促销装，其中 1 行（西北仓×10294，覆盖>6个月）因此新进慢动品 → 慢动品行数 534→535、excludedCount 598→583。即该名单是**长期口径保险**（实测源系统同一 SKU 会随月份在 常规品/促销装 之间反复）。⑤产品数据同步：桌面 产品1010.xlsx 是 36 列 SAP 全量导出格式（0908 起即为此格式，项目此前一直未同步 0908），只含「产品列表」+「常规品」，**不含「单价」「淘汰品」**，且其「成本价/产品单价」与旧「单价」sheet 不等价（2027 个可比样本仅 2 个相等）、「当前生命周期」整列为空 → 无法派生；直接覆盖会让 data.json 的 priceMap 9093→0、discontinuedMap 530→0（前端「拉回数据」金额换算、慢动品页「是否淘汰」筛选会静默降级）。故 产品.xlsx 采用**无损合成**：产品列表/常规品 取 1010 版，单价/淘汰品 沿用历史版本（已逐键实测 priceMap/discontinuedMap 前后完全一致）。boxSpec 9774→9490（仅旧的 307 个已确认 100% 被「基础数据」箱规覆盖，零影响）、brand/abc 10643→10294。DB_VERSION 不动（无 sheet/字段语义变更；data.json 内容变化会走逐文件哈希比对自动补拉，老用户可自愈，无需 20~30s 全量重拉）。│ v396: 库存覆盖图新增「按品牌堆叠」维度（用户 2026-10-10 要求：「红框处增加一个按品牌展示库存覆盖的维度。选择按品牌展示，则柱状图切换为品牌展示。数据同样要求能下钻，下钻后先展示RDC维度数据，再展示SKU明细」）。①原图只有「按 RDC 堆叠」一维，现于图例区新增「展示维度：按 RDC / 按品牌」切换按钮组（常驻显示），色块图例跟随维度切换；②按品牌展示时堆叠段 = 归一化品牌 —— 走全局 normalizeBrandName（百爱神/海鸥/雅霜/友谊/春蕾/传统品牌 一并归入「传统」，即页面既有口径；用户点名的 5 个小品牌在 9月覆盖表里本就已合并为「传统品牌」）；玉泽/佰草集按用户口径不参与展示（9月覆盖金额仅 65 元 / 1,165 元）；③品牌颜色按「金额降序」固定绑定，勾选切换时柱子不串色；④点击品牌柱下钻 → 「库存覆盖明细」页改造为两层：先给「① RDC 维度」汇总表（RDC / 可用库存金额 / 占比 / SKU 数，点行可再筛到该 RDC 的 SKU 明细，带「已筛选 ✕」可退），再给「② SKU 明细」；⑤绘图逻辑收敛为 renderCovStackedChart 单一入口（原 renderCovChartFromData 与 renderInventoryStructure 内联版两份重复代码合并，避免今后两处漂移）；⑥ structCacheKey 纳入 _covDim / _covSelectedBrands（否则切换维度会读到旧 HTML 缓存）。DB_VERSION 不动（无 sheet/字段语义变更，纯前端维度扩展）。│ v395: 9月库存部署 —— 本机首次「库存月份窗口整体平移」（8月窗口 → 9月窗口）。①数据侧：inventory.xlsx 换为 9月版（合并保留历史：拉回数据含 1-9月、转储数据含 7-9月、库存金额保留 2025 全年 + 2026 1-9月，新增「9月库存覆盖数据」「9月库存状态分析」两表）。②代码侧：cov5/6/7 三个「位置语义」槽位指向的表整体右移一月（cov7 从 8月表 → 9月表），全站约 30 处月份硬编码改为**按数据自带的 reportMonth 推导**（新增 covSnapMonthLabel / covFutureRangeText / covFutureFieldRange 助手；parseCoverageSheet 增产 reportMonth + monthHint；parseCoverageSheet 的 COV_MONTH_MAP 补 cov15=2027-03）。③顺带修掉三个「模板一换月就静默错」的老 bug：(a) `parseInventoryTurnoverSheet` 右表探测上界写死 `c<=10`，9月模板「出货成本统计」在**索引11** → 右表(出货成本)整段读错，放宽到 c<=20；(b) v276 起 cov7 槽装的已是当月新表，但「未来6月需求」硬编码 cov08..cov13 未跟着平移 → 一直多算当月、少算最后一个需求月，改按数据推导；(c) getCovMonthConfig 三分支按「covN 的 N 直接当月份」写，与 v276 后的实际装表错位一月 → 仅作老缓存兜底并已按新窗口改写。④端点文案（卡片标题/口径说明/讲解页）全部改为动态取值，避免下次换月再手改。DB_VERSION 234→235（cov 槽位语义与新增字段变化，老 IDB 无法自愈）。│ v394: 🔴 修复「跨月部署后老用户永远停在旧月」（用户 2026-10-10 报「总仪表盘还是9月的数据」，当天正是 9月→10月 的首次跨月切换）。现象：线上数据文件已 100% 是 10 月（三个 json 哈希全对、响应头 no-cache 无任何 CDN/HTTP 缓存层），新用户/清缓存用户看到 2026-10-09，而老用户仍显示 2026-09-28、月度满足率 98.2%（9 月值）。【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾的 detectAllMonths() 在「后台补拉新数据之前」就把 _latestMonth 判为 '2026-09' → 紧随其后的 bootLoad 自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；随后 refreshFromManifest 拉到 10 月数据、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是 `filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → **数据其实已经自愈到 10 月，只是没有任何地方把 dataMonth 拉回来**，于是总览/缺货日期/各页月度口径全部停在 9 月，且用户端没有任何自愈路径。【为何直到今天才暴露】月内更新时 _latestMonth 不变，只有跨月切换（最新月变化）才会触发，所以这是首次出现。【修法】判据从「filters.dataMonth 是否仍为 all」改为「用户是否手动选过月份」：新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()，5 处自动跟随点统一改走它（没选过 → 每次都跟随最新月；选过 → 尊重用户选择不被后台刷新覆盖）；onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true。DB_VERSION 不动（无 sheet/字段语义变更）。│ v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -1036,6 +1036,8 @@ async function saveToIDB() {
       shortageReasons: window._shortageReasons || {},
       replStatus: window._replStatus || {},
       boxSpecMap: window._boxSpec || {},
+      // v397: 「常规品」名单随 IDB 持久化（与 boxSpecMap 同款：只写不读 = 缓存路径下恒空）
+      conventionalSkus: dataStore.conventionalSkus || {},
       // v181: 补 shipCondRdcMap（与 v179 的 shortage 是同一类 Bug 的另一面——v179 是
       //   「写了不读」，这个是「既不写也不读」，reload 走 IDB 缓存路径后必为空且永远自愈不了）。
       //   影响：未放行订单的 RDC 反查（装运条件码 → RDC，华南是 50 不是 40）。
@@ -1172,6 +1174,8 @@ async function loadFromIDB() {
           }
           window._replStatus = req.result.replStatus || {};
           window._boxSpec = req.result.boxSpecMap || {};
+          // v397: 恢复「常规品」名单（与上方 saveToIDB 成对）
+          dataStore.conventionalSkus = req.result.conventionalSkus || {};
           dataStore.loaded = true;
           dataStore.lastUpdated = req.result.updatedAt || null;
           // v236: 产品主数据 map 自愈——IDB 热恢复不重跑 parseInventoryExcel，block C 的 window map
@@ -14275,6 +14279,11 @@ function init() {
         window._discontinuedMap = (j && j.discontinuedMap) || {};
         window._brandMap = (j && j.brandMap) || {};
         window._abcMap = (j && j.abcMap) || {};
+        // v397: 「常规品」名单（产品数据 产品.xlsx「常规品」sheet 下发）—— 见 isConventionalSku() 说明。
+        //   必须进 dataStore 并由 saveToIDB/loadFromIDB 成对持久化，否则 IDB 热恢复路径下恒为空
+        //   （v179/v181「只写不读 / 既不写也不读」同款陷阱）。
+        dataStore.conventionalSkus = (j && j.conventionalSkus) || {};
+        window._conventionalSkuMap = null;   // 名单更新后强制重建索引（防旧缓存）
         // v203: 捕获当月数据存为月度快照（data.json = 当月订单主数据，月份由捕获逻辑反查）
         const _capCur = {};
         parseExcel(wb, 'replace', { capture: _capCur });
@@ -15097,6 +15106,51 @@ function skuSupplyChainCat(sku) {
   return m[normSkuCode(sku)] || '';
 }
 
+// ==================== v397: 「常规品」名单（产品数据 产品.xlsx 的「常规品」sheet） ====================
+// 业务口径（用户 2026-10-11 原话）：「我在产品数据中增加了一个sheet"常规品"这里面的产品都是现在是促销装和
+//   新品，但是是按分仓需求补货的，因此在慢动品分析和补货建议模块将这些SKU也当做常规品计算。后续我会在这个
+//   sheet 中定期更新数据。」
+// 数据链路（刻意做成数据驱动，禁止在前端硬编码 SKU —— 用户会定期更新该 sheet）：
+//   产品.xlsx「常规品」（无表头两列：产品编码 / 产品名称）
+//     → generate_data_json.mjs  buildProductMaster()  → data.json.conventionalSkus
+//     → parseExcel(data.json)  → dataStore.conventionalSkus  → saveToIDB/loadFromIDB  → 本函数
+// 生效点：isExcludedProduct()（慢动品分析）与 computeStatusDerived 内的 _isExcluded()（慢动诊断 /
+//   分仓计划监控慢动徽标 / 分仓计划优化建议 C6）**两处同源副本**，命中名单即直接判「不排除」，
+//   覆盖「供应链属性 / 生命周期标签 / 覆盖周数分类兜底」三处判据。补货建议页（renderReplenishment）
+//   自身无品类排除逻辑，其受影响路径是该页「下调预警」所复用的 buildPlanOptimAdvice C6 慢动品维。
+// ⚠️ 与「供应链品类=常规品」不是一个概念：后者是产品主数据里的原始字段（本项目实测同一 SKU 会随月份
+//   在 常规品/促销装 之间反复），本名单是**业务指定覆盖**，优先级最高。
+window._conventionalSkuMap = null;
+window._conventionalSkuSrc = null;
+function conventionalSkuMap() {
+  const raw = (dataStore && dataStore.conventionalSkus) || null;
+  // 缓存按「数据对象是否被替换」失效（data.json 重新解析后会换新对象 → 必须重建，否则用户更新名单后不生效）
+  if (window._conventionalSkuMap && window._conventionalSkuSrc === raw) return window._conventionalSkuMap;
+  if (!raw || typeof raw !== 'object') return null;
+  const m = {};
+  Object.keys(raw).forEach(function(k) {
+    if (!k) return;
+    m[k] = raw[k];
+    // 前导零双写（v236 铁律）：查询端统一走 normSkuCode，原始键需补别名，否则 09 开头 SKU 恒 miss
+    const nk = normSkuCode(k);
+    if (nk && nk !== k && m[nk] === undefined) m[nk] = raw[k];
+  });
+  window._conventionalSkuMap = m;
+  window._conventionalSkuSrc = raw;
+  console.log('[常规品名单] 已装载 ' + Object.keys(m).length + ' 个 SKU（按常规品计算，不受品类/生命周期排除）');
+  return m;
+}
+// 某 SKU 是否在「常规品」名单内
+function isConventionalSku(sku) {
+  if (sku == null || sku === '') return false;
+  const m = conventionalSkuMap();
+  if (!m) return false;
+  const s = String(sku).trim();
+  return m[s] !== undefined || m[normSkuCode(s)] !== undefined;
+}
+window.conventionalSkuMap = conventionalSkuMap;
+window.isConventionalSku = isConventionalSku;
+
 // v241: SKU 品名/品牌映射自愈（修复「分仓计划监控部分 SKU 没品名/品牌」+「优化建议品牌未分类」）。
 //   根因（真实数据回放 + 代码走查确认，2026-09-06 张宇飞截图）：
 //   ① renderPlanMonitor._enrichRow 品牌链引用 dataStore.inventory._productMaster（带下划线）——
@@ -15308,7 +15362,9 @@ function computeStatusDerived(status5Arr, status6Arr, status7Arr) {
     const _cov5 = dataStore.inventory.cov6 || [];
     function _isSlow(level){ return level && (level==='无需求'||level==='3~4个月'||level==='4~5个月'||level==='5~6个月'||level==='大于6个月'); }
     function _hasAvail(d){ return (d.availQtyPlan||0)>0; }
-    function _isExcluded(d){ if(!d)return false; const attr=(d.supplyChainAttr||'').trim(),life=(d.lifecycle||'').trim(),cl=(d.coverageLevel||'').trim(); return attr==='非卖品'||attr==='促销装'||life==='新品期'||cl==='非卖品'||cl==='促销装'||cl==='新品期'; }
+    // v397: 与 isExcludedProduct() 是**同一规则的两处副本，必须同源**（改动必须成对，否则两页结论互相矛盾）。
+    //   命中「常规品」名单即不排除 —— 见 isConventionalSku()。
+    function _isExcluded(d){ if(!d)return false; if(typeof isConventionalSku==='function'&&isConventionalSku(d.sku))return false; const attr=(d.supplyChainAttr||'').trim(),life=(d.lifecycle||'').trim(),cl=(d.coverageLevel||'').trim(); return attr==='非卖品'||attr==='促销装'||life==='新品期'||cl==='非卖品'||cl==='促销装'||cl==='新品期'; }
     const _skuRdcKeys = new Set(_cov7.map(function(d){return d.rdc+'|'+d.sku;}));
     const _transNet = {};
     (dataStore.transship || []).forEach(function(t){ const key=(t.rdc||'')+'|'+(t.material||''); if(!_skuRdcKeys.has(key))return; if(!_transNet[key]) _transNet[key]={inn:0,out:0}; _transNet[key].inn+=(t.inboundQty||0); _transNet[key].out+=(t.deliveryQty||0); });
@@ -17844,6 +17900,9 @@ function hasAvailableStock(d) { return (d.availQtyPlan || 0) > 0; }
 // 新品/促销装/非卖品 完全排除在慢动品计算之外（按产品属性显式排除，不依赖未来需求判定周转）
 function isExcludedProduct(d) {
   if (!d) return false;
+  // v397: 「常规品」名单优先 —— 名单内 SKU 虽在产品主数据里标为促销装/非卖品/新品期，但业务上按分仓需求
+  //   补货，故一律按常规品计算。命中即直接返回 false，覆盖下方全部判据。名单来自数据（见 isConventionalSku）。
+  if (typeof isConventionalSku === 'function' && isConventionalSku(d.sku)) return false;
   var attr = (d.supplyChainAttr || '').trim();
   var life = (d.lifecycle || '').trim();
   if (attr === '非卖品' || attr === '促销装') return true; // 供应链属性
@@ -18183,7 +18242,7 @@ function renderSlowMoving() {
   window._slowPage = p;
   var pageData = detailRows.slice((p-1)*pageLen, p*pageLen);
 
-  var html = '<div class="filter-bar"><label>RDC：</label><select onchange="window._slowFilters.rdc=this.value;renderSlowMoving()" style="min-width:120px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select><label style="margin-left:12px">海南花露水：</label><select onchange="window._slowFilters.hainan=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(hainanFilter==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainanFilter==='yes'?' selected':'')+'>是</option><option value="no"'+(hainanFilter==='no'?' selected':'')+'>否</option></select><label style="margin-left:12px">是否淘汰：</label><select onchange="window._slowFilters.obsolete=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(obsoleteFilter==='all'?' selected':'')+'>全部</option><option value="no"'+(obsoleteFilter==='no'?' selected':'')+'>仅非淘汰品</option><option value="yes"'+(obsoleteFilter==='yes'?' selected':'')+'>仅淘汰品</option></select><span style="font-size:11px;color:var(--text-secondary);margin-left:auto;flex:1;min-width:0;white-space:normal;line-height:1.45">当前：'+rdcLabel+'，'+hainanLabel+'，'+(obsoleteFilter==='all'?'含淘汰品':obsoleteFilter==='yes'?'仅淘汰品':'仅非淘汰品')+'｜已排除非卖品/促销装/新品期 '+excludedCount+' 个SKU（不计入慢动品）</span></div>';
+  var html = '<div class="filter-bar"><label>RDC：</label><select onchange="window._slowFilters.rdc=this.value;renderSlowMoving()" style="min-width:120px"><option value="all"'+(rdcFilter==='all'?' selected':'')+'>全部RDC</option>'+allRdcs.map(function(r){return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select><label style="margin-left:12px">海南花露水：</label><select onchange="window._slowFilters.hainan=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(hainanFilter==='all'?' selected':'')+'>全部</option><option value="yes"'+(hainanFilter==='yes'?' selected':'')+'>是</option><option value="no"'+(hainanFilter==='no'?' selected':'')+'>否</option></select><label style="margin-left:12px">是否淘汰：</label><select onchange="window._slowFilters.obsolete=this.value;renderSlowMoving()" style="min-width:100px"><option value="all"'+(obsoleteFilter==='all'?' selected':'')+'>全部</option><option value="no"'+(obsoleteFilter==='no'?' selected':'')+'>仅非淘汰品</option><option value="yes"'+(obsoleteFilter==='yes'?' selected':'')+'>仅淘汰品</option></select><span style="font-size:11px;color:var(--text-secondary);margin-left:auto;flex:1;min-width:0;white-space:normal;line-height:1.45">当前：'+rdcLabel+'，'+hainanLabel+'，'+(obsoleteFilter==='all'?'含淘汰品':obsoleteFilter==='yes'?'仅淘汰品':'仅非淘汰品')+'｜已排除非卖品/促销装/新品期 '+excludedCount+' 个SKU（不计入慢动品）'+((Object.keys(conventionalSkuMap()||{}).length)?'；另有「常规品」名单 '+Object.keys(conventionalSkuMap()||{}).length+' 个SKU 例外，不论产品属性一律按常规品计入':'')+'</span></div>';
 
   html += '<div class="kpi-row"><div class="kpi-card red"><div class="kpi-label">慢动SKU数</div><div class="kpi-value">'+kpi.skuCount+'</div></div><div class="kpi-card orange"><div class="kpi-label">较上月新增</div><div class="kpi-value">'+kpi.newCount+'</div></div><div class="kpi-card purple"><div class="kpi-label">计划可用库存金额</div><div class="kpi-value">'+fmtK(kpi.totalAmt)+'<span class="kpi-unit">千元</span></div></div><div class="kpi-card blue"><div class="kpi-label">计划可用库存数量</div><div class="kpi-value">'+fmtK(kpi.totalQty)+'<span class="kpi-unit">支</span></div></div><button onclick="navigateTo(\'slow-moving-logic\')" style="margin-left:auto;align-self:center;padding:8px 16px;border:2px solid var(--color-blue);color:var(--color-blue);background:transparent;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;font-weight:600;">📖 慢动品根因分析逻辑</button></div>';
 
@@ -18710,6 +18769,9 @@ function renderSlowMovingLogic() {
   s += '<div class="tag-row"><span class="tag tag-red">非卖品</span><span class="tag tag-orange">促销装</span><span class="tag tag-yellow">新品期</span></div>';
   s += '<p style="font-size:12px;color:var(--text-secondary);margin-top:10px">识别方式：按 <b>供应链属性</b>（非卖品/促销装）和 <b>生命周期标签</b>（新品期）逐SKU判断，兜底匹配 <b>覆盖月数分类</b> 的特殊标签值。</p>';
   s += '<p style="font-size:12px;color:var(--text-secondary)">原因：这三类产品的周转不由常规需求驱动——非卖品无销售、促销装按活动配额、新品期由上市计划决定。用未来需求判定其周转没有意义。</p>';
+  // v397: 「常规品」名单例外说明（用户 2026-10-11：名单内的产品虽是促销装/新品，但按分仓需求补货）
+  { var _convN = Object.keys(conventionalSkuMap() || {}).length;
+    if (_convN) s += '<p style="font-size:12px;color:var(--text-secondary)"><b>例外（v397）</b>：另有 <b>「常规品」名单</b> ' + _convN + ' 个 SKU <b>不参与上述排除</b>——它们虽在产品数据里标为促销装/非卖品/新品期，但业务上按 <b>分仓需求</b> 补货，故一律按常规品计算。名单来自产品数据的「常规品」sheet（计划员定期维护，随 data.json 下发），命中即直接放行，优先级高于上表全部判据。</p>'; }
   s += '</div>';
 
   s += '</div>';

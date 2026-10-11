@@ -962,6 +962,49 @@ try {
   log('warn', 'R29: 无法校验（' + e.message + '）');
 }
 
+// R30: v397「常规品」名单链路完整性（防「改一处漏一处」/ 防退回硬编码）
+//   业务背景：用户 2026-10-11 在产品数据新增「常规品」sheet，名单内 SKU 一律按常规品计算（不被
+//   促销装/非卖品/新品期排除），且用户会**定期更新该 sheet** → 必须全链路数据驱动，禁止前端硬编码。
+//   链路：产品.xlsx「常规品」→ generate_data_json.mjs → data.json.conventionalSkus
+//        → parseExcel(data.json) → dataStore.conventionalSkus（saveToIDB/loadFromIDB 成对）
+//        → isConventionalSku() → isExcludedProduct() + computeStatusDerived 的 _isExcluded()（两处必须同源）
+try {
+  const gen = fs.readFileSync(path.join(__dirname, '..', 'generate_data_json.mjs'), 'utf8');
+  const dataJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data.json'), 'utf8'));
+  const conv = dataJson.conventionalSkus || {};
+  const nConv = Object.keys(conv).length;
+
+  const chk = [];
+  chk.push([/loadSheet\(\s*'常规品'\s*\)/.test(gen), 'generate_data_json.mjs 未解析「常规品」sheet']);
+  chk.push([/payload\.conventionalSkus\s*=/.test(gen), 'generate_data_json.mjs 未把 conventionalSkus 写入 data.json']);
+  // 🔴 源哈希记忆必须把 产品.xlsx 并入 data.json 的跳过键，否则「只更新产品数据」会被静默跳过
+  chk.push([/_extraHash[\s\S]{0,400}?产品\.xlsx/.test(gen), 'generate_data_json.mjs 的跳过键未并入 产品.xlsx 哈希（只更新产品数据会被静默跳过）']);
+  chk.push([nConv > 0, 'data.json 的 conventionalSkus 为空/缺失（产品.xlsx 是否含「常规品」sheet？）']);
+  chk.push([/dataStore\.conventionalSkus\s*=\s*\(j && j\.conventionalSkus\)/.test(html), 'parseExcel 的 data.json 分支未读入 conventionalSkus']);
+  chk.push([/conventionalSkus:\s*dataStore\.conventionalSkus/.test(html), 'saveToIDB 未持久化 conventionalSkus']);
+  chk.push([/dataStore\.conventionalSkus\s*=\s*req\.result\.conventionalSkus/.test(html), 'loadFromIDB 未恢复 conventionalSkus（只写不读 → IDB 缓存路径下恒空）']);
+  chk.push([/window\.isConventionalSku\s*=\s*isConventionalSku/.test(html), 'isConventionalSku 未挂 window（跨函数依赖必须挂 window）']);
+  chk.push([/window\.conventionalSkuMap\s*=\s*conventionalSkuMap/.test(html), 'conventionalSkuMap 未挂 window']);
+  // 两处同源副本都必须调用（v397 铁律：isExcludedProduct 与 _isExcluded 是同一条业务规则的两份代码）
+  const nCall = (html.match(/isConventionalSku\(d\.sku\)/g) || []).length;
+  chk.push([nCall === 2, 'isExcludedProduct / _isExcluded 两处同源副本的名单调用数应为 2（实际 ' + nCall + ' 处 → 必有一处漏改）']);
+  // 温和的硬编码哨兵：名单里 ≥6 个 SKU 编码挤在 300 字符内 → 基本可判定有人把名单写进了前端
+  const codes = Object.keys(conv);
+  if (codes.length >= 6) {
+    const idxs = [];
+    codes.forEach(c => { let p = html.indexOf(c); while (p >= 0) { idxs.push(p); p = html.indexOf(c, p + 1); } });
+    idxs.sort((a, b) => a - b);
+    let maxRun = 0;
+    for (let i = 0; i < idxs.length; i++) { let n = 1; while (i + n < idxs.length && idxs[i + n] - idxs[i] < 300) n++; if (n > maxRun) maxRun = n; }
+    chk.push([maxRun < 6, '疑似把「常规品」名单硬编码进前端（300 字符窗口内出现 ' + maxRun + ' 个名单 SKU）']);
+  }
+  const bad = chk.filter(([ok]) => !ok).map(([, m]) => m);
+  if (bad.length === 0) log('ok', 'R30: 「常规品」名单链路完整（产品.xlsx→data.json→IDB→两处同源排除判据），名单 ' + nConv + ' 个 SKU，无硬编码');
+  else bad.forEach(m => log('err', 'R30: ' + m));
+} catch (e) {
+  log('warn', 'R30: 无法校验（' + e.message + '）');
+}
+
 // ── 总结 ──
 console.log('\n═══════════ 预检结果 ═══════════');
 if (errors === 0 && warnings === 0) {

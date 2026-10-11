@@ -136,17 +136,26 @@ function sha256File(p) {
 }
 
 // 读取产品主数据（产品.xlsx），构建多维度产品属性映射。
-// 该文件含 3 个 sheet：
+// 该文件含 4 个 sheet：
 //   「产品列表」：产品编码 / ABC分类 / 品牌 / 箱规转化因子 等
+//   「常规品」  ：v397 新增，产品编码 / 产品名称（**无表头**，两列）—— 名单内的 SKU 按常规品计算
 //   「单价」：物料编码 / 单价
 //   「淘汰品」：产品编码 / 是否为淘汰品
 // 列定位统一按表头名动态查找（兼容新旧列顺序，避免硬编码列号取空）。
+//
+// 🔴 v397 重要背景（2026-10-11 实测）：用户自 0908 起提供的产品数据是 **36 列 SAP 全量导出格式**，
+//   只含「产品列表」（+1010 起新增「常规品」），**不再带「单价」「淘汰品」两个 sheet**；
+//   且新格式里的「成本价/产品单价」与旧「单价」sheet **不等价**（2027 个可比样本中仅 2 个相等），
+//   「当前生命周期」整列为空（无法派生淘汰品）→ 直接覆盖会让 priceMap 9093→0、discontinuedMap 530→0
+//   （前端「拉回数据」金额换算与慢动品页「是否淘汰」筛选会静默降级）。
+//   故项目根 产品.xlsx 采用**无损合成**：产品列表/常规品 取最新导出，单价/淘汰品 沿用历史版本。
+//   若将来这两个 sheet 真的缺失，本函数会打印醒目告警而不是静默产出空 map。
 function buildProductMaster() {
   const p = path.join(ROOT, '产品.xlsx');
-  const empty = { boxSpecMap: {}, priceMap: {}, discontinuedMap: {}, brandMap: {}, abcMap: {} };
+  const empty = { boxSpecMap: {}, priceMap: {}, discontinuedMap: {}, brandMap: {}, abcMap: {}, conventionalSkus: {} };
   if (!fs.existsSync(p)) { console.log('   (未找到 产品.xlsx，产品主数据为空)'); return empty; }
   const wb = XLSX.read(fs.readFileSync(p), { type: 'array' });
-  const out = { boxSpecMap: {}, priceMap: {}, discontinuedMap: {}, brandMap: {}, abcMap: {} };
+  const out = { boxSpecMap: {}, priceMap: {}, discontinuedMap: {}, brandMap: {}, abcMap: {}, conventionalSkus: {} };
   function colIdx(header, name) {
     for (let i = 0; i < (header || []).length; i++) {
       if (String(header[i] || '').trim() === name) return i;
@@ -187,6 +196,8 @@ function buildProductMaster() {
       if (cPrice >= 0) { const v = Number(r[cPrice]); if (!isNaN(v)) out.priceMap[code] = v; }
     }
   }
+  if (!price || price.length === 0) console.log('   ⚠️ 产品.xlsx 缺「单价」sheet → priceMap 将为空（前端「拉回数据」金额换算会退化为 0，请确认源文件是否换格式）');
+  else if (Object.keys(out.priceMap).length === 0) console.log('   ⚠️ 产品.xlsx「单价」sheet 未解析出任何数据，请检查列名是否为「物料编码 / 单价」');
   // 3) 淘汰品：产品编码 -> 是否为淘汰品
   const disc = loadSheet('淘汰品');
   if (disc && disc.length > 0) {
@@ -200,7 +211,28 @@ function buildProductMaster() {
       if (cObs >= 0) { const v = String(r[cObs] || '').trim(); if (v) out.discontinuedMap[code] = v; }
     }
   }
-  console.log('   产品主数据：boxSpec=' + Object.keys(out.boxSpecMap).length + ' 单价=' + Object.keys(out.priceMap).length + ' 淘汰品=' + Object.keys(out.discontinuedMap).length + ' 品牌=' + Object.keys(out.brandMap).length + ' ABC=' + Object.keys(out.abcMap).length);
+  if (!disc || disc.length === 0) console.log('   ⚠️ 产品.xlsx 缺「淘汰品」sheet → discontinuedMap 将为空（慢动品页「是否淘汰」筛选会退化，请确认源文件是否换格式）');
+  // 4) v397 常规品名单：无表头两列 [产品编码, 产品名称]
+  //    业务口径（用户 2026-10-11）：「这里面的产品都是现在是促销装和新品，但是是按分仓需求补货的，
+  //    因此在慢动品分析和补货建议模块将这些SKU也当做常规品计算」→ 前端 isExcludedProduct / _isExcluded
+  //    一律先查本名单，命中即直接判为「非排除」（覆盖 供应链属性 / 生命周期标签 / 覆盖周数分类 三处判据）。
+  //    用户会**定期更新**该 sheet，故一律从数据读取，禁止在前端硬编码 SKU。
+  //    兼容性：若用户今后自行加上表头，首行会以「产品编码」开头 → 自动跳过。
+  const conv = loadSheet('常规品');
+  if (conv && conv.length > 0) {
+    const isHeader = /产品编码|物料编码|SKU/i.test(String((conv[0] || [])[0] || ''));
+    for (let i = isHeader ? 1 : 0; i < conv.length; i++) {
+      const r = conv[i];
+      if (!r) continue;
+      const code = String(r[0] == null ? '' : r[0]).trim();
+      if (!code) continue;
+      const nm = String(r[1] == null ? '' : r[1]).trim();
+      out.conventionalSkus[code] = nm;
+    }
+  } else {
+    console.log('   (产品.xlsx 无「常规品」sheet，常规品名单为空——慢动品/补货建议将按原品类判据排除)');
+  }
+  console.log('   产品主数据：boxSpec=' + Object.keys(out.boxSpecMap).length + ' 单价=' + Object.keys(out.priceMap).length + ' 淘汰品=' + Object.keys(out.discontinuedMap).length + ' 品牌=' + Object.keys(out.brandMap).length + ' ABC=' + Object.keys(out.abcMap).length + ' 常规品名单=' + Object.keys(out.conventionalSkus).length);
   return out;
 }
 
@@ -360,7 +392,16 @@ function main() {
     const currentSrcHash = sha256File(srcPath);
     // inventory.xlsx 拆为多文件，主输出 inventory-core.json 存在 + 哈希一致即视为未变
     const primaryOutJson = (base === 'inventory') ? 'inventory-core.json' : outJson;
-    if (hashCache[src] === currentSrcHash && fs.existsSync(path.join(ROOT, primaryOutJson))) {
+    // 🔴 v397: data.json 的产物还依赖**第二个源文件** 产品.xlsx（buildProductMaster 的 5 个 map + 常规品名单）。
+    //   旧逻辑只把 data*.xlsx 自身的哈希写进跳过判据 → 用户「只更新产品数据、不更新订单」时会被静默跳过，
+    //   新的常规品名单/箱规/品牌**永远进不了 data.json 且没有任何报错**（同类静默陷阱见 v391）。
+    //   故把 产品.xlsx 的哈希一起并入跳过键（仅对 base==='data' 生效；data-2026-XX.json 不含产品主数据）。
+    const _prodFile = path.join(ROOT, '产品.xlsx');
+    const _extraHash = (base === 'data')
+      ? '|产品.xlsx:' + (fs.existsSync(_prodFile) ? sha256File(_prodFile) : 'none')
+      : '';
+    const _srcKey = currentSrcHash + _extraHash;
+    if (hashCache[src] === _srcKey && fs.existsSync(path.join(ROOT, primaryOutJson))) {
       console.log(`   ⏭️ 源未变（哈希一致），跳过：${primaryOutJson}（保留旧 JSON + 旧 manifest 哈希）`);
       // v382: 🔴 哈希口径 = 输出 JSON 自身哈希（不再用源 xlsx 哈希）。
       //   这样即使源没变、但 JSON 因代码修复/重跑被重写，哈希也会变 → 客户端强制重拉。
@@ -377,7 +418,7 @@ function main() {
       }
       continue;
     }
-    hashCache[src] = currentSrcHash;
+    hashCache[src] = _srcKey;
 
     if (base === 'transship') {
       const payload = parseTransship(srcPath);
@@ -472,6 +513,9 @@ function main() {
       payload.discontinuedMap = pm.discontinuedMap;
       payload.brandMap = pm.brandMap;
       payload.abcMap = pm.abcMap;
+      // v397: 常规品名单随 data.json 下发（data.json 本就是产品主数据的载体，见上方 boxSpecMap 等）。
+      //   前端 parseExcel 的 data.json 分支读入 → dataStore.conventionalSkus → isConventionalSku()。
+      payload.conventionalSkus = pm.conventionalSkus;
       // 未放行订单需要它把装运条件码映射到 RDC。若源文件里没有，才从历史月 json 回填。
       // 该表为 SAP 静态编码（20东北/50华南/60西北/70华中/80西南/90华北），沿用历史值安全。
       //
