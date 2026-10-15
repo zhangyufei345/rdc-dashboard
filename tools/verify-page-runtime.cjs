@@ -26,9 +26,13 @@ const ROOT = path.resolve(__dirname, '..');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css' };
 
 // 全部页签路由（data-page）；data=数据管理页（空态正常，单独容忍）
+// ⚠ sams-fc（山姆补货跟踪，v402 新增）在「首次全量拉取 42MB 期间」会被测出 html 偏小（约 274，
+//   即它的「正在读取…」加载卡）：该页数据是独立 fetch 的 11KB sams-demand.xlsx，回调要等主线程
+//   从 42MB JSON 解析里让出才会执行，而本脚本恰好在 dataStore.loaded 一变为 true 就立刻导航 + 2500ms 采样。
+//   这是采样时机问题、不是缺陷（>200 仍判 ✅）：实测等预热完成后导航，600ms 内即渲染 21K+ 字符。
 const DEFAULT_ROUTES = ['overview', 'fulfillment', 'order-insight', 'shortage', 'weekend-sim', 'transship',
   'replenishment', 'shortage-compare', 'plan-monitor', 'biz-demand', 'adjust-track',
-  'inventory-structure', 'inventory', 'slow-moving'];
+  'inventory-structure', 'inventory', 'slow-moving', 'sams-fc'];
 
 function findChromium() {
   if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH;
