@@ -818,7 +818,7 @@ const DB_NAME = 'RDC_Dashboard';
 // v380: 删除日满足率趋势 hover 弹窗内「已拒绝」标注的尾句「，不会再排单、缺货不可恢复」（用户 2026-09-22 指令：
 //   弹框该段不用展示），保留「↳ 其中已拒绝 N 箱（x%）· 原因 · N 单」。②缺货清单悬停文案、③订单明细页口径说明均不变。
 //   纯文案删减，判定与数字零改动，DB_VERSION 不动。
-const BUILD_VERSION = 407; // v407: 🔴 修复「补货建议 · 下调预警」导出 Excel 的「出货量(支)」全 0（用户 2026-10-15 报「SKU出货量都是0」，已线上确定性复现）。【根因】inventory-core.json / inventory.json 走 parseInventoryExcel(wb) —— **无 merge**；而重建 dataStore.inventory 的白名单里两个**运行期派生字段**在 merge=false 时无任何保留：① planBySkuRdc 走 `_keep(...)`，而 _keep 第一行就是 `if (!merge) return val;` → 直接返回新解析的空对象；② actualShipBySkuRdc 直接写 `_prev && _prev.x`，而 _prev 在 merge=false 时为 null → 直接 null。这两个字段都不在库存文件里（planBySkuRdc 来自 inventory-plan.json、actualShipBySkuRdc 来自 demand.json），重建时无来源可恢复。Worker 回包（_worker → applyPreparsed）与按需加载器（ensureInventoryPlan）每次都会走这次重建 ⇒ **必然清空、不是偶发**。实测（线上）：重建时 planBySkuRdc 429→0、actualShipBySkuRdc 252→0；随后 _actualShipOf 取不到 → `planMonthShipOf` 当前月路径直接返回 0 ⇒ 下调预警「行列都在、只有出货量列全 0」（肉眼极难发现），导出的 Excel 同样是静默错文件。且 `ensureDemandMerged()` 开头 `if (_demandMerged) return;` 只看标志位 → 字段被清空后**永不重新并入**，手动重渲染也无效。【修法】①新增 `_keepRT()` + `_prevRT`（与 merge 解耦的保留源），planBySkuRdc / actualShipBySkuRdc / demandMeta 三个运行期字段改走它；其余字段仍走 `_prev`（受 merge 约束），避免换月时把上月数据当新版保留。②`ensureDemandMerged()` 早退判据改用既有 `_demandReady()`（v375 就有：同时校验标志位 + 字段在位，并在缺失时复位标志）→ 清空后可自动重新并入并自动重渲染本页。③【防呆】补货建议页补上就绪栅栏（该页此前**没有任何** _demandReady 检查，只有分仓计划监控/优化建议接了）：未就绪即触发并入 + 页面黄条诚实提示；导出 `exportReplenishmentExcel` 增加「出货量全 0 ⇒ 中止导出并提示」的拦截（正常当月固约有 1/3 为 0，但全 0 不可能是正常数据），杜绝静默产出错文件。【验证】新增 `tools/_verify_v407_demand_ready.cjs` 确定性复现探针（直接调 parseInventoryExcel 走 applyPreparsed 同路径）——**反向验证**：未修复的线上跑 ❌ 失败 5 项（actualShip 252→0、plan 429→0、下调预警非0=0、导出非0=0）；修复后线上跑 ✅ 全绿。另有 syntax-check 0 错 + verify-page-runtime 15 页签 0 运行时错误。DB_VERSION 不动（无 sheet/字段语义变更）。│ v405: 按用户 2026-10-15 确认「惠州 9/21~27 那周 16,182 箱是一次性铺货」，新增【异常周剔除】机制并应用。①**独立清单文件 sams-exclude.json**（与 sams-demand.xlsx 解耦 —— 每周整替换 xlsx 不会丢），字段 wh(短名或全名) + week(合并周短标签或该周周一日期) + note(剔除原因，页面展示便于追溯)；samsLoad 并行拉取（404/格式错 = 无剔除，不影响主流程），samsBuild 解析为 out.exclude{仓全名:{idx,notes}} + out.excludeMissed(未匹配条目，页面诚实提示)。②samsRopAt **只剔除参与统计的周**（周均/σ/上沿/DP均值），返回 nExcluded/lastIsExcluded/excNotes；🔴 **图1 仍照常显示被剔除的周**（半透明 opacity .22 + 红色虚线边框标出，tooltip 加说明）—— 剔除可解释、可退，数据绝不隐藏。③参数栏新增「异常周」开关（剔除 N 周 / 不剔除）可随时 A/B 对比；KPI 卡、明细表「完整周数」列、CSV 同步标注；明细表下方列出剔除清单与生效状态；口径说明新增「异常周剔除」一节。④实测影响（惠州）：近12周 22,678→**12,994**（折合 15.4→10.1 天，SS 由峰值法 9,709 转为统计法 3,244）、近8周 19,798→**10,946**（13.4→8.5 天）—— **剔除后惠州低于天津**，回答了用户最初「惠州为何高于天津」。⑤DB_VERSION 不动（纯前端重算，无 sheet/字段语义变更）。│ v404: 按用户 2026-10-15 要求删除「图2 预警线完整组成」—— 该信息已由 KPI 卡的组成条（需求覆盖/安全库存 两段色条 + 「折合 X 天 = 7 + Y」）完整承载，图表重复。①删图2 卡片与其 sams-chart-rop 图表代码（**保留其 var names 声明**，图2/图3 共用，删掉会 ReferenceError）；②图号前移：原图3 安全库存算法→**图2**、原图4 选线→**图3**、原图5 免租→**图4**（card-title / HTML 注释 / JS 注释三处同步）；③修正交叉引用：图2 副标题不再指向已删图（改为「与 KPI 卡 / 明细表的②安全库存同口径」）、口径说明「组成」节改「KPI 卡 / 明细表，与图2 算法一致」、「取大者」改指图2、「免租」改指图4。④**纯 UI 删减，计算层与数值零变化** —— 交叉对拍 240 项仍 0 不一致。DB_VERSION 不动。│ v403: 按用户 2026-10-15 要求，对「山姆补货跟踪」做两项改动。①【口径修正·合并真实自然周】源表按【月】切周，跨月自然周被拆成 P1(本月)+P2(下月) 两段，另有 0831 这种 1 天段 —— 原始 **33 个周桶里有 11 个不是完整 7 天**。原先把部分桶当"周总量"与整周混在一起算周均/σ/上沿，量纲不一致 → **周均被拉低、周σ被抬高**，虚增安全库存。现于 samsBuild 末尾新增合并：按"周一"(samsMonday) 分组求和、跨度合计必须=7 天、**任一分段为空则整周判空(不猜不补)**；33 桶 → 28 个真实自然周(其中 26 个完整周)。测算层 samsRopAt 改为只吃 `wh.actualM/planM` 且 `mweeks[i].ok`；图1 横轴、CSV 周度序列、数据完整度提示同步改用合并周。实测：天津 CV 0.28→0.21、σ周 2,972→2,306（噪声来自 1 天桶）；惠州/天津 基础预警线 17,777/15,442 → 17,800/15,356（结论不变，仍惠州高）。**DB_VERSION 不动**（纯前端重算，无 sheet/字段语义变更）。②【预警线完整组成可视化】**把安全库存的计算过程显式展示出来**：新增 图2「预警线完整组成」= 横向堆叠条（①需求覆盖 蓝 + ②安全库存 橙，柱右标总量与折合天数，与用户参考图一致）；新增 图3「安全库存是怎么算出来的」= ①统计法 1.65×σ日×√D 与 ②峰值法 1.2×(上沿÷7−基准日均)×D 并列柱，被采用的那根标「采用」；samsRopAt 拆出 `reqCover`/`ssFinal`/`ssPick`/`ssDays` 字段，KPI 卡加"需求覆盖+安全库存+折合天数=①②之和"的组成条，明细表由 18 列扩到 **19 列**并按"输入→①需求覆盖→②安全库存(①/②取大)→基础预警线→计划调整→执行预警线→免租校验"重排（①②列加蓝/橙底便于对照），口径说明整段重写（新增"合并真实自然周"与"预警线完整组成"两节）。图号重排为 图1走势/图2组成/图3安全库存算法/图4选线/图5免租合规。③验证：syntax-check 全过；Python 独立复算 ↔ 浏览器 JS 交叉对拍 **96 项字段 0 不一致**（v403 口径基线）；ECharts getOption 断言 5 张图 series 值 == 计算值；verify-page-runtime 15 页签 0 运行时错误。│ v402: 新增「山姆补货跟踪」独立模块（用户 2026-10-15 要求，数据源桌面《山姆销售更新.xlsx》）。①新增侧边栏分组「🏬 山姆前置仓」+ 页面 sams-fc，**完全独立于其他 RDC 模块**：不依赖 dataStore / manifest / IndexedDB / DB_VERSION，自带 fetch('./sams-demand.xlsx') + SheetJS 解析 → window._samsState，每周更新只需替换该 xlsx 后重新部署。②数据：单 sheet「需求计划」54列×13行；U列「计划指标」区分 实际出货_数量/DP_共识数量，V..BB 33个周桶(表头 '2026-09 W1P2 (0901~0906)')，6仓×2行。③口径：预警线 = 日均×覆盖天数 + max(①统计法 1.65σ√D, ②峰值法 1.2×上行缺口×D)；周上沿 = 窗口内实测最高周(源表无区间数据，不用「周均+Nσ」拍脑袋倍数)；基准周均默认「计划优先」(DP有效值>0则用之，否则回退历史)，安全库存与日均等比缩放 → 预警线整体乘调整系数。④UI：参数栏(历史窗口4/8/12/全部 · 覆盖周数0.5/1/1.5/2/3周(默认1周) · 基准口径) + 6张预警线KPI卡 + 图1周度走势(实际柱 vs DP虚线，可切全仓堆叠/单仓) + 图2预警线水位对比(柱+折合天数控) + 图3预警线vs覆盖周数(选线用，红线标当前档) + 逐仓测算明细表(①/②/取大/调整系数全列可追溯) + CSV导出 + 数据完整度与口径说明。⑤🔴 诚实标注：源表**无库存/在途**，本页只给「应维持的水位线」，不做触发判断，页面已明写局限与补充数据建议。⑥renderPage 新增独立守卫 page!=='sams-fc'（dataStore 未加载也正常渲染）。⑦🔴 免租约束（用户 2026-10-15 补充：6 仓免租统一「入库起 30 天内须完成出货」）：新增整车容量(默认5,568箱/车,可改)与免租上限(默认30天,可改)两个参数；单批售罄天数 = (预警线 + 1车) ÷ 基准日均（保守口径，不扣到货时效）；新增「免租上限线」= 上限天数 × 基准日均 − 1车 = 该仓预警线的合规天花板；页面新增红/绿合规告警带 + 图4「单批售罄天数 vs 免租上限」（超限标红、markLine 画上限、并拆出「整车自身天数」与「在库旧货天数」两条线解释余量从哪来）；明细表加「单批售罄/免租上限线」两列、KPI 卡加合规标记、CSV 加 6 个免租字段。实测：覆盖1周时 5 仓合规，**成都超限**（批售罄 36.7 > 30 天，因日均仅 261 箱、1 车自己就占 21.3 天，预警线须压到 2,262 箱）。│ v401: 按用户 2026-10-15 要求撤销 v398「风险库存下降与下水道订单(ZDTA)联动」，恢复加该功能之前的样子（用户原话：「当月下水道出货请删除，恢复原来的模式」，截图红框标注「⬇ 风险库存下降 TOP 10」表最右列）。①删表格列：第 8 列「当月下水道出货」的 th + colgroup 90px 列 + riskRowHtml 的 _zdtaCell 单元格 + 其上方 _zdtaMap 统计块（含 cov7.reportMonth 口径匹配），riskDownHtml 的 colspan 8→7；②删方案A：drillRiskSkuDetail 的 window._drillZdta 数据块 与 renderDrillModal 的「🚰 当月下水道订单出货（ZDTA…）」明细区块（v399 的 _isRdc 守卫随功能一并移除）。③**保留不动**：既有订单类型解析（其他订单 G列 ZDTA-特殊价格标准订单 → orderType='特殊价格订单'，L1776/1803/4367/4933）及「其他订单」「订单数据洞察」页完全未受影响。④验证：grep 确认 _zdta/_drillZdta/showZdta/当月下水道出货 零残留；node --check + syntax-check 0 错；verify-page-runtime 14 页签 0 运行时错误；下降表恢复 7 列、表头与上涨表一致。DB_VERSION 不动（无 sheet/字段语义变更，纯前端删列）。│ v400: 分仓计划监控月份下拉支持历史月（方案A，用户 2026-10-14 裁定）。背景：下拉原只来自当前快照 cov7 需求月列（截断≤当前月后仅剩 1 项）。新增 planMonthOptionsExt/planMonthResolved 单一出口：历史月 = 旧快照槽 cov5(7月末)/cov6(8月末) 的首需求月（当前 8月/9月，随快照滚动自动前移），与当前窗口选项拼接；5 个消费方（planTabBarHtml 下拉 / renderPlanMonitor / buildPlanSkuAgg / buildPlanOptimAdvice / renderPlanAdvice）全部改走该出口。历史月口径：计划 = 「分仓计划」sheet 该月列（2026-08 段1 / 2026-09 段2，实测源表在）+ 旧快照 cov 字段回退（行源随月切 cov5/cov6）；分子 = 当月已放行订单量（实际出货源表只保留当月 MTD，实测 demand.json actualShip 仅含 2026-10）→ planMonthShipOf 统一回退并诚实标注（页头黄标 / KPI 卡「订单量口径·历史月」/ 下拉「（历史）」后缀）；demand.json 未就绪警示块历史月不再显示。当前/未来月行为零变化（planMonthShipOf 仍严格实际出货、取不到即 0）。MTD 曲线历史月无快照 → 既有诚实空态照常。│ v399: 风险库存下钻弹窗（drillRiskSkuDetail/renderDrillModal risk 分支）ZDTA 区块 RDC 筛选守卫与风险行统一为 window._isRdc||'all'——修 _isRdc 未初始化(undefined)时下水道明细被静默过滤成「当月无下水道订单出货」、区块标题打出 "undefined" 的隐患。配套排查结论（2026-10-14）：用户报「点击有下水道出货的 SKU 报错」，本地+线上(BUILD 398)真实 DOM 点击 40210/40209/40211 及全部 15 个 ZDTA SKU × 海南筛选组合共 30+ 次探针，0 报错、弹窗渲染正常，未能复现；待用户提供确切报错文案/截图。│ v397: 「常规品」名单 —— 用户 2026-10-11 在产品数据里新增「常规品」sheet（28 个 SKU），原话：「这里面的产品都是现在是促销装和新品，但是是按分仓需求补货的，因此在慢动品分析和补货建议模块将这些SKU也当做常规品计算。后续我会在这个sheet中定期更新数据」。①数据链路做成**纯数据驱动**（禁止前端硬编码 SKU）：产品.xlsx「常规品」sheet（无表头两列 产品编码/产品名称）→ generate_data_json.mjs buildProductMaster() 产出 conventionalSkus → data.json.conventionalSkus → parseExcel(data.json) → dataStore.conventionalSkus（saveToIDB/loadFromIDB 成对持久化，v179/v181 铁律）→ isConventionalSku()。②生效点为**两处同源副本**：isExcludedProduct()（慢动品分析）与 computeStatusDerived 内的 _isExcluded()（慢动诊断 / 分仓计划监控慢动徽标 / 分仓计划优化建议 C6）；命中名单即直接判「不排除」，覆盖 供应链属性 / 生命周期标签 / 覆盖周数分类 三处判据。补货建议页 renderReplenishment 自身**无品类排除逻辑**（已 grep 确认 L12120~12970 无 促销装/非卖品/新品期），其受影响路径是该页「下调预警」所复用的 buildPlanOptimAdvice C6 慢动品维。③顺带修一个静默陷阱：源哈希记忆此前只记 data*.xlsx 自身哈希，而 data.json 的产物还依赖 产品.xlsx → 用户「只更新产品数据、不更新订单」时会被**静默跳过**、新名单永远进不了 data.json（同类静默陷阱见 v391）。现把 产品.xlsx 哈希并入 data.json 的跳过键。④实测影响面（9月/8月库存覆盖表，离线复刻前端口径复算）：9月表名单内 21 个 SKU 的「供应链属性」**本就是常规品**、当前 0 行被排除 → 本次零变化；8月表有 15 行被标促销装，其中 1 行（西北仓×10294，覆盖>6个月）因此新进慢动品 → 慢动品行数 534→535、excludedCount 598→583。即该名单是**长期口径保险**（实测源系统同一 SKU 会随月份在 常规品/促销装 之间反复）。⑤产品数据同步：桌面 产品1010.xlsx 是 36 列 SAP 全量导出格式（0908 起即为此格式，项目此前一直未同步 0908），只含「产品列表」+「常规品」，**不含「单价」「淘汰品」**，且其「成本价/产品单价」与旧「单价」sheet 不等价（2027 个可比样本仅 2 个相等）、「当前生命周期」整列为空 → 无法派生；直接覆盖会让 data.json 的 priceMap 9093→0、discontinuedMap 530→0（前端「拉回数据」金额换算、慢动品页「是否淘汰」筛选会静默降级）。故 产品.xlsx 采用**无损合成**：产品列表/常规品 取 1010 版，单价/淘汰品 沿用历史版本（已逐键实测 priceMap/discontinuedMap 前后完全一致）。boxSpec 9774→9490（仅旧的 307 个已确认 100% 被「基础数据」箱规覆盖，零影响）、brand/abc 10643→10294。DB_VERSION 不动（无 sheet/字段语义变更；data.json 内容变化会走逐文件哈希比对自动补拉，老用户可自愈，无需 20~30s 全量重拉）。│ v396: 库存覆盖图新增「按品牌堆叠」维度（用户 2026-10-10 要求：「红框处增加一个按品牌展示库存覆盖的维度。选择按品牌展示，则柱状图切换为品牌展示。数据同样要求能下钻，下钻后先展示RDC维度数据，再展示SKU明细」）。①原图只有「按 RDC 堆叠」一维，现于图例区新增「展示维度：按 RDC / 按品牌」切换按钮组（常驻显示），色块图例跟随维度切换；②按品牌展示时堆叠段 = 归一化品牌 —— 走全局 normalizeBrandName（百爱神/海鸥/雅霜/友谊/春蕾/传统品牌 一并归入「传统」，即页面既有口径；用户点名的 5 个小品牌在 9月覆盖表里本就已合并为「传统品牌」）；玉泽/佰草集按用户口径不参与展示（9月覆盖金额仅 65 元 / 1,165 元）；③品牌颜色按「金额降序」固定绑定，勾选切换时柱子不串色；④点击品牌柱下钻 → 「库存覆盖明细」页改造为两层：先给「① RDC 维度」汇总表（RDC / 可用库存金额 / 占比 / SKU 数，点行可再筛到该 RDC 的 SKU 明细，带「已筛选 ✕」可退），再给「② SKU 明细」；⑤绘图逻辑收敛为 renderCovStackedChart 单一入口（原 renderCovChartFromData 与 renderInventoryStructure 内联版两份重复代码合并，避免今后两处漂移）；⑥ structCacheKey 纳入 _covDim / _covSelectedBrands（否则切换维度会读到旧 HTML 缓存）。DB_VERSION 不动（无 sheet/字段语义变更，纯前端维度扩展）。│ v395: 9月库存部署 —— 本机首次「库存月份窗口整体平移」（8月窗口 → 9月窗口）。①数据侧：inventory.xlsx 换为 9月版（合并保留历史：拉回数据含 1-9月、转储数据含 7-9月、库存金额保留 2025 全年 + 2026 1-9月，新增「9月库存覆盖数据」「9月库存状态分析」两表）。②代码侧：cov5/6/7 三个「位置语义」槽位指向的表整体右移一月（cov7 从 8月表 → 9月表），全站约 30 处月份硬编码改为**按数据自带的 reportMonth 推导**（新增 covSnapMonthLabel / covFutureRangeText / covFutureFieldRange 助手；parseCoverageSheet 增产 reportMonth + monthHint；parseCoverageSheet 的 COV_MONTH_MAP 补 cov15=2027-03）。③顺带修掉三个「模板一换月就静默错」的老 bug：(a) `parseInventoryTurnoverSheet` 右表探测上界写死 `c<=10`，9月模板「出货成本统计」在**索引11** → 右表(出货成本)整段读错，放宽到 c<=20；(b) v276 起 cov7 槽装的已是当月新表，但「未来6月需求」硬编码 cov08..cov13 未跟着平移 → 一直多算当月、少算最后一个需求月，改按数据推导；(c) getCovMonthConfig 三分支按「covN 的 N 直接当月份」写，与 v276 后的实际装表错位一月 → 仅作老缓存兜底并已按新窗口改写。④端点文案（卡片标题/口径说明/讲解页）全部改为动态取值，避免下次换月再手改。DB_VERSION 234→235（cov 槽位语义与新增字段变化，老 IDB 无法自愈）。│ v394: 🔴 修复「跨月部署后老用户永远停在旧月」（用户 2026-10-10 报「总仪表盘还是9月的数据」，当天正是 9月→10月 的首次跨月切换）。现象：线上数据文件已 100% 是 10 月（三个 json 哈希全对、响应头 no-cache 无任何 CDN/HTTP 缓存层），新用户/清缓存用户看到 2026-10-09，而老用户仍显示 2026-09-28、月度满足率 98.2%（9 月值）。【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾的 detectAllMonths() 在「后台补拉新数据之前」就把 _latestMonth 判为 '2026-09' → 紧随其后的 bootLoad 自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；随后 refreshFromManifest 拉到 10 月数据、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是 `filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → **数据其实已经自愈到 10 月，只是没有任何地方把 dataMonth 拉回来**，于是总览/缺货日期/各页月度口径全部停在 9 月，且用户端没有任何自愈路径。【为何直到今天才暴露】月内更新时 _latestMonth 不变，只有跨月切换（最新月变化）才会触发，所以这是首次出现。【修法】判据从「filters.dataMonth 是否仍为 all」改为「用户是否手动选过月份」：新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()，5 处自动跟随点统一改走它（没选过 → 每次都跟随最新月；选过 → 尊重用户选择不被后台刷新覆盖）；onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true。DB_VERSION 不动（无 sheet/字段语义变更）。│ v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
+const BUILD_VERSION = 408; // v408: 🔴 修正「单批售罄天数」的**时点口径**（用户 2026-10-15 指出：「你算出来的天数是静态的，实际各RDC还有运输周期，等到仓的时候库存又消化掉一批了」+ 提供《山姆前置仓》运输周期表）。【问题】免租是「**入库起** 30 天内售罄」，我却按「**下单时点**」起算 —— 下单到到仓这段路上货还在跑、在库旧货仍在按日消化，所以旧算法**系统性高估**了单批售罄天数（惠州/天津/武汉 多算 5 天、成都 多算 6 天、嘉兴 多算 3 天）。【修法】①新增 `SAMS_LEAD`（各 FDC 运输时效，取自用户运输周期表：「1+4」=下单1天+提货运输4天=5天）：天津5/惠州5/嘉兴3/武汉5/成都6；**常州 FDC 该表未含 → 按 0 天保守估并在页面橙色标注**。②`samsRopAt` 改为从「到仓」起算：到仓时在库 = 预警线 − 基准日均 × 时效；单批售罄天数(入库起) = (到仓时在库 + 1车) ÷ 基准日均 = 静态值 − 时效；免租上限线随之后移 = (30 + 时效) × 基准日均 − 1车；另保留「下单起算」的保守上界 `batchDaysCons` 作对照展示。③UI：KPI 卡标注「入库起·扣时效 N 天」；图4 副标题与 tooltip 说明口径、折线改「在库旧货(到仓时)」；明细表新增「运输时效」列、单批售罄列加「下单起」小字对照；口径说明免租一节整段重写；CSV 加时效/到仓在库/双口径 4 列。【实测效果】近12周·计划优先：惠州 14.4→**9.4**、天津 13.2→**8.2**、武汉 22.2→**17.2**、成都 29.6→**23.6**（原临界，现余量充足）、嘉兴 16.3→**13.3** 天；常州时效未配置仍为 22.9（保守）。**全部仓远低于 30 天** ⇒ 之前担心的「成都临界」风险解除。④顺带核对：用户表「首批出货量 ÷ 首批发车量」恒为 **5,568 箱/车**（已验证 5 个仓），与模块默认整车容量一致。DB_VERSION 不动（纯前端重算，无 sheet/字段语义变更）。│ v407: 🔴 修复「补货建议 · 下调预警」导出 Excel 的「出货量(支)」全 0（用户 2026-10-15 报「SKU出货量都是0」，已线上确定性复现）。【根因】inventory-core.json / inventory.json 走 parseInventoryExcel(wb) —— **无 merge**；而重建 dataStore.inventory 的白名单里两个**运行期派生字段**在 merge=false 时无任何保留：① planBySkuRdc 走 `_keep(...)`，而 _keep 第一行就是 `if (!merge) return val;` → 直接返回新解析的空对象；② actualShipBySkuRdc 直接写 `_prev && _prev.x`，而 _prev 在 merge=false 时为 null → 直接 null。这两个字段都不在库存文件里（planBySkuRdc 来自 inventory-plan.json、actualShipBySkuRdc 来自 demand.json），重建时无来源可恢复。Worker 回包（_worker → applyPreparsed）与按需加载器（ensureInventoryPlan）每次都会走这次重建 ⇒ **必然清空、不是偶发**。实测（线上）：重建时 planBySkuRdc 429→0、actualShipBySkuRdc 252→0；随后 _actualShipOf 取不到 → `planMonthShipOf` 当前月路径直接返回 0 ⇒ 下调预警「行列都在、只有出货量列全 0」（肉眼极难发现），导出的 Excel 同样是静默错文件。且 `ensureDemandMerged()` 开头 `if (_demandMerged) return;` 只看标志位 → 字段被清空后**永不重新并入**，手动重渲染也无效。【修法】①新增 `_keepRT()` + `_prevRT`（与 merge 解耦的保留源），planBySkuRdc / actualShipBySkuRdc / demandMeta 三个运行期字段改走它；其余字段仍走 `_prev`（受 merge 约束），避免换月时把上月数据当新版保留。②`ensureDemandMerged()` 早退判据改用既有 `_demandReady()`（v375 就有：同时校验标志位 + 字段在位，并在缺失时复位标志）→ 清空后可自动重新并入并自动重渲染本页。③【防呆】补货建议页补上就绪栅栏（该页此前**没有任何** _demandReady 检查，只有分仓计划监控/优化建议接了）：未就绪即触发并入 + 页面黄条诚实提示；导出 `exportReplenishmentExcel` 增加「出货量全 0 ⇒ 中止导出并提示」的拦截（正常当月固约有 1/3 为 0，但全 0 不可能是正常数据），杜绝静默产出错文件。【验证】新增 `tools/_verify_v407_demand_ready.cjs` 确定性复现探针（直接调 parseInventoryExcel 走 applyPreparsed 同路径）——**反向验证**：未修复的线上跑 ❌ 失败 5 项（actualShip 252→0、plan 429→0、下调预警非0=0、导出非0=0）；修复后线上跑 ✅ 全绿。另有 syntax-check 0 错 + verify-page-runtime 15 页签 0 运行时错误。DB_VERSION 不动（无 sheet/字段语义变更）。│ v405: 按用户 2026-10-15 确认「惠州 9/21~27 那周 16,182 箱是一次性铺货」，新增【异常周剔除】机制并应用。①**独立清单文件 sams-exclude.json**（与 sams-demand.xlsx 解耦 —— 每周整替换 xlsx 不会丢），字段 wh(短名或全名) + week(合并周短标签或该周周一日期) + note(剔除原因，页面展示便于追溯)；samsLoad 并行拉取（404/格式错 = 无剔除，不影响主流程），samsBuild 解析为 out.exclude{仓全名:{idx,notes}} + out.excludeMissed(未匹配条目，页面诚实提示)。②samsRopAt **只剔除参与统计的周**（周均/σ/上沿/DP均值），返回 nExcluded/lastIsExcluded/excNotes；🔴 **图1 仍照常显示被剔除的周**（半透明 opacity .22 + 红色虚线边框标出，tooltip 加说明）—— 剔除可解释、可退，数据绝不隐藏。③参数栏新增「异常周」开关（剔除 N 周 / 不剔除）可随时 A/B 对比；KPI 卡、明细表「完整周数」列、CSV 同步标注；明细表下方列出剔除清单与生效状态；口径说明新增「异常周剔除」一节。④实测影响（惠州）：近12周 22,678→**12,994**（折合 15.4→10.1 天，SS 由峰值法 9,709 转为统计法 3,244）、近8周 19,798→**10,946**（13.4→8.5 天）—— **剔除后惠州低于天津**，回答了用户最初「惠州为何高于天津」。⑤DB_VERSION 不动（纯前端重算，无 sheet/字段语义变更）。│ v404: 按用户 2026-10-15 要求删除「图2 预警线完整组成」—— 该信息已由 KPI 卡的组成条（需求覆盖/安全库存 两段色条 + 「折合 X 天 = 7 + Y」）完整承载，图表重复。①删图2 卡片与其 sams-chart-rop 图表代码（**保留其 var names 声明**，图2/图3 共用，删掉会 ReferenceError）；②图号前移：原图3 安全库存算法→**图2**、原图4 选线→**图3**、原图5 免租→**图4**（card-title / HTML 注释 / JS 注释三处同步）；③修正交叉引用：图2 副标题不再指向已删图（改为「与 KPI 卡 / 明细表的②安全库存同口径」）、口径说明「组成」节改「KPI 卡 / 明细表，与图2 算法一致」、「取大者」改指图2、「免租」改指图4。④**纯 UI 删减，计算层与数值零变化** —— 交叉对拍 240 项仍 0 不一致。DB_VERSION 不动。│ v403: 按用户 2026-10-15 要求，对「山姆补货跟踪」做两项改动。①【口径修正·合并真实自然周】源表按【月】切周，跨月自然周被拆成 P1(本月)+P2(下月) 两段，另有 0831 这种 1 天段 —— 原始 **33 个周桶里有 11 个不是完整 7 天**。原先把部分桶当"周总量"与整周混在一起算周均/σ/上沿，量纲不一致 → **周均被拉低、周σ被抬高**，虚增安全库存。现于 samsBuild 末尾新增合并：按"周一"(samsMonday) 分组求和、跨度合计必须=7 天、**任一分段为空则整周判空(不猜不补)**；33 桶 → 28 个真实自然周(其中 26 个完整周)。测算层 samsRopAt 改为只吃 `wh.actualM/planM` 且 `mweeks[i].ok`；图1 横轴、CSV 周度序列、数据完整度提示同步改用合并周。实测：天津 CV 0.28→0.21、σ周 2,972→2,306（噪声来自 1 天桶）；惠州/天津 基础预警线 17,777/15,442 → 17,800/15,356（结论不变，仍惠州高）。**DB_VERSION 不动**（纯前端重算，无 sheet/字段语义变更）。②【预警线完整组成可视化】**把安全库存的计算过程显式展示出来**：新增 图2「预警线完整组成」= 横向堆叠条（①需求覆盖 蓝 + ②安全库存 橙，柱右标总量与折合天数，与用户参考图一致）；新增 图3「安全库存是怎么算出来的」= ①统计法 1.65×σ日×√D 与 ②峰值法 1.2×(上沿÷7−基准日均)×D 并列柱，被采用的那根标「采用」；samsRopAt 拆出 `reqCover`/`ssFinal`/`ssPick`/`ssDays` 字段，KPI 卡加"需求覆盖+安全库存+折合天数=①②之和"的组成条，明细表由 18 列扩到 **19 列**并按"输入→①需求覆盖→②安全库存(①/②取大)→基础预警线→计划调整→执行预警线→免租校验"重排（①②列加蓝/橙底便于对照），口径说明整段重写（新增"合并真实自然周"与"预警线完整组成"两节）。图号重排为 图1走势/图2组成/图3安全库存算法/图4选线/图5免租合规。③验证：syntax-check 全过；Python 独立复算 ↔ 浏览器 JS 交叉对拍 **96 项字段 0 不一致**（v403 口径基线）；ECharts getOption 断言 5 张图 series 值 == 计算值；verify-page-runtime 15 页签 0 运行时错误。│ v402: 新增「山姆补货跟踪」独立模块（用户 2026-10-15 要求，数据源桌面《山姆销售更新.xlsx》）。①新增侧边栏分组「🏬 山姆前置仓」+ 页面 sams-fc，**完全独立于其他 RDC 模块**：不依赖 dataStore / manifest / IndexedDB / DB_VERSION，自带 fetch('./sams-demand.xlsx') + SheetJS 解析 → window._samsState，每周更新只需替换该 xlsx 后重新部署。②数据：单 sheet「需求计划」54列×13行；U列「计划指标」区分 实际出货_数量/DP_共识数量，V..BB 33个周桶(表头 '2026-09 W1P2 (0901~0906)')，6仓×2行。③口径：预警线 = 日均×覆盖天数 + max(①统计法 1.65σ√D, ②峰值法 1.2×上行缺口×D)；周上沿 = 窗口内实测最高周(源表无区间数据，不用「周均+Nσ」拍脑袋倍数)；基准周均默认「计划优先」(DP有效值>0则用之，否则回退历史)，安全库存与日均等比缩放 → 预警线整体乘调整系数。④UI：参数栏(历史窗口4/8/12/全部 · 覆盖周数0.5/1/1.5/2/3周(默认1周) · 基准口径) + 6张预警线KPI卡 + 图1周度走势(实际柱 vs DP虚线，可切全仓堆叠/单仓) + 图2预警线水位对比(柱+折合天数控) + 图3预警线vs覆盖周数(选线用，红线标当前档) + 逐仓测算明细表(①/②/取大/调整系数全列可追溯) + CSV导出 + 数据完整度与口径说明。⑤🔴 诚实标注：源表**无库存/在途**，本页只给「应维持的水位线」，不做触发判断，页面已明写局限与补充数据建议。⑥renderPage 新增独立守卫 page!=='sams-fc'（dataStore 未加载也正常渲染）。⑦🔴 免租约束（用户 2026-10-15 补充：6 仓免租统一「入库起 30 天内须完成出货」）：新增整车容量(默认5,568箱/车,可改)与免租上限(默认30天,可改)两个参数；单批售罄天数 = (预警线 + 1车) ÷ 基准日均（保守口径，不扣到货时效）；新增「免租上限线」= 上限天数 × 基准日均 − 1车 = 该仓预警线的合规天花板；页面新增红/绿合规告警带 + 图4「单批售罄天数 vs 免租上限」（超限标红、markLine 画上限、并拆出「整车自身天数」与「在库旧货天数」两条线解释余量从哪来）；明细表加「单批售罄/免租上限线」两列、KPI 卡加合规标记、CSV 加 6 个免租字段。实测：覆盖1周时 5 仓合规，**成都超限**（批售罄 36.7 > 30 天，因日均仅 261 箱、1 车自己就占 21.3 天，预警线须压到 2,262 箱）。│ v401: 按用户 2026-10-15 要求撤销 v398「风险库存下降与下水道订单(ZDTA)联动」，恢复加该功能之前的样子（用户原话：「当月下水道出货请删除，恢复原来的模式」，截图红框标注「⬇ 风险库存下降 TOP 10」表最右列）。①删表格列：第 8 列「当月下水道出货」的 th + colgroup 90px 列 + riskRowHtml 的 _zdtaCell 单元格 + 其上方 _zdtaMap 统计块（含 cov7.reportMonth 口径匹配），riskDownHtml 的 colspan 8→7；②删方案A：drillRiskSkuDetail 的 window._drillZdta 数据块 与 renderDrillModal 的「🚰 当月下水道订单出货（ZDTA…）」明细区块（v399 的 _isRdc 守卫随功能一并移除）。③**保留不动**：既有订单类型解析（其他订单 G列 ZDTA-特殊价格标准订单 → orderType='特殊价格订单'，L1776/1803/4367/4933）及「其他订单」「订单数据洞察」页完全未受影响。④验证：grep 确认 _zdta/_drillZdta/showZdta/当月下水道出货 零残留；node --check + syntax-check 0 错；verify-page-runtime 14 页签 0 运行时错误；下降表恢复 7 列、表头与上涨表一致。DB_VERSION 不动（无 sheet/字段语义变更，纯前端删列）。│ v400: 分仓计划监控月份下拉支持历史月（方案A，用户 2026-10-14 裁定）。背景：下拉原只来自当前快照 cov7 需求月列（截断≤当前月后仅剩 1 项）。新增 planMonthOptionsExt/planMonthResolved 单一出口：历史月 = 旧快照槽 cov5(7月末)/cov6(8月末) 的首需求月（当前 8月/9月，随快照滚动自动前移），与当前窗口选项拼接；5 个消费方（planTabBarHtml 下拉 / renderPlanMonitor / buildPlanSkuAgg / buildPlanOptimAdvice / renderPlanAdvice）全部改走该出口。历史月口径：计划 = 「分仓计划」sheet 该月列（2026-08 段1 / 2026-09 段2，实测源表在）+ 旧快照 cov 字段回退（行源随月切 cov5/cov6）；分子 = 当月已放行订单量（实际出货源表只保留当月 MTD，实测 demand.json actualShip 仅含 2026-10）→ planMonthShipOf 统一回退并诚实标注（页头黄标 / KPI 卡「订单量口径·历史月」/ 下拉「（历史）」后缀）；demand.json 未就绪警示块历史月不再显示。当前/未来月行为零变化（planMonthShipOf 仍严格实际出货、取不到即 0）。MTD 曲线历史月无快照 → 既有诚实空态照常。│ v399: 风险库存下钻弹窗（drillRiskSkuDetail/renderDrillModal risk 分支）ZDTA 区块 RDC 筛选守卫与风险行统一为 window._isRdc||'all'——修 _isRdc 未初始化(undefined)时下水道明细被静默过滤成「当月无下水道订单出货」、区块标题打出 "undefined" 的隐患。配套排查结论（2026-10-14）：用户报「点击有下水道出货的 SKU 报错」，本地+线上(BUILD 398)真实 DOM 点击 40210/40209/40211 及全部 15 个 ZDTA SKU × 海南筛选组合共 30+ 次探针，0 报错、弹窗渲染正常，未能复现；待用户提供确切报错文案/截图。│ v397: 「常规品」名单 —— 用户 2026-10-11 在产品数据里新增「常规品」sheet（28 个 SKU），原话：「这里面的产品都是现在是促销装和新品，但是是按分仓需求补货的，因此在慢动品分析和补货建议模块将这些SKU也当做常规品计算。后续我会在这个sheet中定期更新数据」。①数据链路做成**纯数据驱动**（禁止前端硬编码 SKU）：产品.xlsx「常规品」sheet（无表头两列 产品编码/产品名称）→ generate_data_json.mjs buildProductMaster() 产出 conventionalSkus → data.json.conventionalSkus → parseExcel(data.json) → dataStore.conventionalSkus（saveToIDB/loadFromIDB 成对持久化，v179/v181 铁律）→ isConventionalSku()。②生效点为**两处同源副本**：isExcludedProduct()（慢动品分析）与 computeStatusDerived 内的 _isExcluded()（慢动诊断 / 分仓计划监控慢动徽标 / 分仓计划优化建议 C6）；命中名单即直接判「不排除」，覆盖 供应链属性 / 生命周期标签 / 覆盖周数分类 三处判据。补货建议页 renderReplenishment 自身**无品类排除逻辑**（已 grep 确认 L12120~12970 无 促销装/非卖品/新品期），其受影响路径是该页「下调预警」所复用的 buildPlanOptimAdvice C6 慢动品维。③顺带修一个静默陷阱：源哈希记忆此前只记 data*.xlsx 自身哈希，而 data.json 的产物还依赖 产品.xlsx → 用户「只更新产品数据、不更新订单」时会被**静默跳过**、新名单永远进不了 data.json（同类静默陷阱见 v391）。现把 产品.xlsx 哈希并入 data.json 的跳过键。④实测影响面（9月/8月库存覆盖表，离线复刻前端口径复算）：9月表名单内 21 个 SKU 的「供应链属性」**本就是常规品**、当前 0 行被排除 → 本次零变化；8月表有 15 行被标促销装，其中 1 行（西北仓×10294，覆盖>6个月）因此新进慢动品 → 慢动品行数 534→535、excludedCount 598→583。即该名单是**长期口径保险**（实测源系统同一 SKU 会随月份在 常规品/促销装 之间反复）。⑤产品数据同步：桌面 产品1010.xlsx 是 36 列 SAP 全量导出格式（0908 起即为此格式，项目此前一直未同步 0908），只含「产品列表」+「常规品」，**不含「单价」「淘汰品」**，且其「成本价/产品单价」与旧「单价」sheet 不等价（2027 个可比样本仅 2 个相等）、「当前生命周期」整列为空 → 无法派生；直接覆盖会让 data.json 的 priceMap 9093→0、discontinuedMap 530→0（前端「拉回数据」金额换算、慢动品页「是否淘汰」筛选会静默降级）。故 产品.xlsx 采用**无损合成**：产品列表/常规品 取 1010 版，单价/淘汰品 沿用历史版本（已逐键实测 priceMap/discontinuedMap 前后完全一致）。boxSpec 9774→9490（仅旧的 307 个已确认 100% 被「基础数据」箱规覆盖，零影响）、brand/abc 10643→10294。DB_VERSION 不动（无 sheet/字段语义变更；data.json 内容变化会走逐文件哈希比对自动补拉，老用户可自愈，无需 20~30s 全量重拉）。│ v396: 库存覆盖图新增「按品牌堆叠」维度（用户 2026-10-10 要求：「红框处增加一个按品牌展示库存覆盖的维度。选择按品牌展示，则柱状图切换为品牌展示。数据同样要求能下钻，下钻后先展示RDC维度数据，再展示SKU明细」）。①原图只有「按 RDC 堆叠」一维，现于图例区新增「展示维度：按 RDC / 按品牌」切换按钮组（常驻显示），色块图例跟随维度切换；②按品牌展示时堆叠段 = 归一化品牌 —— 走全局 normalizeBrandName（百爱神/海鸥/雅霜/友谊/春蕾/传统品牌 一并归入「传统」，即页面既有口径；用户点名的 5 个小品牌在 9月覆盖表里本就已合并为「传统品牌」）；玉泽/佰草集按用户口径不参与展示（9月覆盖金额仅 65 元 / 1,165 元）；③品牌颜色按「金额降序」固定绑定，勾选切换时柱子不串色；④点击品牌柱下钻 → 「库存覆盖明细」页改造为两层：先给「① RDC 维度」汇总表（RDC / 可用库存金额 / 占比 / SKU 数，点行可再筛到该 RDC 的 SKU 明细，带「已筛选 ✕」可退），再给「② SKU 明细」；⑤绘图逻辑收敛为 renderCovStackedChart 单一入口（原 renderCovChartFromData 与 renderInventoryStructure 内联版两份重复代码合并，避免今后两处漂移）；⑥ structCacheKey 纳入 _covDim / _covSelectedBrands（否则切换维度会读到旧 HTML 缓存）。DB_VERSION 不动（无 sheet/字段语义变更，纯前端维度扩展）。│ v395: 9月库存部署 —— 本机首次「库存月份窗口整体平移」（8月窗口 → 9月窗口）。①数据侧：inventory.xlsx 换为 9月版（合并保留历史：拉回数据含 1-9月、转储数据含 7-9月、库存金额保留 2025 全年 + 2026 1-9月，新增「9月库存覆盖数据」「9月库存状态分析」两表）。②代码侧：cov5/6/7 三个「位置语义」槽位指向的表整体右移一月（cov7 从 8月表 → 9月表），全站约 30 处月份硬编码改为**按数据自带的 reportMonth 推导**（新增 covSnapMonthLabel / covFutureRangeText / covFutureFieldRange 助手；parseCoverageSheet 增产 reportMonth + monthHint；parseCoverageSheet 的 COV_MONTH_MAP 补 cov15=2027-03）。③顺带修掉三个「模板一换月就静默错」的老 bug：(a) `parseInventoryTurnoverSheet` 右表探测上界写死 `c<=10`，9月模板「出货成本统计」在**索引11** → 右表(出货成本)整段读错，放宽到 c<=20；(b) v276 起 cov7 槽装的已是当月新表，但「未来6月需求」硬编码 cov08..cov13 未跟着平移 → 一直多算当月、少算最后一个需求月，改按数据推导；(c) getCovMonthConfig 三分支按「covN 的 N 直接当月份」写，与 v276 后的实际装表错位一月 → 仅作老缓存兜底并已按新窗口改写。④端点文案（卡片标题/口径说明/讲解页）全部改为动态取值，避免下次换月再手改。DB_VERSION 234→235（cov 槽位语义与新增字段变化，老 IDB 无法自愈）。│ v394: 🔴 修复「跨月部署后老用户永远停在旧月」（用户 2026-10-10 报「总仪表盘还是9月的数据」，当天正是 9月→10月 的首次跨月切换）。现象：线上数据文件已 100% 是 10 月（三个 json 哈希全对、响应头 no-cache 无任何 CDN/HTTP 缓存层），新用户/清缓存用户看到 2026-10-09，而老用户仍显示 2026-09-28、月度满足率 98.2%（9 月值）。【根因】老用户 IDB 缓存里只有 5~9 月 → loadFromIDB() 末尾的 detectAllMonths() 在「后台补拉新数据之前」就把 _latestMonth 判为 '2026-09' → 紧随其后的 bootLoad 自动选中逻辑把 filters.dataMonth 从 'all' 写成 '2026-09'；随后 refreshFromManifest 拉到 10 月数据、_latestMonth 更新为 '2026-10'，但全部 5 处自动跟随点的判据都是 `filters.dataMonth === 'all'`，此刻已不成立 → 全部失效 → **数据其实已经自愈到 10 月，只是没有任何地方把 dataMonth 拉回来**，于是总览/缺货日期/各页月度口径全部停在 9 月，且用户端没有任何自愈路径。【为何直到今天才暴露】月内更新时 _latestMonth 不变，只有跨月切换（最新月变化）才会触发，所以这是首次出现。【修法】判据从「filters.dataMonth 是否仍为 all」改为「用户是否手动选过月份」：新增 window._monthUserLocked（内存标记，刷新页面即复位）+ autoSelectLatestMonth()，5 处自动跟随点统一改走它（没选过 → 每次都跟随最新月；选过 → 尊重用户选择不被后台刷新覆盖）；onGlobalMonthChange 里手动切换（含选「全部月份」）置 lock=true。DB_VERSION 不动（无 sheet/字段语义变更）。│ v393: 「补货调整跟踪」按补货批次图 —— 点击红色「窗口缺货(箱)」柱可下钻到该批次的缺货明细（用户 2026-09-30 要求：「点击窗口缺货红色柱子后，能跳转到相对应的缺货数据（可在调整明细中显示）」）。实现：①`_adjState` 新增 `batchShort`；②`_adjFiltered` 加 `st.batchShort` 分支，判据 `cut>0 && status!=='未开始' && shortBoxes>0` —— 🔴 **与红柱逐字同源**（红柱 = cuts.filter(date===b && status!=='未开始').sum(shortBoxes)，滤掉 shortBoxes=0 的行不改合计）→ 明细「窗口缺货合计」恒等于红柱柱值，探针据此逐位对拍；注意**不复用**归因表的 `_adjState.short`（它要求 status==='已完成'，而红柱含「进行中」，复用会数字对不上）；③`ch3.on('click')` 只对 `seriesIndex===1` 生效（粉柱「扣减量」保持不可点，不擅自扩展），批次值用 `p.dataIndex` 回查 `batchAsc`（v389 铁律：**绝不用 p.name**）；④置 `_adjJumpDetail` 复用 v347 的一次性滚动+高亮；⑤红柱加 `cursor:'pointer'`、卡片标题补「点红色柱可下钻该批次缺货明细」（v244 教训：功能存在≠可发现）；⑥明细徽标补「（批次 X）」+ 新增可点的「仅看窗口缺货 ✕」出口，换批次下拉时自动复位 batchShort（v354 红线：筛选态必须「可见 + 可退」）。│ v392: 🔴 修复「月底压货商品分析」TAB 筛选栏数字不随 RDC 联动（用户 2026-09-30 报「选了RDC，希望筛选框的数字能和RDC实际对齐，而不是整体数据」）。现象：选「东北RDC」后象限按钮仍显示全局 全部345 / A15 / B66 / C72 / D192，右下角仍写「共 345 个 SKU×RDC」，而列表实际只有 14 个 → 筛选栏与自己的清单自相矛盾。根因：renderMonthendAnalysis 里象限按钮取 `rowsAll.length` 与 `prof.counts`（全局），而 `rows` 才套 RDC/总仓受限筛选 → 按钮数字与清单不同源。修法：引入 **scope** 概念 —— `rowsScope` = rowsAll 再套「筛选栏里除象限按钮外的全部条件」（RDC + 只看总仓受限），`scopeCounts` 由 rowsScope 派生 → 象限按钮与「共 N」一律改用 scopeCounts；`rows` = rowsScope 再套象限。⚠️ 三种口径必须区分，别混：① scopeCounts = 筛选栏按钮数字（随筛选联动，本次改的）；② counts(=prof.counts) = 页面级「三条实测结论 / 四象限分布卡」的全量口径，**故意不联动**（结论讲的是全样本关系 A vs B 差几倍，切到单仓样本太薄会失去统计意义）；③ rdcQuad = 「各 RDC 象限构成」图，全局，**故意不联动**（否则选一个仓图里只剩一根柱）。口径对齐「缺货四象限」页（那里 q.q1~q.q4 由 allFiltered 派生，天然跟随 RDC/品牌筛选）。另加：筛选生效时「共 N」后标注口径来源（如「（东北RDC）」），并在 4 张象限卡下补一行说明其为全量口径，避免同屏两套象限数字造成困惑。│ v391: 🔴 修复「库存周转」页数据全 null / 最快慢 RDC 显示 9999/0（用户 2026-09-30 报「库存周转数据为乱码」）。根因：parseExcel 挑周转 sheet 的条件过宽 —— `sheetNames.findIndex(n => n.indexOf('库存')>=0 || n.indexOf('周转')>=0)`，只要名字带「库存」就命中；而 data-2026-01~05.json 里有一张叫「库存分析」的 sheet（实测 data-2026-05.json 为 24 行/7 列），于是被当成周转表解析，且下方是**无条件赋值** `dataStore.inventoryTurnover = invData` → 把 inventory-core.json 解析出的正确周转数据**覆盖成废数据**。实测误解析结果与用户截图逐项吻合：月份退化成「7月」(monthCount 兜底值)、三张汇总行(全库位/共享仓/总仓)最新月全为 null、最快/慢 RDC=9999/0。修法四件：①匹配串收紧为只认「周转」（周转表名恒为 2026周转/2025周转）；②parseInventoryTurnoverSheet 新增 matchedRows 计数，一行都没匹配上就 return null（拒绝把无关 sheet 当周转表）；③两处赋值都加 `matchedRows > 0` 断言；④自愈——中毒值已被 saveToIDB 写进 IDB 且 inventory-core.json 哈希未变 → 增量比对判「无变化」→ 永不重解析（v382「纯代码修复对老用户不可见」陷阱第二次出现），故在 refreshFromManifest 加判据「三张汇总行最新月全为 null ⇒ 中毒缓存」→ 强制补拉 inventory-core.json 重新解析。⚠️ 铁律：跨文件解析同名概念时 sheet 名匹配串必须能唯一区分，「库存」「分析」这类高频词不能当唯一标识（同类：v381 列名重复→锚点法）。│ v390: 🔴 修复「月底压货商品分析」TAB 内「总仓供应分级 vs 缺货率」图三根柱完全等高（用户 2026-09-30 从截图看出）。根因：渲染层总仓分桶在 `renderMonthendAnalysis` 里遍历 `rowsAll` 时用 `sp[1] !== r.sku` 回查 prof.wh —— k.split('|') 的 sp[1] 实际是「月」(ym|sku 顺序)，`ym === sku` 恒假 → 循环体永不执行 → whBuckets 三项**只有 n 被计入、oq/sh 永远 0**；而柱值 rate/winRate 取自「总仓缺货/紧张」合并的全局 whBadRate 与「总仓正常」的 whOkRate → 两根坏柱必然同值同高。修法：删掉多余回查，逐档分桶下沉到 whMonthsSet 之后，与「结论②」共用同一趟循环同一口径。修后实测（5-9月）：总仓缺货 15.83%(n=245) / 总仓紧张 18.21%(n=206) / 总仓正常 12.51%(n=537)。⚠️ 34 项探针为何没抓到：只断言「series>0」不看柱值；用户是**看截图**发现的（比探针更眼尖）→ 已补 6 项「图表值正确性」断言（40 项）并做反向验证。│ v389: 🔴 修复「月底压货商品分析」TAB 内「逐月压货达标率」图 tooltip 报错 TypeError: Cannot read properties of undefined (reading 'n')（用户 2026-09-30 报）。根因：formatter 里 `var ym = ps[0].name; var s = monthStat[ym]` —— x 轴 category 标签被 slice(5) 截成 '01'，而 monthStat 的键是完整 '2026-01' → 查不到 → s undefined → s.n 抛错。修法：改用 `mKeys[ps[0].dataIndex]` 回查完整键 + 兜底。🔴 通用铁律：**x 轴显示标签经过截断/格式化后，绝不能拿来当查表键**。⚠️ 原 34 项探针全绿却漏掉此 bug，因为断言只验「图表实例化 + series>0」，**从未真正触发 tooltip formatter**（只在真实 hover 时才执行）→ 新增 tools/verify-monthend-tooltip.cjs（真实 mouse.move 网格扫描），已用未修复的线上版反向验证过能复现该报错。│ v388: 缺货分析新增「月底压货商品分析」TAB —— 三因素（压货脉冲 × 缺货程度 × 总仓供应）。新增 ME_PARAMS/ME_QUAD + 计算层（buildMonthendCells / buildMonthendWarehouse / buildMonthendProfile / getMonthendProfile）+ renderMonthendAnalysis + exportMonthendCSV。四象限：X=压货达标率(≥40%)，Y=缺货率(≥全体P75)，A=重点关注，并给出「总仓所致→找大仓/CDC」vs「分仓自身问题→找RDC」归因。🔴 两项关键口径：①压货脉冲分母用「窗口内实际有单天数」而非固定10天；②总仓分级中「窗口内0天」= 窗口内没缺货（截断数据语义）→ 判「总仓正常」而非「样本不足」。总仓因素仅5-9月有数据，故相关统计一律限定5-9月内比较。│ v387: 按用户 2026-09-26 要求，将「跨仓调拨机会」Tab 从侧边栏隐藏（菜单项注释掉 + 移出 OPS_ALLOWED）。函数/renderPage分支/page div/路由全部保留，恢复只需取消菜单注释并在 OPS_ALLOWED 加回 'transfer-opp'。
 //   【问题①：无订单却显示 0.0%】RDC×渠道统计表在分母=0（该 RDC×渠道在该口径下完全没有订单）时，
 //     旧代码 `dOrder > 0 ? dFirst / dOrder : 0` 直接给 0 → 渲染成红色 0.0%，读起来像"全部缺货"。
 //     实测（2026-09-23）：东北RDC × KA 当日**完全无订单行**（0 行）→ 界面显示 0.0%；
@@ -2372,6 +2372,16 @@ var SAMS_Z = 1.65;    // 统计法：95% 服务水平
 var SAMS_SSU = 1.2;   // 峰值法：余量系数
 var SAMS_COLORS = ['#2563EB', '#10B981', '#F59E0B', '#8B5CF6', '#14B8A6', '#EF4444'];
 
+// 🚚 运输时效（下单 + 提货运输，单位：天）—— 来源：用户 2026-10-15 提供的《山姆前置仓》运输周期表。
+//   表里写「1+4」= 下单 1 天 + 提货运输 4 天 = 5 天，依此类推。
+//   🔴 为什么必须要有它（v408 口径修正）：免租是「**入库起** 30 天内须售罄」，
+//      所以天数必须**从到仓起算**；而在此之前货还在路上跑，在库旧货一直在被消化（每天 dUse 箱）
+//      ⇒ 到仓时的在库 = 预警线 − 日均 × 时效。
+//      旧算法按「下单时点」起算（不扣时效），会**系统性高估**单批售罄天数
+//      （惠州/天津/武汉 多算 5 天、成都 多算 6 天、嘉兴 多算 3 天）。
+//   ⚠ 常州 FDC 不在该表内（表里只有 天津/惠州/嘉兴/武汉/成都）→ 未配置则按 0 天保守估，页面会标注。
+var SAMS_LEAD = { '天津': 5, '惠州': 5, '嘉兴': 3, '武汉': 5, '成都': 6 };
+
 // 周桶表头解析: "2026-09 W1P2 (0901~0906)" → {ym, week, part, short, full, s, e, days}
 //   s/e = 该段真实起止日; days = 该段覆盖天数（满周 7；跨月被切开时是 1~6）
 function samsParseWeekHdr(s) {
@@ -2665,11 +2675,19 @@ function samsRopAt(wh, coverW, st) {
   var firstIdx = -1;
   for (i = 0; i < a.length; i++) if (a[i] != null && mw[i] && mw[i].ok) { firstIdx = i; break; }
 
-  // 🔴 免租合规：6 仓统一「入库起 freeDays 天内须完成售罄」。保守口径 ——
-  //    假设下单时库存正好在预警线水位，且不扣减到货时效（源表无各仓时效数据，扣了会偏乐观）。
-  //    单批售罄天数 = (预警线 + 1 车) ÷ 基准日均。
-  var ropCapFree = dUse > 0 ? st.freeDays * dUse - st.car : null;
-  var batchDays = dUse > 0 ? (rop + st.car) / dUse : null;
+  // 🔴 免租合规：6 仓统一「入库起 freeDays 天内须完成售罄」，所以天数**从到仓起算**（v408 修正）。
+  //   假设下单时库存正好在预警线水位，经 lead 天到仓 → 到仓时的在库 = 预警线 − 日均 × lead。
+  //   实际单批售罄 = (到仓时在库 + 1 车) ÷ 日均 = 静态值 − lead。
+  //   另保留「静态值（从下单起算、不扣时效）」作为**保守上界**对照展示。
+  var _leadKey = samsWhShort(wh.name);
+  var leadKnown = !!(SAMS_LEAD && SAMS_LEAD[_leadKey] != null);
+  var lead = leadKnown ? SAMS_LEAD[_leadKey] : 0;
+  var dTimesLead = dUse * lead;
+  var stockAtArrival = Math.max(0, rop - dTimesLead);        // 到仓时的在库旧货水位
+  var stockoutRisk = dTimesLead > rop;                       // 到货前就断货 ⇒ 覆盖周数不足以覆盖时效
+  var batchDaysCons = dUse > 0 ? (rop + st.car) / dUse : null;              // 保守（下单起算，上界）
+  var batchDays = dUse > 0 ? (stockAtArrival + st.car) / dUse : null;       // 实际（入库起算）
+  var ropCapFree = dUse > 0 ? (st.freeDays + lead) * dUse - st.car : null;  // 上限线随时效后移
 
   return {
     name: wh.name, short: samsWhShort(wh.name), code: wh.code, meta: wh.meta,
@@ -2684,8 +2702,11 @@ function samsRopAt(wh, coverW, st) {
     dropDays: W_use > 0 ? rop / (W_use / 7) : 0,
     reqCoverDays: D,
     ssDays: dUse > 0 ? ssFinal / dUse : 0,          // 安全库存折合天数
-    batchDays: batchDays,
+    batchDays: batchDays,                 // 实际（入库起算，已扣时效）
+    batchDaysCons: batchDaysCons,         // 保守上界（下单起算，不扣时效）
     batchOk: batchDays != null && batchDays <= st.freeDays,
+    lead: lead, leadKnown: leadKnown, stockAtArrival: stockAtArrival, stockoutRisk: stockoutRisk,
+    arrivalStockDays: dUse > 0 ? stockAtArrival / dUse : 0,   // 到仓时在库折合天数
     carAloneDays: dUse > 0 ? st.car / dUse : null,
     ropCapFree: ropCapFree,
     freeOver: ropCapFree != null ? Math.max(0, rop - ropCapFree) : 0,
@@ -2727,7 +2748,8 @@ function samsExportCSV() {
               '基准周均(箱)', '基准日均(箱)', '覆盖周数', '覆盖天数',
               '【1】需求覆盖(箱)', '①统计法(公式值)', '②峰值法(公式值)', '①统计法(已×k)', '②峰值法(已×k)', '安全库存采用', '【2】安全库存(已×k)',
               '基础预警线(箱) = 1+2', '计划调整系数', '预警线(箱)', '预警线折合天数',
-              '单批售罄天数', '免租上限(天)', '免租是否合规', '免租上限预警线(箱)', '需下调(箱)',
+              '运输时效(天)', '到仓时在库(箱)', '单批售罄天数(入库起)', '单批售罄天数(下单起·保守上界)',
+              '免租上限(天)', '免租是否合规', '免租上限预警线(箱)', '需下调(箱)',
               '整车自身天数', '最新周实际(箱)', '参与统计的完整周数', '剔除异常周数', '最新周标签'];
   var lines = [head.join(',')];
   rows.forEach(function (r) {
@@ -2737,7 +2759,9 @@ function samsExportCSV() {
                 Math.round(r.ss1 * r.k), Math.round(r.ss2 * r.k), r.ssPick, Math.round(r.ssFinal),
                 Math.round(r.ropHist), r.k.toFixed(3),
                 Math.round(r.rop), r.dropDays.toFixed(1),
-                r.batchDays.toFixed(1), st.freeDays, (r.batchOk ? '合规' : '超限'),
+                (r.leadKnown ? r.lead : ''), Math.round(r.stockAtArrival),
+                r.batchDays.toFixed(1), r.batchDaysCons.toFixed(1),
+                st.freeDays, (r.batchOk ? '合规' : '超限'),
                 Math.round(r.ropCapFree), Math.round(r.freeOver),
                 r.carAloneDays.toFixed(1), r.lastVal == null ? '' : r.lastVal, r.nActual,
                 (st.useExclude ? r.nExcluded : 0), r.lastWeekLbl].join(','));
@@ -2857,6 +2881,14 @@ function renderSamsFc() {
 
   // ---- 🔴 免租合规告警：单批（1车）售罄天数 > 免租上限 的仓 ----
   var overWh = rows.filter(function (r) { return !r.batchOk; });
+  var noLeadWh = rows.filter(function (r) { return !r.leadKnown; });
+  // v408: 时效未配置的仓 → 明确提示（否则其天数被高估，用户会误判为"离上限很近"）
+  if (noLeadWh.length) {
+    h += '<div style="font-size:11px;color:var(--color-orange);margin-bottom:12px;line-height:1.7">⚠ '
+      + noLeadWh.map(function (r) { return r.short; }).join('、')
+      + ' FDC 的运输时效尚未配置（现按 0 天保守估 ⇒ 单批售罄天数偏高）。'
+      + '补上其「下单+提货运输」时效后，该仓天数会相应减少。</div>';
+  }
   if (overWh.length) {
     h += '<div class="card" style="border-left:4px solid var(--color-red);background:var(--bg-card)">'
        + '<div style="font-size:13px;font-weight:600;color:var(--color-red)">⚠ 免租超限：'
@@ -2864,20 +2896,22 @@ function renderSamsFc() {
        + '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px;line-height:1.9">';
     overWh.forEach(function (r) {
       h += '· <b>' + r.short + '</b>：1 车 ' + F(st.car) + ' 箱 ÷ 日均 ' + F(r.dUse, 0) + ' 箱 = 光这一车就要卖 '
-        + r.carAloneDays.toFixed(1) + ' 天，只剩 ' + (st.freeDays - r.carAloneDays).toFixed(1) + ' 天余量给在库旧货；'
-        + '当前预警线 ' + F(r.rop) + ' 箱（' + r.dropDays.toFixed(1) + ' 天）→ 单批售罄 <b style="color:var(--color-red)">'
+        + r.carAloneDays.toFixed(1) + ' 天（运输时效 ' + (r.leadKnown ? r.lead + ' 天' : '未配置') + '）；'
+        + '到仓时在库 ' + F(r.stockAtArrival) + ' 箱（' + r.arrivalStockDays.toFixed(1) + ' 天）→ 单批售罄 <b style="color:var(--color-red)">'
         + r.batchDays.toFixed(1) + ' 天</b>，超限 ' + (r.batchDays - st.freeDays).toFixed(1) + ' 天。<br>'
         + '<span style="padding-left:14px">→ 该仓预警线须压到 <b>' + F(r.ropCapFree) + ' 箱</b>（约 '
         + (r.ropCapFree / r.dUse).toFixed(1) + ' 天出货）以内，即需下调 <b>' + F(r.freeOver) + ' 箱</b>。</span><br>';
     });
-    h += '<span style="color:var(--text-secondary)">口径：单批售罄天数 = (预警线 + 1车) ÷ 基准日均，保守估计（不扣减到货时效）。'
-      + '若该仓能谈到「低谷期小批量 / 部分直发」，或实际到货时效可扣减，则实际天数会更低。</span>'
+    h += '<span style="color:var(--text-secondary)">口径（v408 修正）：单批售罄天数**从入库（到仓）起算** = (到仓时在库 + 1车) ÷ 基准日均，'
+      + '其中到仓时在库 = 预警线 − 日均 × 运输时效（货在路上的这些天，在库旧货仍在被消化）。'
+      + '若该仓能谈到「低谷期小批量 / 部分直发」，实际天数会更低。</span>'
       + '</div></div>';
   } else {
     h += '<div class="card" style="border-left:4px solid var(--color-green);padding:12px 20px">'
        + '<span style="font-size:12px;color:var(--color-green);font-weight:600">✅ 免租合规：6 个仓的单批售罄天数均在 '
        + st.freeDays + ' 天以内</span>'
-       + '<span style="font-size:11px;color:var(--text-secondary);margin-left:10px">（口径：单批售罄天数 = (预警线 + 1车) ÷ 基准日均，保守估计）</span>'
+       + '<span style="font-size:11px;color:var(--text-secondary);margin-left:10px">（口径 v408：单批售罄天数自「入库（到仓）」起算，已扣掉各仓运输时效'
+       + (noLeadWh.length ? '；' + noLeadWh.map(function (r) { return r.short; }).join('、') + ' 时效未配置，按 0 天保守估' : '') + '）</span>'
        + '</div>';
   }
 
@@ -2902,7 +2936,8 @@ function renderSamsFc() {
        +   '安全库存 <b style="color:var(--text-primary)">' + F(r.ssFinal) + '</b>（' + r.ssDays.toFixed(1) + ' 天·' + r.ssPick + '）<br>'
        +   '折合 <b>' + r.dropDays.toFixed(1) + '</b> 天 ＝ ' + r.reqCoverDays + ' + ' + r.ssDays.toFixed(1) + '<br>'
        +   '单批售罄 <b style="color:' + (r.batchOk ? 'var(--color-green)' : 'var(--color-red)') + '">'
-       +   r.batchDays.toFixed(1) + '</b>/' + st.freeDays + ' 天 ' + (r.batchOk ? '✅' : '❌') + '<br>'
+       +   r.batchDays.toFixed(1) + '</b>/' + st.freeDays + ' 天 ' + (r.batchOk ? '✅' : '❌')
+       +   '<span style="font-size:10px">（入库起' + (r.leadKnown ? '·扣时效 ' + r.lead + ' 天' : '·时效未配置') + '）</span><br>'
        +   '近' + (st.win > 0 ? st.win + '周' : '全部') + '周均 ' + F(r.W_hist) + ' ｜ 最新周 ' + F(r.lastVal)
        +   (r.lastWeekLbl ? '<span style="font-size:10px">（' + r.lastWeekLbl + (r.lastIsExcluded ? '·已剔除' : '') + '）</span>' : '') + '<br>'
        +   (r.nExcluded ? '<span style="color:var(--color-orange)">已剔除 ' + r.nExcluded + ' 个异常周，未计入周均/波动/上沿</span><br>' : '')
@@ -2945,7 +2980,9 @@ function renderSamsFc() {
      + '<div id="sams-chart-sens" style="height:320px"></div></div>';
   h += '<div class="card" style="margin-bottom:0"><div class="card-header"><div class="card-title">图4 · 单批售罄天数 vs 免租上限</div></div>'
      + '<div class="card-subtitle" style="margin-bottom:8px">⚠ 本页无库存/在途数据，仅给「应维持的水位线」，不做触发判断。'
-     + '单批售罄 = (预警线 + 1 车) ÷ 基准日均（保守口径，不扣到货时效）</div>'
+     + '单批售罄天数<b>自「入库（到仓）」起算</b> = (到仓时在库 + 1 车) ÷ 基准日均；'
+     + '到仓时在库 = 预警线 − 日均 × 运输时效（下单到到仓这段路上，在库旧货仍在被消化）。'
+     + '红线以下即合规；小字为「从下单起算」的保守上界。</div>'
      + '<div id="sams-chart-free" style="height:320px"></div></div>';
   h += '</div>';
 
@@ -2963,7 +3000,7 @@ function renderSamsFc() {
      + '<th>①统计法<br>安全库存</th><th>②峰值法<br>安全库存</th>'
      + '<th style="background:#FAEEDA">②安全库存<br>(箱·取大)</th>'
      + '<th>= 预警线<br>(基础)</th><th>计划<br>调整</th><th>预警线<br>(执行值)</th>'
-     + '<th>折合<br>天数</th><th>单批售罄<br>(天)</th><th>免租上限<br>线(箱)</th>'
+     + '<th>折合<br>天数</th><th>运输<br>时效(天)</th><th>单批售罄<br>(入库起·天)</th><th>免租上限<br>线(箱)</th>'
      + '<th>最新周<br>实际(箱)</th><th>完整<br>周数</th></tr></thead><tbody>';
   rows.forEach(function (r) {
     h += '<tr>'
@@ -2981,8 +3018,11 @@ function renderSamsFc() {
       + (r.W_plan > 0 ? ((r.k > 1 ? '+' : '') + ((r.k - 1) * 100).toFixed(0) + '%') : '—') + '</td>'
       + '<td style="font-weight:700;color:var(--color-blue)">' + F(r.rop) + '</td>'
       + '<td>' + r.dropDays.toFixed(1) + '</td>'
+      + '<td' + (r.leadKnown ? '' : ' style="color:var(--color-orange)"') + '>' + (r.leadKnown ? r.lead : '未配置')
+      + (r.leadKnown ? '' : '<div style="font-size:10px;color:var(--color-orange)">按0保守</div>') + '</td>'
       + '<td' + (r.batchOk ? '' : ' style="background:#FCE4E4;font-weight:700;color:var(--color-red)"') + '>'
-      + r.batchDays.toFixed(1) + (r.batchOk ? ' ✅' : ' ❌') + '</td>'
+      + r.batchDays.toFixed(1) + (r.batchOk ? ' ✅' : ' ❌')
+      + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">下单起 ' + r.batchDaysCons.toFixed(1) + '</div></td>'
       + '<td' + (r.batchOk ? '' : ' style="color:var(--color-red);font-weight:600"') + '>' + F(r.ropCapFree) + '</td>'
       + '<td>' + F(r.lastVal)
       + (r.lastWeekLbl ? '<div style="font-size:10px;color:var(--text-secondary)">' + r.lastWeekLbl + (r.lastIsExcluded ? '·已剔除' : '') + '</div>' : '') + '</td>'
@@ -2991,7 +3031,7 @@ function renderSamsFc() {
   h += '</tbody><tfoot><tr style="font-weight:700;background:var(--bg-primary)">'
      + '<td style="text-align:left">6 仓合计' + (overWh.length ? '<span style="color:var(--color-red)">（⚠' + overWh.length + '仓）</span>' : '') + '</td>'
      + '<td>' + F(totalWh) + '</td><td colspan="11"></td>'
-     + '<td style="color:var(--color-blue)">' + F(totalRop) + '</td><td colspan="5"></td></tr></tfoot></table></div>'
+     + '<td style="color:var(--color-blue)">' + F(totalRop) + '</td><td colspan="6"></td></tr></tfoot></table></div>'
      + '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">'
      + '注：①②两列<b>已按计划调整系数 k 换算</b>（= 公式值 × k），所以 max(①,②) 恒等于第「②安全库存(取大)」列；'
      + 'k≠1 的仓在格内以小字补出公式原值。预警线（执行值）= ①需求覆盖 + ②安全库存，再乘 k 后与「基础预警线 × k」一致。'
@@ -3052,13 +3092,21 @@ function renderSamsFc() {
      + '①②两段与日均同比例缩放，等价于预警线整体乘以调整系数。'
      + '注意：调整系数只改变<b>绝对水位（箱）</b>，「折合天数」不变 —— 因为它衡量的是「备几天货」这个策略本身。'
      + '<br><br><b>🔴 免租约束（2026-10-15 补充）</b>：6 个仓的库存免租<b>统一从入库起算 ' + st.freeDays + ' 天内须完成出货</b>，'
-     + '所以真正的硬判据是「单批售罄天数」= (预警线 + 1 车 ' + F(st.car) + ' 箱) ÷ 基准日均 ≤ ' + st.freeDays + ' 天，见「图4」。'
-     + '其中<b>光这一车自身</b>就要卖 车容量 ÷ 日均 天，这部分先吃掉额度，剩下的才是留给在库旧货的余量 —— '
-     + '日均越小的仓，这个余量越紧（成都 1 车自己就占 21.3 天，只剩 8.7 天）。'
-     + '为满足免租，各仓预警线上限 = ' + st.freeDays + ' × 基准日均 − 1 车，明细表已逐仓给出「免租上限线」。'
+     + '见「图4」。'
+     + '<br><b>⚠️ 时点口径（v408 修正，很重要）</b>：免租既然从<b>入库</b>起算，天数就必须从<b>到仓</b>起算，不能从「下单」起算 —— '
+     + '从下单到到仓这段时间（运输时效），货还在路上跑，<b>在库旧货仍在按日消化</b>。所以：'
+     + '<br>　到仓时在库 = 预警线 − 基准日均 × 运输时效　⇒　'
+     + '<b>单批售罄天数（入库起）= (到仓时在库 + 1 车 ' + F(st.car) + ' 箱) ÷ 基准日均 = 静态值 − 运输时效</b>。'
+     + '<br>　（旧算法按「下单时点」起算、不扣时效，会**系统性高估**：惠州/天津/武汉 多算 5 天、成都 多算 6 天、嘉兴 多算 3 天。）'
+     + '<br>　运输时效取自用户 2026-10-15 提供的《山姆前置仓》运输周期表（「1+4」= 下单 1 天 + 提货运输 4 天 = 5 天）：'
+     + '天津 5 / 惠州 5 / 嘉兴 3 / 武汉 5 / 成都 6 天；<b>常州 FDC 该表未含 → 按 0 天保守估并在页面标注</b>。'
+     + '<br>其中<b>光这一车自身</b>就要卖 车容量 ÷ 日均 天，这部分先吃掉额度，剩下的才是留给自己旧货的余量 —— '
+     + '日均越小的仓，这个余量越紧（成都 1 车自己就占 18.9 天）。'
+     + '<br>为满足免租，各仓预警线上限 = (' + st.freeDays + ' + 运输时效) × 基准日均 − 1 车，明细表已逐仓给出「免租上限线」。'
      + '<br><br><b>局限</b>：源表只有周出货（实际/计划），<b>没有库存与在途</b>，因此本页输出的是「应维持的库存水位线」，'
      + '不含「当前是否已跌破」的判断。若需触发提示，需补充每日「在库 + 在途」数据。'
-     + '另外单批售罄按<b>最保守口径</b>估（不扣减到货时效），若该仓有时效数据可再扣减，实际会更宽松。'
+     + (noLeadWh.length ? '另外 <b>' + noLeadWh.map(function (r) { return r.short; }).join('、')
+         + ' FDC 的运输时效尚未配置（现按 0 天保守估）</b>，补上后其单批售罄天数会相应减少。' : '')
      + '<br><b>更新方式</b>：替换项目根 <b>sams-demand.xlsx</b> 后重新部署即可，每周更新无须改代码。'
      + '</div>';
 
@@ -3245,7 +3293,8 @@ function samsCharts(data, rows, st) {
           var o = r.short + '<br>';
           o += '单批售罄：<b>' + r.batchDays.toFixed(1) + ' 天</b> / 上限 ' + st.freeDays + ' 天 ' + (r.batchOk ? '✅ 合规' : '❌ 超限') + '<br>';
           o += '　· 整车自身就要卖：' + r.carAloneDays.toFixed(1) + ' 天<br>';
-          o += '　· 在库旧货(预警线水位)：' + r.dropDays.toFixed(1) + ' 天<br>';
+          o += '　· 在库旧货(到仓时，已扣 ' + (r.leadKnown ? r.lead + ' 天' : '0 天·时效未配置') + ' 时效)：' + r.arrivalStockDays.toFixed(1) + ' 天<br>';
+          o += '　· 下单起算的保守上界：' + r.batchDaysCons.toFixed(1) + ' 天<br>';
           o += '预警线：' + Math.round(r.rop) + ' 箱 ｜ 免租上限线：' + Math.round(r.ropCapFree) + ' 箱<br>';
           if (!r.batchOk) o += '<span style="color:#EF4444">→ 需下调 ' + Math.round(r.freeOver) + ' 箱</span>';
           return o;
@@ -3271,9 +3320,9 @@ function samsCharts(data, rows, st) {
         { name: '整车自身天数', type: 'line', symbolSize: 6,
           lineStyle: { width: 2, type: 'dashed', color: cTeal }, itemStyle: { color: cTeal },
           data: rows.map(function (r) { return Number(r.carAloneDays.toFixed(1)); }) },
-        { name: '在库旧货天数(预警线水位)', type: 'line', symbolSize: 6,
+        { name: '在库旧货天数(到仓时)', type: 'line', symbolSize: 6,
           lineStyle: { width: 2, color: cPurple }, itemStyle: { color: cPurple },
-          data: rows.map(function (r) { return Number(r.dropDays.toFixed(1)); }) }
+          data: rows.map(function (r) { return Number(r.arrivalStockDays.toFixed(1)); }) }
       ]
     });
   }
