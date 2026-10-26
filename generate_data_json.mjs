@@ -340,6 +340,41 @@ function parseTransship(srcPath) {
   return { transship: list, generatedAt: new Date().toISOString() };
 }
 
+// ============================================================================
+// v439: 「山姆需求」自动同步 → sams-demand.xlsx（每次「更新订单部署」都刷新）
+// ============================================================================
+// 【为什么加】山姆前置仓补货跟踪页的 samsLoad() 直接 fetch('./sams-demand.xlsx?t=...')，
+//   读的是一个**独立 8KB 文件**，不是 data.json。而 v422 起「山姆需求」已并入月度订单
+//   部署文件（data.xlsx 的「山姆需求」sheet）。此前只在 v422 抽取过一次 →
+//   sams-demand.xlsx 停在 2026-10-18（2026-10-26 实测：实际出货列最新只到 10/12-18，
+//   10/19-25 整周空白），导致山姆预警线的输入（历史周均/σ/上沿 + 未来 DP）长期冻结，
+//   页面「预警线」怎么都不动。根因是「新数据早进 data.json 了，但山姆页没读」。
+// 【怎么修】每次跑本脚本处理 data.xlsx 时，把「山姆需求」sheet 原样导回 sams-demand.xlsx，
+//   前端零改动、不 bump 版本号（纯数据管道修复）。源 sheet 缺失/为空时保留旧文件并告警。
+// 【幂等】内容未变时**不写盘**（xlsx 内嵌写入时间戳，无脑重写会让 git 每次都报改动）。
+function exportSamsDemand(wb) {
+  const sn = (wb.SheetNames || []).find(n => String(n || '').indexOf('山姆需求') >= 0);
+  if (!sn) { console.log('   ⏭️ data.xlsx 无「山姆需求」sheet，保留旧 sams-demand.xlsx'); return; }
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], SHEET_OPTS);
+  if (!aoa || aoa.length < 2) { console.log('   ⚠️「山姆需求」sheet 为空，保留旧 sams-demand.xlsx'); return; }
+  const outPath = path.join(ROOT, 'sams-demand.xlsx');
+  // 幂等闸门：和现有文件内容逐值比对，一致就不写（避免时间戳导致的假改动）
+  if (fs.existsSync(outPath)) {
+    try {
+      const oldWb = XLSX.read(fs.readFileSync(outPath), { type: 'array' });
+      const oldAoa = XLSX.utils.sheet_to_json(oldWb.Sheets[oldWb.SheetNames[0]], SHEET_OPTS);
+      if (JSON.stringify(oldAoa) === JSON.stringify(aoa)) {
+        console.log(`   ⏭️ sams-demand.xlsx 内容未变，跳过写入（源「${sn}」${aoa.length} 行）`);
+        return;
+      }
+    } catch (e) { /* 旧文件损坏 → 走重写 */ }
+  }
+  const wbOut = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbOut, XLSX.utils.aoa_to_sheet(aoa), '需求计划');
+  XLSX.writeFile(wbOut, outPath);
+  console.log(`   ✓ sams-demand.xlsx 已同步（源「${sn}」${aoa.length} 行 × ${(aoa[0] || []).length} 列）`);
+}
+
 function main() {
   // v202 修复 TDZ：manifest 必须在最顶部声明。此前它在 for 循环之后才 const 声明，
   //   不带 --only 时「--only 跳过」循环体不执行（allSources===allSourceFiles）故不报错；
@@ -403,6 +438,11 @@ function main() {
     const _srcKey = currentSrcHash + _extraHash;
     if (hashCache[src] === _srcKey && fs.existsSync(path.join(ROOT, primaryOutJson))) {
       console.log(`   ⏭️ 源未变（哈希一致），跳过：${primaryOutJson}（保留旧 JSON + 旧 manifest 哈希）`);
+      // v439: 源未变也保证 sams-demand.xlsx 存在且与「山姆需求」sheet 一致（防文件被删/被改后不同步）
+      if (base === 'data') {
+        try { exportSamsDemand(XLSX.read(fs.readFileSync(srcPath), { type: 'array' })); }
+        catch (e) { console.error('   ⚠️ sams-demand.xlsx 同步失败：' + e.message); }
+      }
       // v382: 🔴 哈希口径 = 输出 JSON 自身哈希（不再用源 xlsx 哈希）。
       //   这样即使源没变、但 JSON 因代码修复/重跑被重写，哈希也会变 → 客户端强制重拉。
       if (!ON_DEMAND_FILES.has(primaryOutJson)) {
@@ -550,6 +590,11 @@ function main() {
           } catch (e) { /* 跳过不可读历史文件 */ }
         }
       }
+    }
+    // v439: 山姆需求自动同步 —— 每次「更新订单部署」都刷新 sams-demand.xlsx（见函数头说明）
+    if (base === 'data') {
+      try { exportSamsDemand(wb); }
+      catch (e) { console.error('   ⚠️ sams-demand.xlsx 同步失败：' + e.message); }
     }
     fs.writeFileSync(path.join(ROOT, outJson), JSON.stringify(payload));
     // v382: 🔴 哈希口径改为「输出 JSON 自身的哈希」（原为源 xlsx 哈希，见文件顶部 v382 说明）
