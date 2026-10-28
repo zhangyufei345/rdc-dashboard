@@ -77,7 +77,6 @@ function srv() { const s = http.createServer((q, r) => { const rel = decodeURICo
       if (d.firstDayShort) shortMap[k] = (shortMap[k] || 0) + d.firstDayShort;
     });
     const t3 = performance.now();
-    _adjBuildDemandIndex((dataStore.inventory && dataStore.inventory.planBySkuRdc) || {});
     const t4 = performance.now();
     return { coldCompute: Math.round((t1 - t0) * 10) / 10, n: list.length, ordRows: (dataStore.orderDetail || []).length, shortMapMs: Math.round((t3 - t2) * 10) / 10, demandIdxMs: Math.round((t4 - t3) * 10) / 10, keys: Object.keys(shortMap).length };
   });
@@ -108,7 +107,7 @@ function srv() { const s = http.createServer((q, r) => { const rel = decodeURICo
   console.log('  内部调用 =', JSON.stringify(r3.p.t));
   console.log('  明细表渲染行数 =', r3.rows);
   console.log('=== 4) buildAdjComputed 纯冷算 ===');
-  console.log('  ' + r4.coldCompute + ' ms ｜ 记录数 ' + r4.n + ' ｜ 订单行 ' + r4.ordRows); console.log('  其中 shortMap 冷建 = ' + r4.shortMapMs + ' ms（' + r4.keys + ' 键）｜ 需求索引 = ' + r4.demandIdxMs + ' ms');
+  console.log('  ' + r4.coldCompute + ' ms ｜ 记录数 ' + r4.n + ' ｜ 订单行 ' + r4.ordRows); console.log('  其中 shortMap 冷建 = ' + r4.shortMapMs + ' ms（' + r4.keys + ' 键）');
   console.log('=== 5) 排序 / 分页断言 ===');
   console.log('  渲染行数 =', r5.rendered, '｜ 控制条 =', r5.bar);
   console.log('  缺货列前 8 =', JSON.stringify(r5.shortHead), '｜ 单调不增 =', r5.mono ? '✅' : '❌', '｜ 其中 0 值行 =', r5.zeroTail);
