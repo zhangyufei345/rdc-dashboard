@@ -132,6 +132,88 @@ def norm_rdc(s):
         return t
     return s
 
+def merge_archived_months(plan, actualShip, out_path):
+    """把归档 data-YYYY-MM.json 里「分仓需求」sheet 的**该月列**补进 plan / actualShip。
+
+    背景（2026-11-04，用户实测截图）：源表「分仓需求」的实际出货_数量是**当月 MTD**，
+      用户每天覆盖同一个文件、每月切换时上月值随文件被替换 → demand.json 天生只带当月。
+      但归档的 data-YYYY-MM.json 保留了该月工作簿的**完整「分仓需求」sheet**
+      （该 sheet 2026-09 才引入，故 2026-01~08 的归档里没有，属真·不可得）。
+    不补这段的后果：用户在看板把缺货四象限切到历史月时，销售进度分子取不到实际出货
+      → 被静默当成 0 → 显示「完成率 0% / 销售进度落后」→ 归因分析把绝大多数组合误判成
+      「D 需重点排查」（10 月 36 条里 28 条被误判）。
+    规则：
+      · 只取该归档文件**自己那个月**（文件名 YYYY-MM）的列，不碰它带的未来月（那些当月源更新）；
+      · 当月源已覆盖的月份**不覆盖**（用户更新的永远优先）；
+      · 键归一化与主流程完全一致（norm_sku 保留原始编码、norm_rdc 走 RDC_ALIAS）。
+    返回 (补入的 {月份: [计划键数, 出货键数]}, 跳过说明列表)
+    """
+    import re as _re
+    root = os.path.dirname(os.path.abspath(out_path))
+    done, skipped = {}, []
+    if not os.path.isdir(root):
+        return done, skipped
+    for fn in sorted(os.listdir(root)):
+        m = _re.match(r"^data-(\d{4}-\d{2})\.json$", fn)
+        if not m:
+            continue
+        ym = m.group(1)
+        # 当月源已带该月 → 不覆盖
+        cur_plan_hit = any(ym in md for rdcs in plan.values() for md in rdcs.values())
+        cur_ship_hit = any(ym in md for rdcs in actualShip.values() for md in rdcs.values())
+        if cur_ship_hit:
+            skipped.append("%s(当月源已含)" % ym)
+            continue
+        try:
+            with open(os.path.join(root, fn), "r", encoding="utf-8") as fh:
+                arc = json.load(fh)
+        except Exception as e:
+            skipped.append("%s(读取失败:%s)" % (ym, e))
+            continue
+        sheets = arc.get("sheets") or {}
+        rows = sheets.get("分仓需求")
+        if not rows or len(rows) < 2:
+            skipped.append("%s(无分仓需求sheet)" % ym)
+            continue
+        hdr = rows[0] or []
+        hi = {}
+        for i, h in enumerate(hdr):
+            if h is not None:
+                hi[str(h).strip()] = i
+        if "产品 Code" not in hi or "计划仓 Name" not in hi or "计划指标" not in hi or ym not in hi:
+            skipped.append("%s(表头不符/无该月列)" % ym)
+            continue
+        ci, ri, mi, yi = hi["产品 Code"], hi["计划仓 Name"], hi["计划指标"], hi[ym]
+        namei, cati, lifei = hi.get("产品 Name"), hi.get("供应链品类"), hi.get("生命周期标签")
+        np_, ns_ = 0, 0
+        for r in rows[1:]:
+            if not r or r[ci] is None:
+                continue
+            code = norm_sku(r[ci])
+            rdc = norm_rdc(r[ri])
+            if not code or not rdc:
+                continue
+            met = str(r[mi]).strip() if r[mi] is not None else ""
+            v = r[yi] if yi < len(r) else None
+            if v is None or v == "":
+                continue
+            try:
+                fv = float(v)
+            except (ValueError, TypeError):
+                continue
+            if met == PLAN_METRIC:
+                plan.setdefault(code, {}).setdefault(rdc, {})[ym] = fv
+                np_ += 1
+            elif met == SHIP_METRIC:
+                actualShip.setdefault(code, {}).setdefault(rdc, {})[ym] = fv
+                ns_ += 1
+        if np_ or ns_:
+            done[ym] = [np_, ns_]
+        else:
+            skipped.append("%s(该月列为空)" % ym)
+    return done, skipped
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
     out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
@@ -206,12 +288,26 @@ def main():
     plan = {s: v for s, v in plan.items() if v}
     actualShip = {s: {r: v for r, v in rdcs.items() if v} for s, rdcs in actualShip.items()}
     actualShip = {s: v for s, v in actualShip.items() if v}
+
+    # v452: 补历史月（归档 data-YYYY-MM.json 的「分仓需求」sheet）—— 见 merge_archived_months 注释
+    #   ⚠️ 必须先把「源文件自带的月份」记下来 —— demand-history.json 的 MTD 快照只能按**当月**记录，
+    #   若把补进来的历史月也传进去，会把 9 月/10 月的全月合计写到今天（2026-11-04）这条日度点上，
+    #   把曲线污染成「11-04 突然多了 838 万支」。
+    _srcShipMonths = sorted({m for rdcs in actualShip.values() for md in rdcs.values() for m in md.keys()})
+    _arc_done, _arc_skip = merge_archived_months(plan, actualShip, out)
+    plan = {s: {r: v for r, v in rdcs.items() if v} for s, rdcs in plan.items()}
+    plan = {s: v for s, v in plan.items() if v}
+    actualShip = {s: {r: v for r, v in rdcs.items() if v} for s, rdcs in actualShip.items()}
+    actualShip = {s: v for s, v in actualShip.items() if v}
+
     shipMonths = sorted({m for rdcs in actualShip.values() for md in rdcs.values() for m in md.keys()})
+    allPlanMonths = sorted({m for rdcs in plan.values() for md in rdcs.values() for m in md.keys()})
 
     out_obj = {
         "generatedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "source": os.path.basename(src),
         "planMonths": month_cols,
+        "allPlanMonths": allPlanMonths,
         "shipMonths": shipMonths,
         "plan": plan,
         "actualShip": actualShip,
@@ -226,6 +322,11 @@ def main():
     print("✅ 已生成 demand.json（%d 字节）" % sz)
     print("   计划(DC共识): %d SKU / %d SKU×仓 × 月份%s" % (len(plan), sum(len(v) for v in plan.values()), month_cols))
     print("   实际出货:     %d SKU / %d SKU×仓 × 月份%s" % (len(actualShip), sum(len(v) for v in actualShip.values()), out_obj["shipMonths"]))
+    if _arc_done:
+        print("   ↳ v452 补入历史月（归档分仓需求）：%s"
+              % ", ".join("%s[计划%d键/出货%d键]" % (k, v[0], v[1]) for k, v in sorted(_arc_done.items())))
+    if _arc_skip:
+        print("   ↳ 历史月跳过：%s" % ", ".join(_arc_skip))
     # 输出各 RDC 的键数与合计，便于一眼发现「某仓整列消失」（键对不上时的典型症状）
     for label, obj in (("计划", plan), ("实际出货", actualShip)):
         agg = {}
@@ -254,7 +355,8 @@ def main():
 
     # ===== 每日 MTD 快照（demand-history.json）=====
     #   「实际出货」本身是当月累计值，源文件每天覆盖 → 不主动留痕就永远画不出日度曲线。
-    hp, hist = append_history(out, actualShip, shipMonths)
+    #   v452: 只传**源文件自带**的月份（_srcShipMonths），不能传补进来的历史月，否则污染日度曲线。
+    hp, hist = append_history(out, actualShip, _srcShipMonths)
     _d = datetime.date.today().isoformat()
     _pts = ", ".join("%s:%d天" % (m, len(v.get("days", {}))) for m, v in sorted(hist["months"].items()))
     print("✅ 已更新 %s（快照日 %s；累计数据点 %s）" % (HISTORY_FILE, _d, _pts))
