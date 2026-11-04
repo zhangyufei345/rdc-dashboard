@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 /**
+ * ⚠️ 已被 v454 取代：用户要求 D / E 字母互换 —— 本文件断言的 D/E 数量与字母绑定均已作废。
+ *    现行探针：tools/probe-v454-swap.cjs（本地）、tools/probe-v454-online.cjs（线上）。
+ *    本文件保留作 v453 历史证据，不要直接运行（会假红）。
  * v453 验证探针：E「计划口径变动」
  *  ① dp-history.json 能加载（否则 console 有 warn）
  *  ② 2026-10 归因分布应为 A1 9 / A2 6 / C1 18 / C2 8 / D 9 / E 8（清单仍 58 行）
