@@ -69,9 +69,24 @@ function findChromium() {
   console.log('  归因表行数 = ' + r.rows);
   console.log('  运行时错误 ' + errs.length + ' 个' + (errs.length ? ' :: ' + errs.slice(0, 3).join(' | ') : ''));
 
-  const ok = r.ver === 378 && r.loaded === 1658 && r.kpi['调整记录'] === '1658条' &&
-    r.select && r.select.indexOf('超销预警') >= 0 && r.rows === 7 && errs.length === 0 &&
+  // 🔴 动态期望值，禁止写死（2026-11-09 修：原 L72 写死 ver===378 / 1658 条 / 类型含「超销预警」，
+  //    数据一涨必假红，已连续多轮误报"线上复核未通过"）
+  const localAdj = JSON.parse(fs.readFileSync(path.join(ROOT, 'adjustments.json'), 'utf8'));
+  const expCount = (localAdj.adjust || []).length;
+  const expTypes = [...new Set((localAdj.adjust || []).map(x => String(x.adjType || '').trim()).filter(t => t && t !== '0'))];
+  const _mv = fs.readFileSync(path.join(ROOT, 'rdc-dashboard.html'), 'utf8').match(/BUILD_VERSION\s*=\s*(\d+)/);
+  const expVer = _mv ? Number(_mv[1]) : -1;
+  const missingType = expTypes.filter(t => (r.select || []).indexOf(t) < 0);
+
+  const ok = r.ver === expVer && r.loaded === expCount && r.kpi['调整记录'] === expCount + '条' &&
+    missingType.length === 0 && r.rows === expTypes.length && errs.length === 0 &&
     nav.active === 'page-adjust-track' && nav.currentPage === 'adjust-track';
+  if (!ok) {
+    console.log('  期望: ver=' + expVer + ' ｜ 条数=' + expCount + ' ｜ 类型数=' + expTypes.length);
+    console.log('  差异: ver ' + (r.ver === expVer ? 'OK' : '✗') + ' ｜ 条数 ' + (r.loaded === expCount ? 'OK' : '✗')
+      + ' ｜ KPI ' + (r.kpi['调整记录'] === expCount + '条' ? 'OK' : '✗')
+      + ' ｜ 下拉缺失类型 ' + JSON.stringify(missingType) + ' ｜ 归因表行 ' + r.rows + '/' + expTypes.length);
+  }
   console.log(ok ? '\n✅ 线上复核通过' : '\n❌ 线上复核未通过');
 
   const cache = path.join(ROOT, '.cache');
