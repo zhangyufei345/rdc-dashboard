@@ -153,102 +153,125 @@ def _year_label(v):
 
 def stitch_amount(old_rows, new_rows, month, rep):
     """
-    左右两半分别处理，再按行索引对齐。
-    左表(c1-c10): 以 r[1]=='求和项:库存金额_考核' 分块；每块 = 块头 + 旧2025段 + 新2026段
-    右表(c12-c19): 以 r[12]=='是否海南花露水' 分块；每块 = 块头 + 旧2025段 + 新2026段
+    v2（2026-11-11 修 v481 线上事故）：**以旧合并件为完整骨架，只追加目标月**。
+
+    v1 的「切块 + 旧2025段 + 新2026段」重组有两个致命缺陷（用户 17:49 截图报 4 个图异常）：
+      ① left_blocks 从「求和项:库存金额_考核」行切块，每块的
+         「是否海南花露水 / 状态」筛选标签行位于**上一块 2026 段之后**，被 seg26 截断丢弃
+         → 前端 amountTrendBlocks 4 块的 hainan/status 全兜底成 (全部)
+         → 选「不含海南花露水 + 仅非风险库存」匹配不到块，库存金额趋势/双轴图全 0。
+      ② 右表 2026 段整体换成新模板，而 10 月模板右表第一块**本身缺 2 月**
+         → 旧件里完好的 2 月被一起丢掉 → 库存结构 1 月错位、2 月消失。
+    v2 保留旧件每一行（表头/筛选标签/2025 全年/2026 历史月/2 月），
+    只在各块 2026 段末尾追加新模板的目标月行；左右两半分别处理后按行对齐。
     """
     W = 19
-    old_rows = [list(r)[:W] + [None] * max(0, W - len(r)) for r in old_rows]
-    new_rows = [list(r)[:W] + [None] * max(0, W - len(r)) for r in new_rows]
 
-    # ---- 左半：按透视块拼接 ----
-    def left_blocks(rows):
-        starts = [i for i, r in enumerate(rows)
-                  if str(r[1] or '').strip() == '求和项:库存金额_考核']
-        return [(s, starts[k + 1] if k + 1 < len(starts) else len(rows))
-                for k, s in enumerate(starts)]
+    def pad(rows):
+        return [list(r)[:W] + [None] * max(0, W - len(r)) for r in rows]
 
-    ob, nb = left_blocks(old_rows), left_blocks(new_rows)
-    log('  [左表] 透视块数 旧=%d 新=%d' % (len(ob), len(nb)), rep)
-    if len(ob) != len(nb) or len(ob) != 4:
-        raise RuntimeError('库存金额左表块数异常，拒绝合并')
+    old_rows, new_rows = pad(old_rows), pad(new_rows)
+    L_old = [r[:11] for r in old_rows]        # 左表 c0-10
+    R_old = [r[11:W] for r in old_rows]       # 右表 c11-18（局部 c1 = 全局 c12 行标签）
+    L_new = [r[:11] for r in new_rows]
+    R_new = [r[11:W] for r in new_rows]
+    tag = '%d月' % month
 
-    left_out = []
-    for k, ((os_, oe), (ns, ne)) in enumerate(zip(ob, nb)):
-        oseg, nseg = old_rows[os_:oe], new_rows[ns:ne]
-        # 旧 2025 段：从 '2025年' 行到 '2026年' 行之前
-        yi = [i for i, r in enumerate(oseg) if _year_label(r[1]) == '2025']
-        zi = [i for i, r in enumerate(oseg) if _year_label(r[1]) == '2026']
-        nzi = [i for i, r in enumerate(nseg) if _year_label(r[1]) == '2026']
-        if not (yi and zi and nzi):
-            raise RuntimeError('库存金额左表块%d 年份锚点缺失' % k)
-        y25, y26, ny26 = yi[0], zi[0], nzi[0]
-        seg25 = oseg[y25:y26]
-        # 🔴 左表 2026 段必须截断到**最后一个月份标签行**，不能取到块尾：
-        #   第 4 块没有下一个「求和项」边界，块尾一路延伸到 sheet 末尾（含右表区域），
-        #   若整段取用会拖进 ~100 行空标签行，把左表块撑坏（10月模板实测 108 行 vs 应有 11 行）。
-        seg26_raw = nseg[ny26:]
-        last_month = -1
-        for i, r in enumerate(seg26_raw):
-            if re.match(r'^\d+月$', str(r[1] or '').strip()):
-                last_month = i
-        if last_month < 0:
-            raise RuntimeError('库存金额左表块%d 的 2026 段找不到月份标签行' % k)
-        seg26 = seg26_raw[:last_month + 1]
-        # 骨架：旧块的块头(0..y25) + 2025段 + 新2026段
-        block = oseg[:y25] + seg25 + seg26
-        log('    块%d: 块头%d行 + 2025段%d行 + 新2026段%d行' %
-            (k, y25, len(seg25), len(seg26)), rep)
-        left_out.extend(block)
-        if k == 0:
-            left_head_len = y25  # 表标题行只在第一块头里
-        # 块间补一个空行，避免两块贴太紧（前端按标签扫描，空行无影响）
-        left_out.append([None] * W)
+    def lab(r, c):
+        return str(r[c] or '').strip() if c < len(r) else ''
 
-    # ---- 右半：按 hainanMode 块拼接 ----
-    def right_marks(rows):
-        return [i for i, r in enumerate(rows)
-                if str(r[12] or '').strip() == '是否海南花露水']
+    def is_month(s):
+        return bool(re.match(r'^\d+月$', s))
 
-    om, nm = right_marks(old_rows), right_marks(new_rows)
-    o_ranges = [(0, om[0])] + [(om[0], len(old_rows))] if om else [(0, len(old_rows))]
-    n_ranges = [(0, nm[0])] + [(nm[0], len(new_rows))] if nm else [(0, len(new_rows))]
-    log('  [右表] 结构块数 旧=%d 新=%d' % (len(o_ranges), len(n_ranges)), rep)
+    def blank_row(r):
+        return all(v is None or str(v).strip() == '' for v in r)
+
+    # ---------- 左表：4 个透视块，每块在 2026 段末尾追加 1 行目标月 ----------
+    def sum_starts(L):
+        return [i for i, r in enumerate(L) if lab(r, 1) == '求和项:库存金额_考核']
+
+    os_, ns_ = sum_starts(L_old), sum_starts(L_new)
+    if len(os_) != 4 or len(ns_) != 4:
+        raise RuntimeError('库存金额左表块数异常 旧=%d 新=%d' % (len(os_), len(ns_)))
+    log('  [左表 v2] 保留旧件完整骨架（含 4 组筛选标签），透视块 旧=%d 新=%d' % (len(os_), len(ns_)), rep)
+    L_out = [list(r) for r in L_old[:os_[0]]]  # 表标题 + 第一块的 2 行筛选标签（v482 补：切块起点之前不能丢）
+    for k in range(4):
+        oe = os_[k + 1] if k + 1 < 4 else len(L_old)
+        ne = ns_[k + 1] if k + 1 < 4 else len(L_new)
+        oseg = [list(r) for r in L_old[os_[k]:oe]]
+        nseg = [list(r) for r in L_new[ns_[k]:ne]]
+        y26 = [i for i, r in enumerate(oseg) if _year_label(r[1]) == '2026']
+        nmi = [i for i, r in enumerate(nseg) if lab(r, 1) == tag]
+        if not y26 or not nmi:
+            raise RuntimeError('库存金额左表块%d 年份/目标月锚点缺失' % k)
+        month_idx = [i for i in range(y26[0], len(oseg)) if is_month(lab(oseg[i], 1))]
+        last = month_idx[-1] if month_idx else y26[0]
+        if lab(oseg[last], 1) != tag:
+            oseg.insert(last + 1, list(nseg[nmi[0]][:11]))
+            log('    块%d 追加 %s 行（原 2026 段末月=%s）' % (k, tag, lab(oseg[last - 1] if last > 0 else oseg[last], 1)), rep)
+        L_out.extend(oseg)
+
+    # ---------- 右表：2 个结构块，每块在 2026 段末尾追加目标月块 ----------
+    def hai_marks(R):
+        return [i for i, r in enumerate(R) if lab(r, 1) == '是否海南花露水']
+
+    om, nm = hai_marks(R_old), hai_marks(R_new)
+    o_ranges = [(0, om[0]), (om[0], len(R_old))] if om else [(0, len(R_old))]
+    n_ranges = [(0, nm[0]), (nm[0], len(R_new))] if nm else [(0, len(R_new))]
     if len(o_ranges) != 2 or len(n_ranges) != 2:
-        raise RuntimeError('库存金额右表块数异常，拒绝合并')
+        raise RuntimeError('库存金额右表块数异常 旧=%d 新=%d' % (len(o_ranges), len(n_ranges)))
+    log('  [右表 v2] 保留旧件完整骨架（含 2026 年 2 月），结构块 旧=%d 新=%d' % (len(o_ranges), len(n_ranges)), rep)
 
-    right_out = []
-    for k, ((os_, oe), (ns, ne)) in enumerate(zip(o_ranges, n_ranges)):
-        oseg, nseg = old_rows[os_:oe], new_rows[ns:ne]
-        oy = [i for i, r in enumerate(oseg) if _year_label(r[12]) == '2025']
-        oz = [i for i, r in enumerate(oseg) if _year_label(r[12]) == '2026']
-        ny = [i for i, r in enumerate(nseg) if _year_label(r[12]) == '2026']
-        if not (oy and oz and ny):
-            raise RuntimeError('库存金额右表块%d 年份锚点缺失' % k)
-        seg25 = oseg[oy[0]:oz[0]]
-        seg26 = trim_trailing_blank(nseg[ny[0]:])
-        # 块头：旧块 0..2025年行（含表头/筛选标签）
-        block = oseg[:oy[0]] + seg25 + seg26
-        log('    块%d: 块头%d行 + 2025段%d行 + 新2026段%d行' %
-            (k, oy[0], len(seg25), len(seg26)), rep)
-        right_out.extend(block)
+    def month_block(seg, t):
+        st = next((i for i, r in enumerate(seg) if lab(r, 1) == t), -1)
+        if st < 0:
+            return None
+        en = len(seg)
+        for i in range(st + 1, len(seg)):
+            x = lab(seg[i], 1)
+            if is_month(x) or _year_label(seg[i][1]) or x == '是否海南花露水':
+                en = i
+                break
+        blk = [list(r) for r in seg[st:en]]
+        while blk and blank_row(blk[-1]):
+            blk.pop()
+        return blk
 
-    # ---- 左右按行对齐 ----
-    H = max(len(left_out), len(right_out))
+    R_out = []
+    for k, ((oe0, oe1), (ne0, ne1)) in enumerate(zip(o_ranges, n_ranges)):
+        oseg = [list(r) for r in R_old[oe0:oe1]]
+        nseg = [list(r) for r in R_new[ne0:ne1]]
+        blk = month_block(nseg, tag)
+        if not blk:
+            raise RuntimeError('库存金额右表块%d 模板缺 %s 块' % (k, tag))
+        y26 = [i for i, r in enumerate(oseg) if _year_label(r[1]) == '2026']
+        tail = oseg[y26[0]:] if y26 else []
+        if not any(lab(r, 1) == tag for r in tail):
+            while oseg and blank_row(oseg[-1]):
+                oseg.pop()
+            oseg.extend(blk)
+            log('    块%d 追加 %s 块 %d 行（月份行 + %d 行 RDC 明细）' %
+                (k, tag, len(blk), len(blk) - 1), rep)
+        R_out.extend(oseg)
+
+    # ---------- 左右按行对齐（前端左右各自按标签扫描，行号互不依赖）----------
+    H = max(len(L_out), len(R_out))
     out = []
     for i in range(H):
         r = [None] * W
-        if i < len(left_out):
+        if i < len(L_out):
             for c in range(0, 11):
-                r[c] = left_out[i][c]
-        if i < len(right_out):
+                r[c] = L_out[i][c] if c < len(L_out[i]) else None
+        if i < len(R_out):
+            rr = R_out[i]
             for c in range(11, W):
-                r[c] = right_out[i][c]
+                r[c] = rr[c - 11] if (c - 11) < len(rr) else None
         out.append(r)
     out = trim_trailing_blank(out)
     log('  [对齐] 左%d行 右%d行 -> 输出%d行 x %d列' %
-        (len(left_out), len(right_out), len(out), W), rep)
+        (len(L_out), len(R_out), len(out), W), rep)
     return out
+
 
 
 def main():
