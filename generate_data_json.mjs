@@ -485,11 +485,15 @@ function main() {
       //   注意：cov5/6/7 是**位置语义**，平移后同一位置槽指向新月份的 sheet —— 前端 L15705-15712 必须同步改，
       //   且必须 bump DB_VERSION（老缓存 cov7 非空、长度足够，健康检查判"正常"不会补拉 → 永久停在 8 月）。
       //   本文件路径 = 项目根 inventory.xlsx（= 8月模板合并 9月数据：保留 2025 全年 + 拉回 1-9 月 + 转储 7-9 月）
-      const CORE_SHEETS = ['订单满足率', '2026周转', '2025周转', '库存金额', '库存覆盖', '8月库存覆盖数据', '9月库存覆盖数据'];
+      // v481(10月窗口): 9月=上一月 / 10月=当前月 / 8月=再上一月，7月退出活跃解析。
+      //   inventory.xlsx 由 tools/merge_inventory_month.py 构建：以 9月合并件为底，
+      //   保留产品主数据 10644 行 + 拉回 1-9月 + 转储 7-9月 + 库存金额 2025 全年，追加 10 月增量。
+      //   ⚠️「山姆转储」是模板新增 sheet、前端 0 引用，故意不进白名单（生成器会打一条未分类警告，属预期）。
+      const CORE_SHEETS = ['订单满足率', '2026周转', '2025周转', '库存金额', '库存覆盖', '9月库存覆盖数据', '10月库存覆盖数据'];
       const MASTER_SHEETS = ['基础数据'];
       const PLAN_SHEETS = ['分仓计划'];
-      const EXTRA_SHEETS = ['拉回数据', '转储数据', '7月库存覆盖数据'];
-      const STATUS_SHEETS = ['7月库存状态分析', '8月库存状态分析', '9月库存状态分析'];
+      const EXTRA_SHEETS = ['拉回数据', '转储数据', '8月库存覆盖数据'];
+      const STATUS_SHEETS = ['8月库存状态分析', '9月库存状态分析', '10月库存状态分析'];
       const coreSheets = {}, masterSheets = {}, planSheets = {}, extraSheets = {}, statusSheets = {};
       let coreRows = 0, masterRows = 0, planRows = 0, extraRows = 0, statusRows = 0;
       wb.SheetNames.forEach(name => {
