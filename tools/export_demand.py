@@ -56,6 +56,14 @@ SHIP_METRIC = "实际出货_数量"     # 实际出货（出货量，已合并 �
 
 HISTORY_FILE = "demand-history.json"   # 每日 MTD 实际出货快照（与 demand.json 同目录）
 
+# v479（用户 2026-11-11 确认）：源表「分仓需求」每天随当月一起给出**上月最终值**
+#   （DP_共识数量 + 实际出货_数量 两个指标成对、全 SKU）。历史月值会事后回填，
+#   旧归档 data-YYYY-MM.json 只是当时的快照（实测 5/5 SKU 逐月漂移、10105 整月缺行），
+#   不能当权威。故按月累积一份权威源，生成 demand.json 时优先并入，归档降为兜底。
+#   ⚠️ 此文件只供构建脚本本地使用，页面不读（页面读 demand.json 的 finalMonths 标记），
+#      故不进 manifest、不需部署；但需提交 git 以便换机/重建时保留累积历史。
+FINAL_FILE = "demand-final.json"
+
 
 def snapshot_by_rdc(actualShip, months):
     """把 actualShip({sku:{rdc:{month:qty}}}) 折成 {month: {rdc: 合计}}。"""
@@ -132,7 +140,101 @@ def norm_rdc(s):
         return t
     return s
 
-def merge_archived_months(plan, actualShip, out_path):
+def _src_cur_month(month_cols):
+    """从源表月份列结构推「源当月」：文件固定带 当月 + 未来 2 个月，故 max(列) − 2 个月。
+    ⚠️ 不能用系统日期：跨月部署（如 12-01 交 11 月工作簿）会把当月 MTD 误判成
+       「已完结月最终值」沉淀进权威源。带 T-1 列后 max 仍是未来 2 月，规则不变。
+    """
+    if not month_cols:
+        return datetime.date.today().strftime("%Y-%m")
+    y, m = map(int, max(month_cols).split("-"))
+    m -= 2
+    while m <= 0:
+        m += 12
+        y -= 1
+    return "%04d-%02d" % (y, m)
+
+
+def _month_qty(obj, ym):
+    """从 {sku:{rdc:{month:qty}}} 抽出某月的 {sku:{rdc:qty}}（只留非空数值）。"""
+    out = {}
+    for sk, rdcs in obj.items():
+        for rd, md in rdcs.items():
+            v = md.get(ym)
+            if v is None or v == "":
+                continue
+            try:
+                fv = float(v)
+            except (ValueError, TypeError):
+                continue
+            out.setdefault(sk, {})[rd] = fv
+    return out
+
+
+def load_final(out_path):
+    """读权威已完结月累积源；不存在/损坏则返回空壳（不抛、不阻断部署）。"""
+    fp = os.path.join(os.path.dirname(os.path.abspath(out_path)), FINAL_FILE)
+    d = {"months": {}}
+    if os.path.exists(fp):
+        try:
+            with open(fp, encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as e:
+            print("   ⚠️ %s 解析失败(%s)，按空处理" % (FINAL_FILE, e))
+            d = {"months": {}}
+    if not isinstance(d, dict) or not isinstance(d.get("months"), dict):
+        d = {"months": {}}
+    return fp, d
+
+
+def persist_final_months(fp, final, src_name, plan, actualShip, month_cols, curYM):
+    """把源文件里 < 当月 的「已完结月最终值」按月沉淀进权威源。
+    🔴 必须 DP 与 实际出货 **成对**：只给 DP 不给出货，会让「出货缺记录被当成 0」
+       重新变成假信号（2026-11-11 10105 假命中根因）。不成对的月份拒绝沉淀。
+    返回 (沉淀月份列表, 拒绝说明列表)。
+    """
+    done, reject = [], []
+    for ym in sorted(m for m in month_cols if m < curYM):
+        p = _month_qty(plan, ym)
+        s = _month_qty(actualShip, ym)
+        if not p or not s:
+            reject.append("%s(计划%d键/出货%d键，未成对)" % (ym, len(p), len(s)))
+            continue
+        final["months"][ym] = {
+            "plan": p, "actualShip": s,
+            "source": src_name,
+            "updatedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        done.append(ym)
+    final["generatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    final["note"] = ("权威已完结月累积源：源表「分仓需求」每天随当月一起给出上月最终 "
+                     "DP_共识数量 + 实际出货_数量（两者成对才沉淀）；按月覆盖、跨月累积。"
+                     "生成 demand.json 时优先并入，旧归档快照降为兜底。")
+    if done:
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(final, f, ensure_ascii=False, separators=(",", ":"))
+    return done, reject
+
+
+def merge_final_months(plan, actualShip, final):
+    """把权威源里所有已完结月写回 plan / actualShip（覆盖式，权威优先）。"""
+    done = []
+    for ym in sorted(final.get("months", {})):
+        blk = final["months"][ym] or {}
+        np_ = ns_ = 0
+        for sk, rdcs in (blk.get("plan") or {}).items():
+            for rd, v in rdcs.items():
+                plan.setdefault(sk, {}).setdefault(rd, {})[ym] = float(v)
+                np_ += 1
+        for sk, rdcs in (blk.get("actualShip") or {}).items():
+            for rd, v in rdcs.items():
+                actualShip.setdefault(sk, {}).setdefault(rd, {})[ym] = float(v)
+                ns_ += 1
+        done.append("%s[计划%d键/出货%d键]" % (ym, np_, ns_))
+    return done
+
+
+def merge_archived_months(plan, actualShip, out_path, final_months=None):
     """把归档 data-YYYY-MM.json 里「分仓需求」sheet 的**该月列**补进 plan / actualShip。
 
     背景（2026-11-04，用户实测截图）：源表「分仓需求」的实际出货_数量是**当月 MTD**，
@@ -151,6 +253,7 @@ def merge_archived_months(plan, actualShip, out_path):
     import re as _re
     root = os.path.dirname(os.path.abspath(out_path))
     done, skipped = {}, []
+    final_months = set(final_months or [])
     if not os.path.isdir(root):
         return done, skipped
     for fn in sorted(os.listdir(root)):
@@ -158,11 +261,11 @@ def merge_archived_months(plan, actualShip, out_path):
         if not m:
             continue
         ym = m.group(1)
-        # 当月源已带该月 → 不覆盖
-        cur_plan_hit = any(ym in md for rdcs in plan.values() for md in rdcs.values())
-        cur_ship_hit = any(ym in md for rdcs in actualShip.values() for md in rdcs.values())
-        if cur_ship_hit:
-            skipped.append("%s(当月源已含)" % ym)
+        # v479: 权威已完结月源里已有该月 → 旧归档快照不再参与（否则会覆盖最终值）。
+        #   旧逻辑只看 cur_ship_hit（是否有该月出货）就整月跳过：源只带「上月最终 DP」
+        #   而不带出货时会反过来被归档的旧 DP 覆盖 —— 这是必须修掉的反向覆盖。
+        if ym in final_months:
+            skipped.append("%s(权威源已含)" % ym)
             continue
         try:
             with open(os.path.join(root, fn), "r", encoding="utf-8") as fh:
@@ -201,12 +304,18 @@ def merge_archived_months(plan, actualShip, out_path):
                 fv = float(v)
             except (ValueError, TypeError):
                 continue
+            # v479: 归档只补「源与权威源都没给」的月份，绝不覆盖已在位的值
+            #   （旧逻辑无条件赋值，源文件自带的上月最终 DP 会被旧快照反向覆盖）。
             if met == PLAN_METRIC:
-                plan.setdefault(code, {}).setdefault(rdc, {})[ym] = fv
-                np_ += 1
+                _d = plan.setdefault(code, {}).setdefault(rdc, {})
+                if ym not in _d:
+                    _d[ym] = fv
+                    np_ += 1
             elif met == SHIP_METRIC:
-                actualShip.setdefault(code, {}).setdefault(rdc, {})[ym] = fv
-                ns_ += 1
+                _d = actualShip.setdefault(code, {}).setdefault(rdc, {})
+                if ym not in _d:
+                    _d[ym] = fv
+                    ns_ += 1
         if np_ or ns_:
             done[ym] = [np_, ns_]
         else:
@@ -294,7 +403,14 @@ def main():
     #   若把补进来的历史月也传进去，会把 9 月/10 月的全月合计写到今天（2026-11-04）这条日度点上，
     #   把曲线污染成「11-04 突然多了 838 万支」。
     _srcShipMonths = sorted({m for rdcs in actualShip.values() for md in rdcs.values() for m in md.keys()})
-    _arc_done, _arc_skip = merge_archived_months(plan, actualShip, out)
+    # v479: ①沉淀源文件自带的「上月最终值」→ ②把累积的权威已完结月并入 → ③旧归档只兜底剩余月份
+    _curYM = _src_cur_month(month_cols)   # 源当月（按列结构推，不依赖系统日期）
+    _finalFp, _final = load_final(out)
+    _finalDone, _finalReject = persist_final_months(
+        _finalFp, _final, os.path.basename(src), plan, actualShip, month_cols, _curYM)
+    _finalMerged = merge_final_months(plan, actualShip, _final)
+    _arc_done, _arc_skip = merge_archived_months(
+        plan, actualShip, out, set(_final.get("months", {}).keys()))
     plan = {s: {r: v for r, v in rdcs.items() if v} for s, rdcs in plan.items()}
     plan = {s: v for s, v in plan.items() if v}
     actualShip = {s: {r: v for r, v in rdcs.items() if v} for s, rdcs in actualShip.items()}
@@ -309,6 +425,9 @@ def main():
         "planMonths": month_cols,
         "allPlanMonths": allPlanMonths,
         "shipMonths": shipMonths,
+        # v479: 哪些已完结月是「权威最终值」（来自 demand-final.json 累积），
+        #   页面「销售节奏偏差」判据只接受 finalMonths 里的月份，避免用旧归档快照出假信号。
+        "finalMonths": sorted(_final.get("months", {}).keys()),
         "plan": plan,
         "actualShip": actualShip,
         "meta": meta,
@@ -322,8 +441,15 @@ def main():
     print("✅ 已生成 demand.json（%d 字节）" % sz)
     print("   计划(DC共识): %d SKU / %d SKU×仓 × 月份%s" % (len(plan), sum(len(v) for v in plan.values()), month_cols))
     print("   实际出货:     %d SKU / %d SKU×仓 × 月份%s" % (len(actualShip), sum(len(v) for v in actualShip.values()), out_obj["shipMonths"]))
+    print("   ↳ v479 源当月=%s ｜ 权威已完结月=%s"
+          % (_curYM, ", ".join(sorted(_final.get("months", {}).keys())) or "无"))
+    if _finalDone or _finalMerged:
+        print("   ↳ v479 权威已完结月：本次沉淀[%s] ｜ 并入 %s"
+              % (", ".join(_finalDone) or "无", ", ".join(_finalMerged) or "无"))
+    if _finalReject:
+        print("   ⚠️ v479 拒绝沉淀（DP与实际出货未成对，不能当权威）：%s" % ", ".join(_finalReject))
     if _arc_done:
-        print("   ↳ v452 补入历史月（归档分仓需求）：%s"
+        print("   ↳ v452 补入历史月（归档分仓需求，仅兜底）：%s"
               % ", ".join("%s[计划%d键/出货%d键]" % (k, v[0], v[1]) for k, v in sorted(_arc_done.items())))
     if _arc_skip:
         print("   ↳ 历史月跳过：%s" % ", ".join(_arc_skip))
@@ -356,7 +482,14 @@ def main():
     # ===== 每日 MTD 快照（demand-history.json）=====
     #   「实际出货」本身是当月累计值，源文件每天覆盖 → 不主动留痕就永远画不出日度曲线。
     #   v452: 只传**源文件自带**的月份（_srcShipMonths），不能传补进来的历史月，否则污染日度曲线。
-    hp, hist = append_history(out, actualShip, _srcShipMonths)
+    #   🔴 v479 补漏（2026-11-11 真实 T-1 文件到位后实测）：源表新增「上月最终值」列后，
+    #      _srcShipMonths 会连带含已完结月（如 2026-10）。但 append_history 记的是
+    #      「今天这一天的 MTD 累计值」，上月全月最终值并不是当日 MTD —— 原样传进去会在
+    #      10 月曲线末尾凭空多出 2026-11-11 这个跨月孤立日度点（实测 16→17 天、
+    #      末日从 10-30 漂到 11-11）。已完结月由 demand-final.json 承载，不进日度曲线。
+    #      ⇒ 只记源当月及以后的月份（同日覆盖语义不变）。
+    _histMonths = [m for m in _srcShipMonths if m >= _curYM]
+    hp, hist = append_history(out, actualShip, _histMonths)
     _d = datetime.date.today().isoformat()
     _pts = ", ".join("%s:%d天" % (m, len(v.get("days", {}))) for m, v in sorted(hist["months"].items()))
     print("✅ 已更新 %s（快照日 %s；累计数据点 %s）" % (HISTORY_FILE, _d, _pts))
