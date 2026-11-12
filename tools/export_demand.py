@@ -56,12 +56,16 @@ SHIP_METRIC = "实际出货_数量"     # 实际出货（出货量，已合并 �
 
 HISTORY_FILE = "demand-history.json"   # 每日 MTD 实际出货快照（与 demand.json 同目录）
 
-# v479（用户 2026-11-11 确认）：源表「分仓需求」每天随当月一起给出**上月最终值**
-#   （DP_共识数量 + 实际出货_数量 两个指标成对、全 SKU）。历史月值会事后回填，
-#   旧归档 data-YYYY-MM.json 只是当时的快照（实测 5/5 SKU 逐月漂移、10105 整月缺行），
-#   不能当权威。故按月累积一份权威源，生成 demand.json 时优先并入，归档降为兜底。
-#   ⚠️ 此文件只供构建脚本本地使用，页面不读（页面读 demand.json 的 finalMonths 标记），
-#      故不进 manifest、不需部署；但需提交 git 以便换机/重建时保留累积历史。
+# v479（2026-11-11）：源表「分仓需求」曾每天随当月一起给出**上月最终值**
+#   （DP_共识数量 + 实际出货_数量 两个指标成对、全 SKU）。旧归档 data-YYYY-MM.json
+#   只是当时的快照（实测 5/5 SKU 逐月漂移、10105 整月缺行），不能当权威。
+# 🔴 v483（用户 2026-11-12 裁定）：改成「**上月月末最后一版切片**」为准。
+#   用户每次给的订单文件「分仓需求」只带 当前月 + 后 2 个月（3 列），不再附带上月列；
+#   T-1 权威值改从项目根 data-YYYY-MM.xlsx（月末最后一版切片的归档副本）读取，
+#   按「源当月 − 1」自动定位，每月换月时自动前进，无需用户额外动作。
+#   ⚠️ 该文件只供构建脚本本地使用，页面不读（页面读 demand.json 的 finalMonths 标记，
+#      且 fetch('./demand.json', {cache:'no-cache'}) 每次强拉），故不进 manifest；
+#      但需提交 git 以便换机/重建时保留累积历史。
 FINAL_FILE = "demand-final.json"
 
 
@@ -171,6 +175,72 @@ def _month_qty(obj, ym):
     return out
 
 
+def _prev_month(ym):
+    """源当月 − 1 个月（跨年安全）。"""
+    y, m = map(int, ym.split("-"))
+    m -= 1
+    if m <= 0:
+        m += 12
+        y -= 1
+    return "%04d-%02d" % (y, m)
+
+
+def read_month_slice(out_path, ym):
+    """读「上月月末最后一版切片」的归档副本 data-YYYY-MM.xlsx 的该月分仓需求。
+
+    v483（用户 2026-11-12 裁定）：用户每天只给 当前月+后2个月 三列，
+    T-1 权威值改由这份月末切片承载。该文件是每月换月时从用户月末最后一版
+    订单部署工作簿拷进项目根的归档副本（如 data-2026-10.xlsx = 10-30 09:11 版）。
+    返回 (plan, actualShip, sourceName, err)；缺文件/缺列/未成对 → err 非空。
+    """
+    root = os.path.dirname(os.path.abspath(out_path))
+    fp = os.path.join(root, "data-%s.xlsx" % ym)
+    if not os.path.exists(fp):
+        return None, None, None, "归档切片 data-%s.xlsx 不存在" % ym
+    try:
+        wb = openpyxl.load_workbook(fp, data_only=True, read_only=True)
+        if "分仓需求" not in wb.sheetnames:
+            wb.close()
+            return None, None, None, "归档切片缺「分仓需求」sheet"
+        rows = list(wb["分仓需求"].iter_rows(values_only=True))
+        wb.close()
+    except Exception as e:
+        return None, None, None, "归档切片读取失败(%s)" % e
+    hdr = [str(h).strip() if h is not None else "" for h in rows[0]]
+    need = ("产品 Code", "计划仓 Name", "计划指标", ym)
+    if any(c not in hdr for c in need):
+        return None, None, None, "归档切片缺列 %s" % [c for c in need if c not in hdr]
+    ci, ri, mi, yi = (hdr.index(c) for c in need)
+    _before = sum(_ALIAS_HIT.values())
+    P, S = {}, {}
+    for r in rows[1:]:
+        if r[ci] is None:
+            continue
+        sk = norm_sku(r[ci])
+        rd = norm_rdc(r[ri])
+        met = str(r[mi]).strip() if r[mi] is not None else ""
+        v = r[yi] if yi < len(r) else None
+        if v is None or v == "":
+            continue
+        try:
+            fv = float(v)
+        except (ValueError, TypeError):
+            continue
+        if met == PLAN_METRIC:
+            P.setdefault(sk, {})[rd] = fv
+        elif met == SHIP_METRIC:
+            S.setdefault(sk, {})[rd] = fv
+    _delta = sum(_ALIAS_HIT.values()) - _before
+    print("   ↳ 月末切片 %s：RDC 别名归一命中 %d 行；计划 %d 组合 / 出货 %d 组合"
+          % (os.path.basename(fp), _delta,
+             sum(len(x) for x in P.values()), sum(len(x) for x in S.values())))
+    if not P or not S:
+        return None, None, None, ("%s 计划/出货未成对（%d/%d 组合）"
+                                 % (ym, sum(len(x) for x in P.values()),
+                                    sum(len(x) for x in S.values())))
+    return P, S, os.path.basename(fp), None
+
+
 def load_final(out_path):
     """读权威已完结月累积源；不存在/损坏则返回空壳（不抛、不阻断部署）。"""
     fp = os.path.join(os.path.dirname(os.path.abspath(out_path)), FINAL_FILE)
@@ -187,14 +257,37 @@ def load_final(out_path):
     return fp, d
 
 
-def persist_final_months(fp, final, src_name, plan, actualShip, month_cols, curYM):
-    """把源文件里 < 当月 的「已完结月最终值」按月沉淀进权威源。
+def persist_final_months(fp, final, src_name, plan, actualShip, month_cols, curYM, out_path):
+    """把「已完结月最终值」按月沉淀进权威源，返回 (沉淀月份, 拒绝/告警说明)。
+
+    🔴 v483（用户 2026-11-12 裁定）：T-1 权威值 = **上月月末最后一版切片**，
+       从项目根 data-YYYY-MM.xlsx 读取（用户每天只给 当前月+后2个月 三列，
+       不再在源表里附带上月列）。按「源当月 − 1」自动定位 → 每月换月自动前进。
+       优先级：归档切片 > 当前源表自带的 <当月 列（兼容用户偶尔带列的旧格式）。
     🔴 必须 DP 与 实际出货 **成对**：只给 DP 不给出货，会让「出货缺记录被当成 0」
        重新变成假信号（2026-11-11 10105 假命中根因）。不成对的月份拒绝沉淀。
-    返回 (沉淀月份列表, 拒绝说明列表)。
     """
     done, reject = [], []
+    t1 = _prev_month(curYM)
+    P, S, sl_name, sl_err = read_month_slice(out_path, t1)
+    if P and S:
+        src_tag = sl_name + "（月末最后一版切片）"
+        old = final["months"].get(t1) or {}
+        if not (old.get("plan") == P and old.get("actualShip") == S
+                and old.get("source") == src_tag):
+            final["months"][t1] = {
+                "plan": P, "actualShip": S,
+                "source": src_tag,
+                "updatedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            done.append(t1)
+    else:
+        reject.append("T-1 %s：%s（本次不换月，沿用已有权威月）" % (t1, sl_err))
+    # 兼容旧格式：源表自带 < 当月 的列（用户临时带 上月最终值 时仍可沉淀），
+    # 但已被归档切片接管的月份不再被源表列反向覆盖。
     for ym in sorted(m for m in month_cols if m < curYM):
+        if ym == t1 and P and S:
+            continue
         p = _month_qty(plan, ym)
         s = _month_qty(actualShip, ym)
         if not p or not s:
@@ -207,8 +300,9 @@ def persist_final_months(fp, final, src_name, plan, actualShip, month_cols, curY
         }
         done.append(ym)
     final["generatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    final["note"] = ("权威已完结月累积源：源表「分仓需求」每天随当月一起给出上月最终 "
-                     "DP_共识数量 + 实际出货_数量（两者成对才沉淀）；按月覆盖、跨月累积。"
+    final["note"] = ("权威已完结月累积源：v483 起 T-1 取「上月月末最后一版切片」"
+                     "data-YYYY-MM.xlsx（用户每次只给 当前月+后2个月 三列），"
+                     "DP_共识数量 + 实际出货_数量 成对才沉淀；按月覆盖、跨月累积。"
                      "生成 demand.json 时优先并入，旧归档快照降为兜底。")
     if done:
         with open(fp, "w", encoding="utf-8") as f:
@@ -217,10 +311,18 @@ def persist_final_months(fp, final, src_name, plan, actualShip, month_cols, curY
 
 
 def merge_final_months(plan, actualShip, final):
-    """把权威源里所有已完结月写回 plan / actualShip（覆盖式，权威优先）。"""
+    """把权威源里所有已完结月写回 plan / actualShip（权威优先）。
+
+    🔴 v483：权威月**先清空再写入**。旧版只覆盖交集，换源后旧权威值里独有的
+       SKU×RDC 组合会残留（用户裁定「以月末最后一版切片为准」= 该月必须逐位等于切片）。
+    """
     done = []
     for ym in sorted(final.get("months", {})):
         blk = final["months"][ym] or {}
+        for obj in (plan, actualShip):
+            for sk in list(obj.keys()):
+                for rd in list(obj[sk].keys()):
+                    obj[sk][rd].pop(ym, None)
         np_ = ns_ = 0
         for sk, rdcs in (blk.get("plan") or {}).items():
             for rd, v in rdcs.items():
@@ -407,7 +509,7 @@ def main():
     _curYM = _src_cur_month(month_cols)   # 源当月（按列结构推，不依赖系统日期）
     _finalFp, _final = load_final(out)
     _finalDone, _finalReject = persist_final_months(
-        _finalFp, _final, os.path.basename(src), plan, actualShip, month_cols, _curYM)
+        _finalFp, _final, os.path.basename(src), plan, actualShip, month_cols, _curYM, out)
     _finalMerged = merge_final_months(plan, actualShip, _final)
     _arc_done, _arc_skip = merge_archived_months(
         plan, actualShip, out, set(_final.get("months", {}).keys()))
@@ -441,13 +543,14 @@ def main():
     print("✅ 已生成 demand.json（%d 字节）" % sz)
     print("   计划(DC共识): %d SKU / %d SKU×仓 × 月份%s" % (len(plan), sum(len(v) for v in plan.values()), month_cols))
     print("   实际出货:     %d SKU / %d SKU×仓 × 月份%s" % (len(actualShip), sum(len(v) for v in actualShip.values()), out_obj["shipMonths"]))
-    print("   ↳ v479 源当月=%s ｜ 权威已完结月=%s"
-          % (_curYM, ", ".join(sorted(_final.get("months", {}).keys())) or "无"))
+    print("   ↳ v483 源当月=%s ｜ T-1=%s ｜ 权威已完结月=%s"
+          % (_curYM, _prev_month(_curYM),
+             ", ".join(sorted(_final.get("months", {}).keys())) or "无"))
     if _finalDone or _finalMerged:
-        print("   ↳ v479 权威已完结月：本次沉淀[%s] ｜ 并入 %s"
-              % (", ".join(_finalDone) or "无", ", ".join(_finalMerged) or "无"))
+        print("   ↳ v483 权威已完结月：本次沉淀[%s] ｜ 并入 %s"
+              % (", ".join(_finalDone) or "无（切片内容未变）", ", ".join(_finalMerged) or "无"))
     if _finalReject:
-        print("   ⚠️ v479 拒绝沉淀（DP与实际出货未成对，不能当权威）：%s" % ", ".join(_finalReject))
+        print("   ⚠️ v483 沉淀告警：%s" % ", ".join(_finalReject))
     if _arc_done:
         print("   ↳ v452 补入历史月（归档分仓需求，仅兜底）：%s"
               % ", ".join("%s[计划%d键/出货%d键]" % (k, v[0], v[1]) for k, v in sorted(_arc_done.items())))
