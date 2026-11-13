@@ -19,7 +19,6 @@
 import json
 import os
 import hashlib
-import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, '.cache', '_fdc_sim')
@@ -85,7 +84,9 @@ rules = {
 }
 
 data_obj = {
-    'generatedAt': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    # 🔴 幂等：用源切片链的构建时间，不用「本次运行时间」——否则每次重跑构建
+    #    都会产生一个只改时间戳的 diff，本地 / git / 线上永远对不上。
+    'generatedAt': sim.get('generatedAt', ''),
     'engineSha16': sha16,
     'sku': sim['sku'],
     'unit': sim['unit'],
@@ -180,9 +181,12 @@ engine_js = head + src + tail
 # ---------- 4. 落盘 + 自检 ----------
 p_data = os.path.join(ROOT, 'sams-sim-data.json')
 p_eng = os.path.join(ROOT, 'sams-sim-engine.js')
-with open(p_data, 'w', encoding='utf-8') as f:
+# 🔴 必须强制 LF：Windows 下 open(...,'w') 默认把 \n 写成 \r\n，
+#    git 提交时又归一化成 LF，会出现「本地 73,267 B / 线上 72,262 B」的假不一致
+#    （按行 diff 为 0，纯换行符差异）。固定 newline='\n' 后三端逐字节一致。
+with open(p_data, 'w', encoding='utf-8', newline='\n') as f:
     json.dump(data_obj, f, ensure_ascii=False, separators=(',', ':'))
-with open(p_eng, 'w', encoding='utf-8') as f:
+with open(p_eng, 'w', encoding='utf-8', newline='\n') as f:
     f.write(engine_js)
 
 if sha16 in open(p_eng, encoding='utf-8').read() and data_obj['engineSha16'] == sha16:
