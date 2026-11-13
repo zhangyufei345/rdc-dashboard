@@ -1281,7 +1281,15 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 486;
+const BUILD_VERSION = 487;
+// v487（2026-11-13 用户三张截图裁定，纯展示层，判定逻辑零改动）：
+//   ① 口径说明带改 <details> 默认收起、点开查看；展开状态记在 window._samsSimCaliberOpen，
+//      改参数重算后不会被重置回去。
+//   ② 档位对比表：删「下单/到货次数」，新增「累计订单箱数(箱)」= 三仓真实出货（订单量）合计，
+//      由 samsSimRun() 的 stats[档][仓].shipBoxes 提供。
+//   ③ 库存趋势事件点 3.6px → 5.2px、描边 1 → 1.5（用户「放大一点，看得更清晰」）；
+//      同日三点错位 ±12px 不变，半径和 10.4px < 12px，仍互不相交、各自可 hover。
+//   DB_VERSION 不动（无新增持久化字段）。
 // v486（2026-11-13 用户裁定）：补货模拟「跳开非工作日」。
 //   ① 默认非工作日不补货：周末不新开转储单，补货机会顺延到下一个工作日
 //      （按当天 DP 快照与库存位置重新决策，不是作废）；周末到货入库、真实出货照常入账。
@@ -4942,6 +4950,8 @@ function samsSimRun() {
         w = ACTIVE[i]; var sd = startOf[w];
         var onHand = 0, transit = 0, shortage = 0, started = false;
         var arrivals = {}, rows = [], nOrder = 0, nArrival = 0, boxes = 0;
+        // v487：累计订单箱数 = 该档位下该仓有效区间的真实出货（订单量）合计
+        var shipSum = 0;
         for (var di = 0; di < daily.length; di++) {
           var x = daily[di], day = x.date;
           if (day < sd) {
@@ -4958,7 +4968,7 @@ function samsSimRun() {
           if (arr) { onHand += arr; transit -= arr; delete arrivals[day]; nArrival++; }
           var demand = Number(x.ship[w]) || 0;
           var served = Math.min(Math.max(0, onHand), demand);
-          onHand -= served; shortage += demand - served;
+          onHand -= served; shortage += demand - served; shipSum += demand;
           var invPos = onHand + transit;                            // 库存位置 = 在库 + 在途
           eng.setToday(day); st.data = built[day];
           var r = eng.calc(w, c, invPos, P.coverW); ver.calls++;
@@ -4993,6 +5003,7 @@ function samsSimRun() {
         var last = live[live.length - 1] || {};
         stByWh[w] = {
           cars: boxes / P.car, boxes: boxes, shortage: shortage, orders: nOrder, arrivals: nArrival,
+          shipBoxes: shipSum,
           endOnHand: last.onHand == null ? null : last.onHand,
           endInvPos: last.invPos == null ? null : last.invPos
         };
@@ -5042,9 +5053,16 @@ function samsSimRender() {
   R.axisRange = [kd[0], kd[kd.length - 1]];
   var h = '';
 
-  // ① 口径说明带
-  h += '<div style="font-size:11.5px;line-height:1.85;background:#EFF6FF;border:1px solid #BFDBFE;'
-     + 'color:#1E40AF;padding:10px 14px;border-radius:8px;margin-bottom:12px">'
+  // ① 口径说明带（v487：默认收起，可点开；展开状态记在 window._samsSimCaliberOpen，
+  //   改参数重算后不会被重置回去，用户不用反复展开）
+  h += '<details' + (window._samsSimCaliberOpen ? ' open' : '')
+     + ' ontoggle="window._samsSimCaliberOpen=this.open"'
+     + ' style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;margin-bottom:12px">'
+     + '<summary style="cursor:pointer;padding:9px 14px;font-size:12px;font-weight:600;color:#1E40AF;'
+     + 'list-style:none;display:flex;align-items:center;gap:6px">'
+     + '<span>📋 口径说明</span><span style="font-weight:400;font-size:11px;color:#3B82F6">'
+     + '仿真口径 / 期初假设 / 起点 / 横轴 / 非工作日规则 · 点开查看</span></summary>'
+     + '<div style="font-size:11.5px;line-height:1.85;color:#1E40AF;padding:0 14px 12px">'
      + '✅ <b>完整仿真</b>：预警线 / 安全库存 / 补货车数由本页 <code>samsBuild · samsRopAt</code> '
      + '<b>逐字同源计算</b>（沙箱引擎 sha16 <code>' + samsSimEsc(R.sha16) + '</code>），'
      + '不另写简化公式；模拟的「在库 + 在途」作为当前库存入参代回线上函数。'
@@ -5071,7 +5089,7 @@ function samsSimRender() {
      + '推演仍按自然日全量计算，数值口径零丢失。'
      + '<br>🚫 <b>默认非工作日不补货</b>：周末不新开转储单，补货机会<b>顺延到下一个工作日</b>'
      + '（按当天 DP 与库存位置重新决策，不是作废）；周末的到货入库、真实出货照常入账。'
-     + '</div>';
+     + '</div></details>';
 
   // ② 当前参数摘要
   h += '<div style="font-size:11.5px;color:var(--text-secondary);background:var(--bg-primary);'
@@ -5093,16 +5111,19 @@ function samsSimRender() {
      + '<th style="padding:6px 8px;border:1px solid var(--border-card)">合计车数</th>'
      + '<th style="padding:6px 8px;border:1px solid var(--border-card)">累计补货量(箱)</th>'
      + '<th style="padding:6px 8px;border:1px solid var(--border-card)">未满足需求(箱)</th>'
-     + '<th style="padding:6px 8px;border:1px solid var(--border-card)">下单/到货次数</th>'
+     + '<th title="真实出货（订单量）在有效区间内的合计；来自真实数据，不随覆盖天数变化，'
+     + '所以 6 档数值相同，可用于与「累计补货量」对比"'
+     + ' style="padding:6px 8px;border:1px solid var(--border-card);cursor:help">累计订单箱数(箱)</th>'
      + '<th style="padding:6px 8px;border:1px solid var(--border-card)">期末库存位置(箱)</th>'
      + '</tr></thead><tbody>';
   for (var ci = 0; ci < R.cds.length; ci++) {
     var c = R.cds[ci], s = R.stats[String(c)];
-    var totCar = 0, totBox = 0, totShort = 0, totOrd = 0, totArr = 0, endPos = 0;
+    var totCar = 0, totBox = 0, totShort = 0, totOrd = 0, totArr = 0, endPos = 0, totShip = 0;
     for (var ai = 0; ai < ACTIVE.length; ai++) {
       var q = s[ACTIVE[ai]];
       totCar += q.cars; totBox += q.boxes; totShort += q.shortage;
       totOrd += q.orders; totArr += q.arrivals; endPos += (q.endInvPos || 0);
+      totShip += (q.shipBoxes || 0);   // v487：累计订单箱数（真实出货合计）
     }
     var isCur = (c === R.cur);
     h += '<tr' + (isCur ? ' style="background:#DBEAFE;font-weight:600"' : '') + '>'
@@ -5116,7 +5137,7 @@ function samsSimRender() {
       + '<td style="padding:5px 8px;border:1px solid var(--border-card);text-align:right">' + samsSimNum(totBox) + '</td>'
       + '<td style="padding:5px 8px;border:1px solid var(--border-card);text-align:right;'
       + (totShort > 0 ? 'color:var(--color-red)' : '') + '">' + samsSimNum(totShort) + '</td>'
-      + '<td style="padding:5px 8px;border:1px solid var(--border-card);text-align:right">' + totOrd + ' / ' + totArr + '</td>'
+      + '<td style="padding:5px 8px;border:1px solid var(--border-card);text-align:right">' + samsSimNum(totShip) + '</td>'
       + '<td style="padding:5px 8px;border:1px solid var(--border-card);text-align:right">' + samsSimNum(endPos) + '</td>'
       + '</tr>';
   }
@@ -5269,8 +5290,10 @@ function samsSimSvg(w, rows, cd, R, keep) {
   function mark(cx, cy, color, tip) {
     return '<g data-tip="' + tip + '" style="cursor:help">'
       + '<circle cx="' + f(cx) + '" cy="' + f(cy) + '" r="9" fill="transparent"/>'
-      + '<circle cx="' + f(cx) + '" cy="' + f(cy) + '" r="3.6" fill="' + color
-      + '" stroke="#fff" stroke-width="1"/></g>';
+      // v487：事件点 3.6 → 5.2（用户「放大一点，看得更清晰」）；
+      //   同日三点错位 ±12px、半径和 10.4px < 12px，仍然互不相交、各自可 hover。
+      + '<circle cx="' + f(cx) + '" cy="' + f(cy) + '" r="5.2" fill="' + color
+      + '" stroke="#fff" stroke-width="1.5"/></g>';
   }
 
   var ptsInv = [], ptsOn = [], marks = [];
