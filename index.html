@@ -1281,7 +1281,12 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 492;
+const BUILD_VERSION = 493;
+// v493（2026-11-13 用户质疑「天津预警线有这么高吗？预警线=7天的需求+安全库存，请完整展示」）：
+//   核实：rop = reqCover（未来 D 天需求，D = coverW×7，默认 1 周=7 天）+ ssFinal（安全库存×需求倍率 k）。
+//   本次把 rows 里补存 reqCover / ssFinal / ss1 / ss2 / ssPick / k / D / ssDays / basisWhy，
+//   并在折线 hover 的「预警线」下新增一行拆解： ＝ 未来7天需求 X ＋ 安全库存 Y（统计法，≈Z 天）。
+//   纯展示层，rop 公式与判定零改动。
 // v492（2026-11-13 用户质疑「天津期初 23,895 与 hover 预警线 23,482 差 413」）：
 //   核实后不是数据错，是「时点不同」——期初 = 起算日 10-18 的预警线；hover 的是 10-19 的预警线。
 //   预警线随「当天起算的未来需求窗口」变化：10-18 覆盖需求 39,800 / 安全库存 10,388 → 23,895；
@@ -5010,6 +5015,14 @@ function samsSimRun() {
             rop: Math.round(r.rop * 100) / 100, coverTarget: Math.round(r.coverTarget * 100) / 100,
             coverDemandArr: Math.round(r.coverDemandArr * 100) / 100,
             ssFinalC: Math.round(r.ssFinalC * 100) / 100, coverNeed: Math.round(r.coverNeed * 100) / 100,
+            // v493（用户 2026-11-13「预警线请完整展示」）：把预警线的两段构成也存进来，
+            //   rop = reqCover（未来 D 天需求，D = 覆盖周数×7，默认 7 天）+ ssFinal（安全库存）
+            reqCover: Math.round((r.reqCover || 0) * 100) / 100,
+            ssFinal: Math.round((r.ssFinal || 0) * 100) / 100,
+            ss1: Math.round((r.ss1 || 0) * 100) / 100, ss2: Math.round((r.ss2 || 0) * 100) / 100,
+            ssPick: r.ssPick || '', k: Math.round((r.k == null ? 1 : r.k) * 1000) / 1000,
+            coverDaysRop: r.D || 0, ssDays: Math.round((r.ssDays || 0) * 100) / 100,
+            basisWhy: r.basisWhy || '',
             nCar: isWd ? r.nCar : 0, reqBasis: r.reqBasis, shortage: demand - served, ship: demand,
             excludedShip: 0, dpSnapshotDate: x.dpSnapshotDate, decisionAllowed: x.decisionAllowed[w]
           });
@@ -5321,6 +5334,11 @@ function samsSimSvg(w, rows, cd, R, keep) {
       + (wd ? '' : '|非工作日默认不下转储单，补货机会顺延至下一个工作日')
       + '|到货量 ' + samsSimNum(rr.arrival) + ' 箱'
       + '|预警线 ' + samsSimNum(rr.rop) + ' 箱'
+      // v493（用户 2026-11-13「预警线=7天需求+安全库存，请完整展示」）：把两段构成显式列出
+      + '|　＝ 未来' + (rr.coverDaysRop || 0) + '天需求 ' + samsSimNum(rr.reqCover) + ' 箱'
+      + ' ＋ 安全库存 ' + samsSimNum(rr.ssFinal) + ' 箱'
+      + '（' + (rr.ssPick || '—') + (rr.ssDays ? '，≈' + rr.ssDays + ' 天' : '')
+      + (rr.k != null && Math.abs(rr.k - 1) > 0.001 ? '，需求倍率 k=' + rr.k : '') + '）'
       + '|补货目标 ' + samsSimNum(rr.coverTarget) + ' 箱'
       + '|DP 快照 ' + rr.dpSnapshotDate;
   }
