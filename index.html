@@ -1281,7 +1281,13 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 493;
+const BUILD_VERSION = 494;
+// v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
+//   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
+//   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
+//   其中只有「历史窗口 8→12」「覆盖天数 14→10」与旧默认不同，其余本就一致。
+//   同步把 samsRopAt 兜底、CSV 口径文案、模拟页档位兜底里的 14 改成 10，避免清空输入框后回落旧值。
+//   _samsState 不写 localStorage，刷新即回到本默认值。
 // v493（2026-11-13 用户质疑「天津预警线有这么高吗？预警线=7天的需求+安全库存，请完整展示」）：
 //   核实：rop = reqCover（未来 D 天需求，D = coverW×7，默认 1 周=7 天）+ ssFinal（安全库存×需求倍率 k）。
 //   本次把 rows 里补存 reqCover / ssFinal / ss1 / ss2 / ssPick / k / D / ssDays / basisWhy，
@@ -2868,7 +2874,7 @@ function initChart(id) {
 //   未填仍按「下单瞬间 = 预警线」的水位触发模型假设 —— 两种口径在页面必须可分辨（r.stockSrc = actual/assumed）。
 // =====================================================================================
 window._samsState = {
-  win: 8,            // 历史窗口（周）: 4 / 8 / 12 / 0=全部
+  win: 12,           // 历史窗口（周）: 4 / 8 / 12 / 0=全部（v494 用户 2026-11-13 定默认「近12周」）
   coverW: 1,         // 覆盖周数（唯一决策变量）
   basis: 'plan',     // 基准口径: plan=未来计划优先 / hist=按历史销售覆盖(预警线+车数全走历史) / max=取两者高
   selWh: '__all__',  // 图2 仓选择
@@ -2890,7 +2896,7 @@ window._samsState = {
   //      加上安全库存才是真正不同的口径（D=7 时 6 车 → 9 车）。两套差异点就在 ss 这一项。
   //   🔴 v434（2026-10-18 用户裁定「删掉目标售罄天数的算法」）：target 模式全链路删除，覆盖天数为唯一算法；
   //      「到货后单批售罄 X 天」指标保留（KPI 卡 / 明细表 / 免租校验），见 samsRopAt 内 batchDays。
-  coverDays: 14,     // 覆盖天数（目标库存口径）· 单位：天
+  coverDays: 10,     // 覆盖天数（目标库存口径）· 单位：天（v494 用户 2026-11-13 定默认 10 天）
   csl: 0.95,         // 统计法服务水平（对应公司公式 F⁻¹(csl)；95% → z≈1.6449）
   useExclude: true,  // 是否剔除「异常周」（一次性铺货/促销等非经常性尖峰，清单见 sams-exclude.json）
   // 🔴 v420：【当前库存】各仓「下单那一刻的在库量」（仓短名 → 箱）。用户 2026-10-18 要求做输入口。
@@ -3622,7 +3628,7 @@ function samsRopAt(wh, coverW, st) {
   //     ⇒ D = 覆盖周数×7 时**精确退化成预警线本身**（两个旋钮合成一个），语义最干净。
   //   代价（已知并接受）：补货车 5 天后才到仓，那 7 天窗口已后移，到仓后实际需求 17,259 > 今天起 15,204，
   //     所以"补到今天的预警线"在到仓那天缓冲会薄 2,055 箱（≈0.8 天）——补完仍 ≥ 到仓日的预警线是运气，不是保证。
-  var coverDays = (st.coverDays > 0) ? st.coverDays : 14;
+  var coverDays = (st.coverDays > 0) ? st.coverDays : 10;
   var coverDemandArr = samsCumAt(axToday, coverDays);        // v429：今天起 coverDays 天的累计需求（原 axArr）
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
@@ -3931,7 +3937,7 @@ function samsExportCSV() {
   }
   // v428：算法口径说明 —— 导出文件离开页面后仍要能判断「覆盖天数」列是哪套算法算的（v434 起唯一口径）
   lines.push('');
-  lines.push(['【算法口径】覆盖天数 ' + (st.coverDays > 0 ? st.coverDays : 14) + ' 天（目标水位 ＝ 今天起该天数累计需求 ＋ 安全库存；天数＝覆盖周数×7 时等于预警线）'].join(','));
+  lines.push(['【算法口径】覆盖天数 ' + (st.coverDays > 0 ? st.coverDays : 10) + ' 天（目标水位 ＝ 今天起该天数累计需求 ＋ 安全库存；天数＝覆盖周数×7 时等于预警线）'].join(','));
   var csv = lines.join('\r\n');
   downloadFile('山姆补货跟踪_' + new Date().toISOString().slice(0, 10) + '.csv', csv); // v436: 统一走入口产出 .xlsx
 }
@@ -4930,7 +4936,7 @@ function samsSimRun() {
 
     // 档位 = 固定 5 档 ∪ 用户当前覆盖天数（用户改到 18 天就多跑一档，结果单列）
     var cds = [7, 10, 14, 21, 30];
-    var cur = Math.round(Number(P.coverDays) || 14);
+    var cur = Math.round(Number(P.coverDays) || 10);
     if (cds.indexOf(cur) < 0) { cds.push(cur); cds.sort(function (a, b) { return a - b; }); }
 
     // 逐仓起点：该仓首次有正数 DP 共识的日期（不把三仓拉平）
