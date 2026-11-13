@@ -169,6 +169,10 @@ def append_today():
     if not isinstance(old, dict) or not isinstance(old.get('months'), dict):
         old = {'months': {}}
     hist = old
+    # 幂等闸门必须留存「修改前」的深拷贝：hist 与 old 是同一对象引用，
+    # 直接 old['months'] == hist['months'] 恒为真 → 增量永远写不进去（v453 遗留 bug）
+    import copy
+    old_months = copy.deepcopy(old.get('months', {}))
     today = datetime.date.today().isoformat()
 
     n_add = n_new = n_fs = 0
@@ -202,7 +206,7 @@ def append_today():
     hist['src'] = old.get('src') or 'git history of data.json + 每日部署增量'
     hist['ver'] = 1
     payload = json.dumps(hist, ensure_ascii=False, separators=(',', ':'))
-    if old.get('months') == hist['months']:
+    if old_months == hist['months']:
         print('⏭️ DP 无变化，跳过写入（新增变化点 %d，新键 %d，首次缺货日更新 %d）' % (n_add, n_new, n_fs))
         return 0
     with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
