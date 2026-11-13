@@ -1281,7 +1281,11 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 488;
+const BUILD_VERSION = 489;
+// v489（2026-11-13 用户裁决）：下调分去掉「慢动守卫」0.15 维度，权重全部并入需求衰减（0.30→0.45），
+//   四项合计仍 1.00（滞后 0.35 + 衰减 0.45 + 长期低销 0.10 + 无压力 0.10）。入选线 0.50 不变。
+//   实测全表 2,970 条：入选 42→57 条、退出 0 条、新增里慢动品 0 条。
+//   实例：09854 西南（plan 15,855 / 出货 3,912 / 衰减 0.7 档）旧分 0.494 未进 → 新分 0.599 已入预警。
 // v488（2026-11-13 用户截图）：档位对比表「累计订单箱数(箱)」与「未满足需求(箱)」两列互换位置
 //   （订单箱数在前、未满足需求在后），表头与单元格同步换序，数值口径零改动。
 // v487（2026-11-13 用户三张截图裁定，纯展示层，判定逻辑零改动）：
@@ -26549,7 +26553,15 @@ function buildPlanOptimAdvice() {
     var _devMag = Math.min(Math.max(-_dev, 0), 0.5) / 0.5;       // 归一化到 0~1（滞后 50pt 满分）
     var _ltLow = 1 - Math.min(dims.ltSev || 0, 1);               // 长期低销=1-ltSev
     var _noPressure = (shortQty === 0 && !_cdcShort2) ? 1 : 0;   // 无真缺+无总仓受限
-    var downScore = 0.35 * _devMag + 0.30 * _demandDecay + 0.15 * dims.slowRisk
+    // v489（用户 2026-11-13 裁决）：下调分去掉「慢动守卫」维度，其 0.15 权重全部并入需求衰减
+    //   → 滞后 0.35 + 需求衰减 0.45 + 长期低销 0.10 + 无压力 0.10 = 1.00。
+    //   ① 慢动风险已在「慢动品分析」独立成页，下调预警不必重复计分；
+    //   ② 原慢动守卫是二值 0/1，会把「强衰减但本月还没跌透」的换季品挡在预警线外
+    //      （实例：09854 西南 11 月 plan 15,855 / 出货 3,912 / 衰减 0.7 档，
+    //       旧分 0.494 差 0.006 未进 0.50 预警线）。
+    //   ③ slow 字段未删，明细里仍能看到慢动标记，只是不再参与下调分。
+    //   实测（全表 2,970 条）：入选 42 → 57 条，退出 0 条，新增里慢动品 0 条。
+    var downScore = 0.35 * _devMag + 0.45 * _demandDecay
                   + 0.10 * _ltLow + 0.10 * _noPressure;
 
     var direction = '保持观察';
@@ -26649,7 +26661,7 @@ function buildPlanOptimAdvice() {
       direction = '下调分仓计划'; timeWindow = 'mid';
       var _decayText = _demandDecay >= 0.7 ? '强衰减(预测 1/3 以内)' : (_demandDecay >= 0.4 ? '明显萎缩(1/2)' : (_demandDecay > 0 ? '轻度萎缩' : ''));
       var _decayNote = _decayText ? '含前瞻需求衰减·' + _decayText : '';
-      reasons.push('综合下调分 ' + downScore.toFixed(2) + ' ≥ 0.55' + (_decayNote ? '（' + _decayNote + '）' : '') + '（滞后 ' + (_devMag*100).toFixed(0) + 'pt / 需求衰减 ' + (_demandDecay*100).toFixed(0) + ' / 慢动 ' + (dims.slowRisk*100).toFixed(0) + ' / 长期低销 ' + (_ltLow*100).toFixed(0) + ' / 无压力 ' + (_noPressure*100).toFixed(0) + '），下月下调' + (_demandDecay >= 0.4 ? '防换季/退市前冗余' : ''));
+      reasons.push('综合下调分 ' + downScore.toFixed(2) + ' ≥ 0.55' + (_decayNote ? '（' + _decayNote + '）' : '') + '（滞后 ' + (_devMag*100).toFixed(0) + 'pt / 需求衰减 ' + (_demandDecay*100).toFixed(0) + ' / 长期低销 ' + (_ltLow*100).toFixed(0) + ' / 无压力 ' + (_noPressure*100).toFixed(0) + '；慢动已不计入下调分）' + '，下月下调' + (_demandDecay >= 0.4 ? '防换季/退市前冗余' : ''));
       // v366: 下调幅度与「滞后强度 _devMag」+「需求衰减档」连续正相关，封顶 -50%，消除原"全挤在-10%~-25%"无区分度
       var _decayW = _demandDecay >= 0.7 ? 1.0 : (_demandDecay >= 0.4 ? 0.6 : (_demandDecay > 0 ? 0.3 : 0));
       var _adjDown = -Math.min(0.10 + 0.40 * _devMag + 0.25 * _decayW, 0.5);
@@ -27211,8 +27223,7 @@ function renderPlanAdvice() {
       } else if (r.direction === '下调分仓计划') {
         _dimRows = [
           ['devMag','进度滞后·权重0.35（max-norm 50pt）','#2563EB'],
-          ['demandDecay','需求衰减·权重0.30','#B45309'],
-          ['slowRisk','慢动守卫·权重0.15','#64748B'],
+          ['demandDecay','需求衰减·权重0.45','#B45309'],
           ['ltLow','长期低销·权重0.10','#0891B2'],
           ['noPressure','无真实压力·权重0.10','#475569']
         ];
@@ -27224,8 +27235,7 @@ function renderPlanAdvice() {
         } else {
           _dimRows = [
             ['devMag','进度滞后·权重0.35（max-norm 50pt）','#2563EB'],
-            ['demandDecay','需求衰减·权重0.30','#B45309'],
-            ['slowRisk','慢动守卫·权重0.15','#64748B'],
+            ['demandDecay','需求衰减·权重0.45','#B45309'],
             ['ltLow','长期低销·权重0.10','#0891B2'],
             ['noPressure','无真实压力·权重0.10','#475569']
           ];
@@ -27365,7 +27375,7 @@ function renderPlanAdviceLogic() {
     { tag:'①', color:'#DC2626', title:'持续性真缺货 fast-path', cond:'当月缺货天数≥3（且非总仓受限）', decision:'↑ 上调', note:'命中即上调，不依赖打分——真缺货是硬证据（v313 方案B：脉冲缺货 G3 已取消，持续缺货天数门槛由≥2加严到≥3）' },
     { tag:'②', color:'#DC2626', title:'结构性超销 fast-path', cond:'超销≥50%（comp≥1.50）且 订单分散（非临时大单）', decision:'↑ 上调 · 待评估', note:'即使 upScore 未达 0.55 也上调——卖超了是实操硬证据（v313 方案B：超销门槛由≥20%加严到≥50%）' },
     { tag:'③', color:'#DC2626', title:'上调打分 ≥ 0.55（5 维加权主判定）', cond:'upScore = 缺货0.20 + 严重度0.25 + 超销0.30 + 总仓0.10 + 长期0.15', decision:'↑ 上调 · 本周内', note:'综合多维信号，最常见的主路径上调理由' },
-    { tag:'④', color:'#2563EB', title:'下调打分 ≥ 0.60（5 维加权主判定）', cond:'downScore = 滞后0.35 + 需求衰减0.30 + 慢动0.15 + 长期低销0.10 + 无压力0.10', decision:'↓ 下调', note:'含前瞻需求衰减（未来两月计划均值/当月 <0.33→1.0 等），识别换季/退市前冗余' }
+    { tag:'④', color:'#2563EB', title:'下调打分 ≥ 0.55（4 维加权主判定）', cond:'downScore = 滞后0.35 + 需求衰减0.45 + 长期低销0.10 + 无压力0.10（v489 起去掉慢动守卫 0.15，权重并入需求衰减）', decision:'↓ 下调', note:'含前瞻需求衰减（未来两月计划均值/当月 <0.33→1.0 等），识别换季/退市前冗余' }
   ];
   html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title" style="color:#1D4ED8">⭐ 主路径（打分制）· 按命中优先级排列</span></div><div style="padding:8px 12px 12px">';
   _main.forEach(function(m){
