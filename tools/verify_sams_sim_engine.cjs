@@ -28,6 +28,12 @@ function addDays(iso, n) {
   const d = new RealDate(p[0], p[1] - 1, p[2] + n);
   return [d.getFullYear(), ('0' + (d.getMonth() + 1)).slice(-2), ('0' + d.getDate()).slice(-2)].join('-');
 }
+// v486：必须与页面 samsSimIsWorkday / 离线原型 isWorkday 同口径，否则对拍会变成跑旧调度的假绿。
+function isWorkday(iso) {
+  const p = iso.split('-').map(Number);
+  const w = new RealDate(p[0], p[1] - 1, p[2]).getDay();
+  return w !== 0 && w !== 6;
+}
 
 const eng = SamsSimEngine.create();
 const st = eng.state;
@@ -60,7 +66,7 @@ for (const w of ACTIVE) {
 
 const FIELDS = ['onHand', 'invPos', 'transit', 'order', 'arrival', 'rop', 'coverTarget',
                 'coverDemandArr', 'ssFinalC', 'coverNeed', 'nCar', 'shortage', 'ship'];
-let checked = 0, bad = 0;
+let checked = 0, bad = 0, weekendOrderHits = 0;
 const badSamples = [];
 
 for (const c of CDS) {
@@ -86,7 +92,10 @@ for (const c of CDS) {
       const invPos = onHand + transit;
       eng.setToday(day); st.data = built[day];
       const r = eng.calc(w, c, invPos);
-      const order = x.decisionAllowed[w] ? r.batchBoxes : 0;
+      // v486：非工作日不新开转储单，机会顺延到下一个工作日（与页面、离线原型同口径）。
+      const isWd = isWorkday(day);
+      const order = (isWd && x.decisionAllowed[w]) ? r.batchBoxes : 0;
+      if (!isWd && order > 0) weekendOrderHits++;
       if (order > 0) {
         transit += order;
         const eta = addDays(day, r.lead);
@@ -96,7 +105,7 @@ for (const c of CDS) {
         date: day, active: true, onHand: r2(onHand), invPos: r2(onHand + transit), transit: r2(transit),
         order: r2(order), arrival: r2(arr), rop: r2(r.rop), coverTarget: r2(r.coverTarget),
         coverDemandArr: r2(r.coverDemandArr), ssFinalC: r2(r.ssFinalC), coverNeed: r2(r.coverNeed),
-        nCar: r.nCar, shortage: r2(demand - served), ship: r2(demand)
+        nCar: isWd ? r.nCar : 0, shortage: r2(demand - served), ship: r2(demand)
       });
     }
     const b = BASE.scenarios[String(c)][w];
@@ -126,6 +135,11 @@ console.log('期初预警线 =', JSON.stringify(Object.fromEntries(ACTIVE.map(w 
 console.log('\n===== 数值对拍 %d/%d 逐位一致 =====', checked - bad, checked);
 if (bad) {
   console.log('不一致样本:', JSON.stringify(badSamples, null, 1));
+  process.exit(1);
+}
+console.log('非工作日产生转储单次数 =', weekendOrderHits, '（v486 口径应为 0）');
+if (weekendOrderHits) {
+  console.error('❌ 仍有非工作日补货，说明三处调度口径不同步');
   process.exit(1);
 }
 for (const c of CDS) {
