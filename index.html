@@ -1281,7 +1281,7 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 495;
+const BUILD_VERSION = 496;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -5030,6 +5030,9 @@ function samsSimRun() {
             coverDaysRop: r.D || 0, ssDays: Math.round((r.ssDays || 0) * 100) / 100,
             basisWhy: r.basisWhy || '',
             nCar: isWd ? r.nCar : 0, reqBasis: r.reqBasis, shortage: demand - served, ship: demand,
+            // v496：带上「这笔出货差分覆盖几天」——切片跨天时整笔记在本日，
+            //   不标注会被误读成「当天出了这么多、其它天没出货」。
+            intervalDays: Number(x.shipIntervalDays) || 1,
             excludedShip: 0, dpSnapshotDate: x.dpSnapshotDate, decisionAllowed: x.decisionAllowed[w]
           });
           ver.activeRows++;
@@ -5120,13 +5123,18 @@ function samsSimRender() {
      + '<br>🔄 <b>参数联动</b>：本页参数栏任一改动，会按新参数<b>立即重算</b>下列全部结果'
      + '（本次重算 ' + S.lastMs + ' ms）。'
      + '<br>🖱 <b>鼠标悬停</b>折线任意位置看当日全部数据；悬停彩色点看该类数量：'
-     + '<b style="color:#2563EB">蓝＝下单日（来订单）</b>，订单量＝当日真实出货差分；'
+     + '<b style="color:#2563EB">蓝＝出货日（订单量）</b>，订单量＝当日真实出货差分，'
+     + '<b>切片跨天时整笔记在本日</b>并在柱顶标「·Nd」；'
      + '<b style="color:#EA580C">橙＝转储日</b>，转储量＝按当前参数算出的补货量；'
      + '<b style="color:#16A34A">绿＝到货日</b>，到货量＝实际入库量。'
      + '<br>📅 <b>横轴</b>：非工作日默认跳开（不占横向位置）；'
      + '<b>当天有入库或有出货的周末仍保留</b>并用 <b style="color:#EA580C">橙色刻度</b>标出，'
      + '不丢任何真实数据。被跳开的那些日既无入库、无出货、也无下单，库存本就没变化，'
      + '推演仍按自然日全量计算，数值口径零丢失。'
+     + '<br>📊 <b>v496 新增「每日动作带」</b>（图底部蓝/绿双柱）：出货柱（蓝）与到货柱（绿）<b>分开画</b>，'
+     + '因为净值会被到货抵消 —— 例：惠州 11-01 到货 5,568 箱、11-02 出货 4,176 箱，净值只 +1,392，'
+     + '只看折线会误以为「这几天没出货」；动作带里两根柱子一眼可见。'
+     + '柱顶只标最大的几笔；出货柱标「·4d」＝这笔是 4 天累计（切片差分整笔记在本日），不是单日真实消耗。'
      + '<br>🚫 <b>默认非工作日不补货</b>：周末不新开转储单，补货机会<b>顺延到下一个工作日</b>'
      + '（按当天 DP 与库存位置重新决策，不是作废）；周末的到货入库、真实出货照常入账。'
      + '</div></details>';
@@ -5270,16 +5278,25 @@ function samsSimSvg(w, rows, cd, R, keep) {
   // v486：跳开无事件的非工作日；保留日期由 samsSimKeepDates 三仓聚合，三张图坐标一致。
   //   引擎仍按自然日全量推演，这里只是压缩显示空白，不改任何数值。
   rows = rows.filter(function (q) { return keep[q.date]; });
-  var W = 940, H = 322, L = 76, Rt = 916, T = 62, B = 240;
+  var W = 940, H = 428, L = 76, Rt = 916, T = 62, B = 240;
+  // v496（用户 2026-11-14「必须把实际出货体现出来，库存线要能明显看到下降」）：
+  //   B 以下新增「每日动作带」（AT~AB）：出货柱（蓝）+ 到货柱（绿）。
+  //   动机：切片跨天时整笔记在本日，4,176 箱的出货被 5,568 箱到货抵消后净变化只有 +1,392，
+  //   只画净值会让人误以为"没出货"。把两个动作分开画，量级一眼可见。
+  var AT = 330, AB = 382;
   var n = rows.length, i, r, first = n;
   for (i = 0; i < n; i++) if (rows[i].active) { first = i; break; }
-  var lo = 0, hi = 1, cnt = 0;
+  // v496：y 轴不再从 0 起算（原来 lo=0 会把 4,176 的降幅压到不足 10%），改按实际数据紧贴。
+  var lo = Infinity, hi = -Infinity, cnt = 0;
   for (i = 0; i < n; i++) {
     r = rows[i]; if (!r.active) continue;
     lo = Math.min(lo, r.onHand, r.invPos); hi = Math.max(hi, r.onHand, r.invPos); cnt++;
   }
   if (!cnt) return '<div style="padding:20px;font-size:12px;color:var(--text-secondary)">无有效推演数据</div>';
-  var ymin = lo - Math.max(1, (hi - lo) * 0.10), ymax = hi + Math.max(1, (hi - lo) * 0.10);
+  if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+  // v496：留白 10% → 6%，把纵向尺度让给真实波动。
+  var ypad = Math.max(1, (hi - lo) * 0.06);
+  var ymin = lo - ypad, ymax = hi + ypad;
   function X(k) { return L + (Rt - L) * (k / Math.max(1, n - 1)); }
   function Y(v) { return B - (B - T) * ((v - ymin) / (ymax - ymin)); }
   function f(v) { return Number(v).toFixed(1); }
@@ -5325,6 +5342,59 @@ function samsSimSvg(w, rows, cd, R, keep) {
          + rows[i].date.slice(5).replace('-', '/') + '</text></g>');
   }
 
+  // ---- v496：每日动作带（出货柱 / 到货柱）----
+  //   出货与到货分开画，避免「到货把出货抵消」后净值看不出动作。
+  //   柱顶只标最大的 7 笔，防止 20+ 个数字互相压。
+  var actMax = 0, actList = [];
+  for (i = 0; i < n; i++) {
+    r = rows[i]; if (!r.active) continue;
+    var sv0 = Number(r.ship) || 0, av0 = Number(r.arrival) || 0;
+    actMax = Math.max(actMax, sv0, av0);
+    if (sv0 > 0) actList.push({ i: i, v: sv0, t: 'ship', d: r.intervalDays });
+    if (av0 > 0) actList.push({ i: i, v: av0, t: 'arr' });
+  }
+  actMax = Math.max(1, actMax);
+  actList.sort(function (a, b) { return b.v - a.v; });
+  var actLbl = {};
+  // v496：出货与到货**各自**取前几笔 —— 若混在一起取前 N，到货（多为整车的 5,568）会把
+  //   4,176 这类关键出货挤掉，用户就还是看不到「实际出了多少」。
+  actList.filter(function (x) { return x.t === 'ship'; }).slice(0, 5)
+    .concat(actList.filter(function (x) { return x.t === 'arr'; }).slice(0, 4))
+    .forEach(function (x) { actLbl[x.i + '|' + x.t] = x; });
+  p.push('<text x="' + L + '" y="' + (AB + 15) + '" font-size="10" fill="#374151">'
+    + '每日实际动作（箱）：<tspan fill="#2563EB" font-weight="700">出货</tspan> / '
+    + '<tspan fill="#16A34A" font-weight="700">到货</tspan>'
+    + '　· 柱顶<tspan fill="#EA580C" font-weight="700">橙字</tspan>＝多天累计（切片差分整笔记在本日）</text>');
+  p.push('<line x1="' + L + '" y1="' + AB + '" x2="' + Rt + '" y2="' + AB + '" stroke="#d1d5db"/>');
+  var bw2 = Math.min(9, (Rt - L) / Math.max(1, n - 1) / 4.5);
+  var availH = AB - AT;
+  for (i = 0; i < n; i++) {
+    r = rows[i]; if (!r.active) continue;
+    var ax = X(i);
+    var hA2 = (Number(r.arrival) || 0) / actMax * availH;
+    var hS2 = (Number(r.ship) || 0) / actMax * availH;
+    var lbA = actLbl[i + '|arr'], lbS = actLbl[i + '|ship'];
+    if (hA2 > 0) {
+      p.push('<rect x="' + f(ax + 1) + '" y="' + f(AB - hA2) + '" width="' + f(bw2)
+        + '" height="' + f(hA2) + '" fill="#16A34A" opacity="0.9"/>');
+      if (lbA) {
+        // v496：柱宽仅 9px 装不下 25px 的数字，白字会被柱身裁掉 → 统一标在柱顶上方（深色）。
+        p.push('<text x="' + f(ax + 1 + bw2 / 2) + '" y="' + f(AB - hA2 - 3)
+          + '" font-size="8" fill="#15803D" text-anchor="middle">'
+          + samsSimNum(lbA.v) + '</text>');
+      }
+    }
+    if (hS2 > 0) {
+      p.push('<rect x="' + f(ax - 1 - bw2) + '" y="' + f(AB - hS2) + '" width="' + f(bw2)
+        + '" height="' + f(hS2) + '" fill="#2563EB" opacity="0.9"/>');
+      if (lbS) {
+        p.push('<text x="' + f(ax - 1 - bw2 / 2) + '" y="' + f(AB - hS2 - 3)
+          + '" font-size="8" fill="' + (lbS.d > 1 ? '#EA580C' : '#1D4ED8')
+          + '" text-anchor="middle">' + samsSimNum(lbS.v) + (lbS.d > 1 ? '·' + lbS.d + 'd' : '') + '</text>');
+      }
+    }
+  }
+
   function dayTip(rr) {
     if (!rr.active) {
       return rr.date + '（灰区）|该仓尚未开始推演|不消耗库存 / 不下单'
@@ -5336,6 +5406,7 @@ function samsSimSvg(w, rows, cd, R, keep) {
       + '|在途 ' + samsSimNum(rr.transit) + ' 箱'
       + '|库存位置 ' + samsSimNum(rr.invPos) + ' 箱'
       + '|订单量（当日真实出货）' + samsSimNum(rr.ship) + ' 箱'
+      + (rr.ship > 0 && rr.intervalDays > 1 ? '（' + rr.intervalDays + ' 天累计 · 切片差分整笔记在本日，非单日真实消耗）' : '')
       + '|转储量 ' + samsSimNum(rr.order) + ' 箱（' + rr.nCar + ' 车）'
       + (wd ? '' : '|非工作日默认不下转储单，补货机会顺延至下一个工作日')
       + '|到货量 ' + samsSimNum(rr.arrival) + ' 箱'
@@ -5368,7 +5439,8 @@ function samsSimSvg(w, rows, cd, R, keep) {
     //   v486：首单顺延后 10-19 同日既有下单又有转储，原 ±5px < 透明 hover 圆半径 9px，
     //   蓝点会被橙点的透明圆盖住导致无法 hover。12px > 9px 且相邻日间距 40px，三类点互不遮挡。
     if (r.ship > 0) marks.push(mark(X(i) - 12, yy, '#2563EB',
-      '下单日 ' + r.date + '（来订单）|订单量 ' + samsSimNum(r.ship) + ' 箱'
+      '出货日 ' + r.date + '|出货量 ' + samsSimNum(r.ship) + ' 箱'
+      + (r.intervalDays > 1 ? '（' + r.intervalDays + ' 天累计 · 切片差分整笔记在本日）' : '')
       + '|口径：当日真实出货差分|在库（消耗后）' + samsSimNum(r.onHand) + ' 箱'));
     if (r.order > 0) marks.push(mark(X(i), yy, '#EA580C',
       '转储日 ' + r.date + '|转储量 ' + samsSimNum(r.order) + ' 箱（' + r.nCar + ' 车）'
@@ -5387,12 +5459,12 @@ function samsSimSvg(w, rows, cd, R, keep) {
       + '" height="' + (B - T) + '" fill="transparent" data-tip="' + dayTip(rows[i]) + '"/>');
   }
   p.push(marks.join(''));
-  var lg = H - 16;
+  var lg = H - 10;
   p.push('<line x1="150" y1="' + (lg - 4) + '" x2="186" y2="' + (lg - 4) + '" stroke="#8a94a6" stroke-width="1.7" stroke-dasharray="5 4"/>');
   p.push('<text x="192" y="' + lg + '" font-size="10.5" fill="#374151">在库+在途（虚线）</text>');
   p.push('<line x1="310" y1="' + (lg - 4) + '" x2="346" y2="' + (lg - 4) + '" stroke="#111827" stroke-width="2.1"/>');
   p.push('<text x="352" y="' + lg + '" font-size="10.5" fill="#374151">在库库存（实线）</text>');
-  p.push('<circle cx="470" cy="' + (lg - 4) + '" r="3.6" fill="#2563EB"/><text x="478" y="' + lg + '" font-size="10" fill="#6b7280">下单日·订单量</text>');
+  p.push('<circle cx="470" cy="' + (lg - 4) + '" r="3.6" fill="#2563EB"/><text x="478" y="' + lg + '" font-size="10" fill="#6b7280">出货日·订单量</text>');
   p.push('<circle cx="590" cy="' + (lg - 4) + '" r="3.6" fill="#EA580C"/><text x="598" y="' + lg + '" font-size="10" fill="#6b7280">转储日·转储量</text>');
   p.push('<circle cx="710" cy="' + (lg - 4) + '" r="3.6" fill="#16A34A"/><text x="718" y="' + lg + '" font-size="10" fill="#6b7280">到货日·到货量</text>');
   p.push('</svg>');
