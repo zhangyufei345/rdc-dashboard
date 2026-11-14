@@ -1281,7 +1281,7 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 498;
+const BUILD_VERSION = 499;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -5091,11 +5091,12 @@ function samsSimRun() {
 //   ③「库存覆盖天数」= 当前起算日全窗口的 平均在库 ÷ 日均出货（逐日平均，不是期末快照）。
 //      用户可输入目标上限：目标 ≥ 该值 → 可行；目标 < 该值 → 冲突，并给出「压到几天的代价」。
 //   ④ 不做「一键应用」（用户明确不要），也不做分仓 coverDays（coverDays 仍是全局参数）。
-function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P) {
+function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P, wantRows) {
   eng.setToday(sd); st.data = built[sd];
   var opening = eng.calc(w, 14, 0, P.coverW).rop;
   var onHand = 0, transit = 0, shortage = 0, started = false;
   var arrivals = {}, boxes = 0, orders = 0, shipSum = 0, onSum = 0, ssSum = 0, n = 0;
+  var rows = wantRows ? [] : null;
   for (var i = 0; i < daily.length; i++) {
     var x = daily[i], day = x.date;
     if (day < sd) continue;
@@ -5104,9 +5105,12 @@ function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P) {
     if (arr) { onHand += arr; transit -= arr; delete arrivals[day]; }
     var demand = Number(x.ship[w]) || 0;
     var served = Math.min(Math.max(0, onHand), demand);
-    onHand -= served; shortage += demand - served;
+    onHand -= served;
+    var shortD = demand - served;
+    shortage += shortD;
+    var invPos = onHand + transit;
     eng.setToday(day); st.data = built[day];
-    var r = eng.calc(w, cd, onHand + transit, P.coverW);
+    var r = eng.calc(w, cd, invPos, P.coverW);
     var isWd = samsSimIsWorkday(day);
     var order = (isWd && x.decisionAllowed[w]) ? r.batchBoxes : 0;
     if (order > 0) {
@@ -5115,9 +5119,12 @@ function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P) {
       arrivals[eta] = (arrivals[eta] || 0) + order;
     }
     shipSum += demand; onSum += onHand; ssSum += (r.ssFinalC || 0); n++;
+    // v499：只在「点名要明细」时收集（全量扫描时保持轻量）
+    if (rows) rows.push({ d: day, s: demand, a: arr, on: onHand, sh: shortD, o: order,
+                          pos: onHand + transit, intervalDays: Number(x.shipIntervalDays) || 1 });
   }
   return { short: shortage, ship: shipSum, boxes: boxes, orders: orders, days: n,
-           ssSum: ssSum,
+           ssSum: ssSum, rows: rows,
            avgOnHand: n ? onSum / n : 0, dailyShip: n ? shipSum / n : 0 };
 }
 
@@ -5177,16 +5184,16 @@ function samsSimAdviceRun(R) {
     w = ACTIVE[i]; perWh[w] = [];
     var baseStart = R.startOf[w];
     for (var ci = 0; ci < CDS.length; ci++) {
-      var cd = CDS[ci], worst = 0, base = null;
+      var cd = CDS[ci], worst = 0, base = null, worstStart = null;
       for (var si = 0; si < starts[w].length; si++) {
         var sd = starts[w][si];
         var rr = samsSimAdvOne(eng, st, built, daily, w, cd, sd, P);
         var rate = rr.ship > 0 ? rr.short / rr.ship : 0;
-        if (rate > worst) worst = rate;
+        if (rate > worst) { worst = rate; worstStart = sd; }
         if (sd === baseStart) base = rr;
       }
       perWh[w].push({
-        cd: cd, worstShortRate: worst,
+        cd: cd, worstShortRate: worst, worstStart: worstStart,
         invCover: (base && base.dailyShip > 0) ? base.avgOnHand / base.dailyShip : null,
         shortRate: (base && base.ship > 0) ? base.short / base.ship : 0,
         avgOnHand: base ? base.avgOnHand : 0, dailyShip: base ? base.dailyShip : 0,
@@ -5216,6 +5223,21 @@ function samsSimAdviceRun(R) {
   }
   var startsCount = {};
   for (i = 0; i < ACTIVE.length; i++) startsCount[ACTIVE[i]] = starts[ACTIVE[i]].length;
+  // v499（用户 2026-11-14「逐日显示 出货/在库/缺口」）：
+  //   对每仓「再少 1 天」那一档，把**最坏起算日**重跑一次并保留逐日行（含出货/在库/缺口/下单/到货）。
+  //   只重跑这几个样本（3 仓 × 1 起点），代价约 0.1s；全量扫描仍保持轻量不收集 rows。
+  var worstDays = {};
+  for (i = 0; i < ACTIVE.length; i++) {
+    w = ACTIVE[i];
+    if (minOk[w] == null || minOk[w] <= CDS[0]) continue;
+    var mLow = minOk[w] - 1, qi = CDS.indexOf(mLow);
+    if (qi < 0) continue;
+    var cell = perWh[w][qi];
+    if (!cell || !cell.worstStart) continue;
+    var rw = samsSimAdvOne(eng, st, built, daily, w, mLow, cell.worstStart, P, true);
+    worstDays[w] = { cd: mLow, start: cell.worstStart, shortPct: cell.worstShortRate,
+                     short: rw.short, ship: rw.ship, rows: rw.rows };
+  }
   // 跨仓汇总：各档位的三仓平均库存覆盖 + 三仓最坏缺货率（用于目标判断）
   var agg = [];
   for (var ci2 = 0; ci2 < CDS.length; ci2++) {
@@ -5231,7 +5253,7 @@ function samsSimAdviceRun(R) {
       avgCover: covs.reduce(function (a, b) { return a + b; }, 0) / covs.length, worst: worst2 });
   }
   return { cds: CDS, range: [CDS[0], CDS[CDS.length - 1]], perWh: perWh, agg: agg,
-           minOk: minOk, uniform: uniform, startsCount: startsCount,
+           minOk: minOk, uniform: uniform, startsCount: startsCount, worstDays: worstDays,
            startOf: R.startOf, lastDate: lastDate, ms: Date.now() - t0 };
 }
 
@@ -5364,6 +5386,59 @@ function samsSimAdviceHtml(A, R) {
     + '期间平均水位被推高。'
     + '<br>各仓在本档位的实际库存覆盖：' + (covWhy || '—') + '。'
     + '</div></details>';
+
+  // v499（用户 2026-11-14「逐日显示 出货 / 在库 / 缺口」）：
+  //   每个仓「再少 1 天」那一档，列出**缺得最多的那次起算**的逐日明细。
+  //   目的：回答「平均库存够 20 多天，为什么还是会缺货」——平均值掩盖局部时点。
+  if (A.worstDays && Object.keys(A.worstDays).length) {
+    h += '<details style="margin-top:8px;border-top:1px dashed var(--border-card);padding-top:7px">'
+      + '<summary style="cursor:pointer;font-size:11.5px;color:#1E40AF;font-weight:600">'
+      + '▸ 逐日明细：各仓「再少 1 天」时最坏的那次起算（出货 / 到货 / 在库 / 缺口）</summary>'
+      + '<div style="padding:7px 0 0">'
+      + '<div style="font-size:11px;color:var(--text-secondary);line-height:1.7;margin-bottom:4px">'
+      + '为什么「平均库存覆盖 20 多天」却仍然缺货：平均值掩盖了局部时点。'
+      + '下面列的是该档位在<b>所有起算日里缺得最多的那一次</b>，逐日看货是怎么被吃完的；'
+      + '红底行＝当天出现缺口。</div>';
+    for (var wi9 = 0; wi9 < ACTIVE.length; wi9++) {
+      var ww = ACTIVE[wi9], WD = A.worstDays[ww];
+      if (!WD) continue;
+      h += '<div style="font-size:11px;font-weight:600;color:var(--text-primary);margin:8px 0 3px">'
+        + ww + 'FDC · ' + WD.cd + ' 天档 · 起算 ' + WD.start
+        + '　缺口合计 <b style="color:var(--color-red)">' + samsSimNum(WD.short) + ' 箱</b>'
+        + '（占该次出货 ' + (WD.shortPct * 100).toFixed(1) + '%）</div>'
+        + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:10.5px;white-space:nowrap">'
+        + '<thead><tr style="background:var(--bg-primary)">'
+        + ['日期', '出货', '到货', '在库(出货后)', '缺口', '下单']
+            .map(function (t) {
+              return '<th style="padding:3px 6px;border:1px solid var(--border-card)">' + t + '</th>';
+            }).join('')
+        + '</tr></thead><tbody>';
+      for (var ri9 = 0; ri9 < WD.rows.length; ri9++) {
+        var q9 = WD.rows[ri9];
+        var hasAct = q9.s > 0 || q9.a > 0 || q9.sh > 0 || q9.o > 0;
+        h += '<tr' + (q9.sh > 0 ? ' style="background:#FEF2F2;font-weight:600"'
+                                : (hasAct ? '' : ' style="color:var(--text-secondary)"')) + '>'
+          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:left">' + q9.d.slice(5)
+          + (q9.intervalDays > 1 && q9.s > 0
+              ? ' <span style="color:#EA580C;font-size:9px">·' + q9.intervalDays + 'd</span>' : '')
+          + '</td>'
+          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
+          + (q9.s ? samsSimNum(q9.s) : '—') + '</td>'
+          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
+          + (q9.a ? samsSimNum(q9.a) : '—') + '</td>'
+          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
+          + samsSimNum(q9.on) + '</td>'
+          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right;'
+          + (q9.sh > 0 ? 'color:var(--color-red)' : '') + '">'
+          + (q9.sh > 0 ? samsSimNum(q9.sh) : '0') + '</td>'
+          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
+          + (q9.o ? samsSimNum(q9.o) : '—') + '</td>'
+          + '</tr>';
+      }
+      h += '</tbody></table></div>';
+    }
+    h += '</div></details>';
+  }
 
   var line = A.agg.filter(function (x) { return x.cd >= 10 && x.cd <= 18; })
     .map(function (x) { return x.cd + '天 ' + x.avgCover.toFixed(1); }).join(' · ');
