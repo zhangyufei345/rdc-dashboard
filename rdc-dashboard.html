@@ -1281,7 +1281,7 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 496;
+const BUILD_VERSION = 497;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -4731,7 +4731,10 @@ function renderSamsFc() {
 // =====================================================================================
 window._samsSimState = {
   data: null, engine: null, loading: false, err: '', result: null,
-  selCd: null, paramsKey: '', lastMs: 0
+  selCd: null, paramsKey: '', lastMs: 0,
+  // v497：最佳补货覆盖天数建议（全起算日扫描，异步补算，不阻塞主结果）
+  advice: null, adviceKey: '', adviceTimer: null, adviceMs: 0,
+  targetInvCover: null   // 目标平均库存覆盖天数（可调；null = 不约束）
 };
 
 function samsSimNum(n, dec) {
@@ -5070,11 +5073,316 @@ function samsSimRun() {
     // 🔴 参数一变，主图自动回到「当前参数」档，保证看到的图与刚改的参数一致。
     //    手动切档位走 samsSimSetCd（只重渲染、不触发重算），不会被这里覆盖。
     S.selCd = cur;
+    // v497：先作废旧建议（渲染立刻显示「计算中」），再渲染主体，最后异步补算建议
+    samsSimAdvicePrepare();
     samsSimRender();
+    samsSimAdviceKick();
   } catch (e) {
     box.innerHTML = '<div style="font-size:12px;color:var(--color-red);padding:16px">⚠ 模拟计算失败：'
       + samsSimEsc(String((e && e.message) || e)) + '</div>';
   }
+}
+
+// ================= v497：最佳补货覆盖天数建议 =================
+// 🔴 判据（用户 2026-11-14 明确：输入目标天数 → 告诉可行 / 冲突 / 代价）
+//   ①「不允许缺货」= 该仓**全部可用起算日**的缺货率都为 0，不是只看 10-18 单一起点。
+//      实测依据：10-18 起算时 5 天档也不缺货（期初老本 16.6 天盖住），
+//      换到 10-28 起算、同样 5 天档最坏缺 58% —— 单起点会给出过度乐观的答案。
+//   ②「最低天数」= 满足①的最小覆盖档位；补货箱数相同的连续档位视为等价平台，显示为区间。
+//   ③「库存覆盖天数」= 当前起算日全窗口的 平均在库 ÷ 日均出货（逐日平均，不是期末快照）。
+//      用户可输入目标上限：目标 ≥ 该值 → 可行；目标 < 该值 → 冲突，并给出「压到几天的代价」。
+//   ④ 不做「一键应用」（用户明确不要），也不做分仓 coverDays（coverDays 仍是全局参数）。
+function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P) {
+  eng.setToday(sd); st.data = built[sd];
+  var opening = eng.calc(w, 14, 0, P.coverW).rop;
+  var onHand = 0, transit = 0, shortage = 0, started = false;
+  var arrivals = {}, boxes = 0, orders = 0, shipSum = 0, onSum = 0, n = 0;
+  for (var i = 0; i < daily.length; i++) {
+    var x = daily[i], day = x.date;
+    if (day < sd) continue;
+    if (!started) { onHand = opening; started = true; }
+    var arr = arrivals[day] || 0;
+    if (arr) { onHand += arr; transit -= arr; delete arrivals[day]; }
+    var demand = Number(x.ship[w]) || 0;
+    var served = Math.min(Math.max(0, onHand), demand);
+    onHand -= served; shortage += demand - served;
+    eng.setToday(day); st.data = built[day];
+    var r = eng.calc(w, cd, onHand + transit, P.coverW);
+    var isWd = samsSimIsWorkday(day);
+    var order = (isWd && x.decisionAllowed[w]) ? r.batchBoxes : 0;
+    if (order > 0) {
+      transit += order; boxes += order; orders++;
+      var eta = samsSimAddDays(day, r.lead);
+      arrivals[eta] = (arrivals[eta] || 0) + order;
+    }
+    shipSum += demand; onSum += onHand; n++;
+  }
+  return { short: shortage, ship: shipSum, boxes: boxes, orders: orders, days: n,
+           avgOnHand: n ? onSum / n : 0, dailyShip: n ? shipSum / n : 0 };
+}
+
+function samsSimAdvAt(A, w, cd) {
+  var arr = (A && A.perWh[w]) || [];
+  for (var i = 0; i < arr.length; i++) if (arr[i].cd === cd) return arr[i];
+  return null;
+}
+
+// 等价平台：从最低零缺货档位起，补货箱数相同且仍零缺货的连续档位
+function samsSimAdvPlatform(A, w, cd) {
+  var base = samsSimAdvAt(A, w, cd);
+  if (!base) return cd;
+  var up = cd;
+  for (var c = cd + 1; c <= A.range[1]; c++) {
+    var r = samsSimAdvAt(A, w, c);
+    if (!r || Math.round(r.boxes) !== Math.round(base.boxes)) break;
+    if (r.worstShortRate > 0.0005) break;
+    up = c;
+  }
+  return up;
+}
+
+function samsSimAdviceRun(R) {
+  var S = window._samsSimState, D = S.data;
+  var t0 = Date.now();
+  var ACTIVE = R.active, daily = D.daily, P = R.params;
+  var eng = S.engine.create(), st = eng.state;
+  st.win = P.win; st.coverW = P.coverW; st.basis = P.basis; st.car = P.car;
+  st.minCarRatio = P.minCarRatio; st.csl = P.csl;
+  st.useExclude = P.useExclude; st.freeDays = P.freeDays;
+  var exList = P.useExclude ? D.exclude : null;
+  var built = {}, i, j, w;
+  for (i = 0; i < daily.length; i++) {
+    var x0 = daily[i], o = D.slices[x0.dpSnapshotDate];
+    if (!o) throw new Error('决策日 ' + x0.date + ' 缺 DP 快照');
+    eng.setToday(x0.date);
+    built[x0.date] = eng.build(o.rows, o.sheetName, exList);
+  }
+  // 可用起算日：该仓有 DP、允许决策、距窗口末 ≥7 天（否则窗口太短无意义）
+  var lastDate = daily[daily.length - 1].date;
+  var cutoff = samsSimAddDays(lastDate, -6);
+  var starts = {};
+  for (i = 0; i < ACTIVE.length; i++) {
+    w = ACTIVE[i]; starts[w] = [];
+    for (j = 0; j < daily.length; j++) {
+      var x = daily[j];
+      if (!x.dpUsable[w] || !x.decisionAllowed[w]) continue;
+      if (x.date > cutoff) continue;
+      starts[w].push(x.date);
+    }
+  }
+  var CDS = [], c;
+  for (c = 4; c <= 24; c++) CDS.push(c);
+  var perWh = {};
+  for (i = 0; i < ACTIVE.length; i++) {
+    w = ACTIVE[i]; perWh[w] = [];
+    var baseStart = R.startOf[w];
+    for (var ci = 0; ci < CDS.length; ci++) {
+      var cd = CDS[ci], worst = 0, base = null;
+      for (var si = 0; si < starts[w].length; si++) {
+        var sd = starts[w][si];
+        var rr = samsSimAdvOne(eng, st, built, daily, w, cd, sd, P);
+        var rate = rr.ship > 0 ? rr.short / rr.ship : 0;
+        if (rate > worst) worst = rate;
+        if (sd === baseStart) base = rr;
+      }
+      perWh[w].push({
+        cd: cd, worstShortRate: worst,
+        invCover: (base && base.dailyShip > 0) ? base.avgOnHand / base.dailyShip : null,
+        shortRate: (base && base.ship > 0) ? base.short / base.ship : 0,
+        avgOnHand: base ? base.avgOnHand : 0, dailyShip: base ? base.dailyShip : 0,
+        boxes: base ? base.boxes : 0, cars: base ? (base.boxes / P.car) : 0,
+        orders: base ? base.orders : 0, days: base ? base.days : 0,
+        short: base ? base.short : 0, ship: base ? base.ship : 0
+      });
+    }
+  }
+  var minOk = {}, allOk = true;
+  for (i = 0; i < ACTIVE.length; i++) {
+    w = ACTIVE[i]; minOk[w] = null;
+    for (var k = 0; k < CDS.length; k++) {
+      if (perWh[w][k].worstShortRate <= 0.0005) { minOk[w] = CDS[k]; break; }
+    }
+    if (minOk[w] == null) allOk = false;
+  }
+  var uniform = null;
+  if (allOk) {
+    uniform = 0;
+    for (i = 0; i < ACTIVE.length; i++) uniform = Math.max(uniform, minOk[ACTIVE[i]]);
+  }
+  var startsCount = {};
+  for (i = 0; i < ACTIVE.length; i++) startsCount[ACTIVE[i]] = starts[ACTIVE[i]].length;
+  // 跨仓汇总：各档位的三仓平均库存覆盖 + 三仓最坏缺货率（用于目标判断）
+  var agg = [];
+  for (var ci2 = 0; ci2 < CDS.length; ci2++) {
+    var covs = [], worst2 = 0, ok = true;
+    for (i = 0; i < ACTIVE.length; i++) {
+      var q = perWh[ACTIVE[i]][ci2];
+      if (q.invCover == null) { ok = false; break; }
+      covs.push(q.invCover);
+      worst2 = Math.max(worst2, q.worstShortRate);
+    }
+    if (!ok) continue;
+    agg.push({ cd: CDS[ci2],
+      avgCover: covs.reduce(function (a, b) { return a + b; }, 0) / covs.length, worst: worst2 });
+  }
+  return { cds: CDS, range: [CDS[0], CDS[CDS.length - 1]], perWh: perWh, agg: agg,
+           minOk: minOk, uniform: uniform, startsCount: startsCount,
+           startOf: R.startOf, lastDate: lastDate, ms: Date.now() - t0 };
+}
+
+function samsSimAdviceKey() {
+  var p = window._samsState, S = window._samsSimState;
+  return JSON.stringify([p.win, p.coverW, p.basis, p.car, p.minCarRatio, p.csl,
+    p.useExclude, p.freeDays,
+    S.data && S.data.generatedAt, S.data && S.data.engineSha16]);
+}
+// 参数一变先作废旧建议，让渲染立刻显示「计算中」而不是旧结果
+function samsSimAdvicePrepare() {
+  var S = window._samsSimState, key = samsSimAdviceKey();
+  if (S.adviceKey !== key) { S.advice = null; S.adviceKey = key; }
+}
+function samsSimAdviceKick() {
+  var S = window._samsSimState;
+  if (!S.result) return;
+  var key = samsSimAdviceKey();
+  if (S.advice && S.adviceKey === key) return;
+  S.adviceKey = key;
+  if (S.adviceTimer) clearTimeout(S.adviceTimer);
+  S.adviceTimer = setTimeout(function () {
+    S.adviceTimer = null;
+    try { S.advice = samsSimAdviceRun(S.result); }
+    catch (e) { S.advice = { err: String((e && e.message) || e) }; }
+    var el = document.getElementById('samsSimAdvBox');
+    if (el && S.result) el.innerHTML = samsSimAdviceHtml(S.advice, S.result);
+  }, 40);
+}
+
+function samsSimSetTarget(v) {
+  var S = window._samsSimState;
+  var n = Number(v);
+  S.targetInvCover = (v === '' || v == null || !isFinite(n) || n <= 0) ? null : n;
+  var el = document.getElementById('samsSimAdvBox');
+  if (el && S.result) el.innerHTML = samsSimAdviceHtml(S.advice, S.result);
+}
+
+function samsSimAdviceHtml(A, R) {
+  var S = window._samsSimState;
+  if (!A) {
+    return '<div style="border:1px solid #BFDBFE;background:#F8FBFF;border-radius:10px;'
+      + 'padding:12px 14px;margin-bottom:14px;font-size:12px;color:#1E40AF">'
+      + '💡 <b>最佳补货覆盖天数建议</b>　正在按全部起算日逐档扫描（约 2 秒）…</div>';
+  }
+  if (A.err) {
+    return '<div style="border:1px solid #FCA5A5;background:#FEF2F2;border-radius:10px;'
+      + 'padding:12px 14px;margin-bottom:14px;font-size:12px;color:#991B1B">'
+      + '建议计算失败：' + samsSimEsc(A.err) + '</div>';
+  }
+  var ACTIVE = R.active, h = '', i;
+  var target = S.targetInvCover, uni = A.uniform, uniAgg = null;
+  for (i = 0; i < A.agg.length; i++) if (A.agg[i].cd === uni) uniAgg = A.agg[i];
+
+  h += '<div style="border:1px solid #BFDBFE;background:#F8FBFF;border-radius:10px;padding:12px 14px;margin-bottom:14px">';
+  h += '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
+    + '<span style="font-size:13px;font-weight:600;color:#1E40AF">💡 最佳补货覆盖天数建议</span>'
+    + '<span style="font-size:11px;color:#3B82F6">硬约束＝该仓 <b>全部起算日都不缺货</b>，'
+    + '满足后再取最小覆盖天数；库存覆盖＝当前窗口 平均在库 ÷ 日均出货</span></div>';
+
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 8px">';
+  for (i = 0; i < ACTIVE.length; i++) {
+    var w = ACTIVE[i], cd = A.minOk[w];
+    var r = cd != null ? samsSimAdvAt(A, w, cd) : null;
+    var up = cd != null ? samsSimAdvPlatform(A, w, cd) : null;
+    var prev = cd != null ? samsSimAdvAt(A, w, cd - 1) : null;
+    var only = A.startsCount[w] <= 1;
+    h += '<div style="flex:1 1 200px;min-width:180px;background:#fff;border:1px solid #DBEAFE;'
+      + 'border-radius:8px;padding:9px 11px">'
+      + '<div style="font-size:11px;color:var(--text-secondary)">' + w + 'FDC · '
+      + A.startsCount[w] + ' 个起算日</div>';
+    if (cd == null) {
+      h += '<div style="font-size:15px;font-weight:600;color:var(--color-red);margin-top:2px">'
+        + A.range[1] + ' 天内无解</div>';
+    } else {
+      h += '<div style="font-size:15px;font-weight:600;color:#1D4ED8;margin-top:2px">最低 ' + cd + ' 天'
+        + (up > cd ? '<span style="font-size:11px;font-weight:400;color:#3B82F6">（' + cd + '~' + up + ' 天等价）</span>' : '')
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--text-secondary);line-height:1.7;margin-top:2px">'
+        + '库存覆盖 <b>' + (r.invCover == null ? '—' : r.invCover.toFixed(1) + ' 天') + '</b>'
+        + '｜补货 ' + samsSimNum(r.boxes) + ' 箱（' + r.cars.toFixed(0) + ' 车）'
+        + (prev && prev.worstShortRate > 0.0005
+            ? '<br>再少 1 天 → 最坏缺货 <b style="color:var(--color-red)">'
+              + (prev.worstShortRate * 100).toFixed(1) + '%</b>'
+            : '')
+        + '</div>';
+    }
+    if (only) {
+      h += '<div style="font-size:10px;color:#B45309;margin-top:3px">⚠ 仅 ' + A.startsCount[w]
+        + ' 个起算日 / 短窗口，参考价值有限</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  if (uni != null && uniAgg) {
+    var worstWh = ACTIVE[0];
+    for (i = 0; i < ACTIVE.length; i++) {
+      if (A.minOk[ACTIVE[i]] != null && (A.minOk[worstWh] == null || A.minOk[ACTIVE[i]] > A.minOk[worstWh]))
+        worstWh = ACTIVE[i];
+    }
+    h += '<div style="background:#EFF6FF;border-radius:8px;padding:8px 11px;font-size:12px;color:#1E40AF">'
+      + '统一参数（coverDays 为全局参数）：<b style="font-size:14px">' + uni + ' 天</b>'
+      + '　三仓同时零缺货，受 <b>' + worstWh + '</b> 约束'
+      + '｜三仓平均库存覆盖 <b>' + uniAgg.avgCover.toFixed(1) + ' 天</b></div>';
+  } else {
+    h += '<div style="background:#FEF2F2;border-radius:8px;padding:8px 11px;font-size:12px;color:#991B1B">'
+      + '在 ' + A.range[1] + ' 天内没有任何统一档位能让三仓同时零缺货。</div>';
+  }
+
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12px">'
+    + '<span style="color:var(--text-secondary)">目标平均库存覆盖天数</span>'
+    + '<input type="number" min="1" step="0.5" value="' + (target == null ? '' : target) + '" '
+    + 'placeholder="留空＝不约束" onchange="samsSimSetTarget(this.value)" '
+    + 'style="width:104px;padding:3px 7px;border-radius:6px;font-size:12px;border:1px solid #378ADD;'
+    + 'background:#fff;color:var(--text-primary)">'
+    + '<span style="color:var(--text-secondary)">天（可调）</span></div>';
+
+  if (target != null && uni != null && uniAgg) {
+    if (uniAgg.avgCover <= target + 1e-9) {
+      h += '<div style="margin-top:7px;background:#ECFDF5;border-left:3px solid #16A34A;border-radius:6px;'
+        + 'padding:8px 11px;font-size:12px;color:#065F46">✅ <b>目标可达</b>：统一 ' + uni
+        + ' 天时平均库存覆盖 ' + uniAgg.avgCover.toFixed(1) + ' 天 ≤ 目标 ' + target
+        + ' 天，且三仓全部起算日零缺货。</div>';
+    } else {
+      var alt = null;
+      for (i = A.agg.length - 1; i >= 0; i--) {
+        if (A.agg[i].cd < uni && A.agg[i].avgCover <= target + 1e-9) { alt = A.agg[i]; break; }
+      }
+      h += '<div style="margin-top:7px;background:#FFFBEB;border-left:3px solid #F59E0B;border-radius:6px;'
+        + 'padding:8px 11px;font-size:12px;color:#92400E">⚠ <b>目标与「零缺货」冲突</b>：零缺货最低 '
+        + uni + ' 天，平均库存覆盖 ' + uniAgg.avgCover.toFixed(1) + ' 天 > 目标 ' + target + ' 天。';
+      if (alt) {
+        h += '压到 <b>' + alt.cd + ' 天</b>可贴近库存目标（平均覆盖 ' + alt.avgCover.toFixed(1)
+          + ' 天），代价是三仓最坏缺货 <b>' + (alt.worst * 100).toFixed(1) + '%</b>。';
+      } else {
+        h += '即使压到 ' + A.range[0] + ' 天档，平均覆盖仍有 ' + A.agg[0].avgCover.toFixed(1)
+          + ' 天，仍超目标。';
+      }
+      h += '</div>';
+    }
+  } else if (target == null && uni != null) {
+    h += '<div style="margin-top:7px;font-size:11.5px;color:var(--text-secondary)">'
+      + '填写目标天数后，这里会判断「可行 / 冲突 / 代价」；留空只看上面的最低零缺货天数。</div>';
+  }
+
+  var line = A.agg.filter(function (x) { return x.cd >= 10 && x.cd <= 18; })
+    .map(function (x) { return x.cd + '天 ' + x.avgCover.toFixed(1); }).join(' · ');
+  if (line) {
+    h += '<div style="margin-top:7px;font-size:11px;color:var(--text-secondary);line-height:1.7">'
+      + '各档位三仓平均库存覆盖：' + line + '（天）'
+      + '<br>扫描 ' + A.cds.length + ' 档 × 各仓全部起算日，用时 ' + A.ms + ' ms；'
+      + '起算日＝该仓有 DP 且允许决策、距窗口末 ≥7 天</div>';
+  }
+  h += '</div>';
+  return h;
 }
 
 // 档位下拉只切换主图，不重算（所有档位已一次算完）
@@ -5148,6 +5456,9 @@ function samsSimRender() {
      + '｜历史窗口 ' + (P.win > 0 ? '近 ' + P.win + ' 周' : '全部')
      + '｜基准口径 ' + basisTxt + '｜异常周 ' + (P.useExclude ? '剔除' : '不剔除')
      + '｜免租上限 ' + P.freeDays + ' 天</div>';
+
+  // ②.5 v497：最佳补货覆盖天数建议（全起算日扫描，异步补算，占位先出）
+  h += '<div id="samsSimAdvBox">' + samsSimAdviceHtml(S.advice, R) + '</div>';
 
   // ③ 档位对比表
   h += '<div style="font-size:13px;font-weight:600;color:var(--text-primary);margin:4px 0 8px">'
