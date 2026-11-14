@@ -1281,7 +1281,7 @@ const DB_NAME = 'RDC_Dashboard';
 //      与新数据管道矛盾，本版统一改为如实描述「上月月末最后一版分仓需求数据」。
 //   【DB_VERSION 不动】无新增持久化字段；demand.json 走 cache:'no-cache' 强拉、不进 IDB。
 //   【判据未改】逐仓 · 单月 T-1 · 只判完成率 ≥2.0 · 出货 >1,000 · 只在下调清单原有行打标。
-const BUILD_VERSION = 497;
+const BUILD_VERSION = 498;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -4733,8 +4733,7 @@ window._samsSimState = {
   data: null, engine: null, loading: false, err: '', result: null,
   selCd: null, paramsKey: '', lastMs: 0,
   // v497：最佳补货覆盖天数建议（全起算日扫描，异步补算，不阻塞主结果）
-  advice: null, adviceKey: '', adviceTimer: null, adviceMs: 0,
-  targetInvCover: null   // 目标平均库存覆盖天数（可调；null = 不约束）
+  advice: null, adviceKey: '', adviceTimer: null, adviceMs: 0
 };
 
 function samsSimNum(n, dec) {
@@ -5096,7 +5095,7 @@ function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P) {
   eng.setToday(sd); st.data = built[sd];
   var opening = eng.calc(w, 14, 0, P.coverW).rop;
   var onHand = 0, transit = 0, shortage = 0, started = false;
-  var arrivals = {}, boxes = 0, orders = 0, shipSum = 0, onSum = 0, n = 0;
+  var arrivals = {}, boxes = 0, orders = 0, shipSum = 0, onSum = 0, ssSum = 0, n = 0;
   for (var i = 0; i < daily.length; i++) {
     var x = daily[i], day = x.date;
     if (day < sd) continue;
@@ -5115,9 +5114,10 @@ function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P) {
       var eta = samsSimAddDays(day, r.lead);
       arrivals[eta] = (arrivals[eta] || 0) + order;
     }
-    shipSum += demand; onSum += onHand; n++;
+    shipSum += demand; onSum += onHand; ssSum += (r.ssFinalC || 0); n++;
   }
   return { short: shortage, ship: shipSum, boxes: boxes, orders: orders, days: n,
+           ssSum: ssSum,
            avgOnHand: n ? onSum / n : 0, dailyShip: n ? shipSum / n : 0 };
 }
 
@@ -5192,7 +5192,12 @@ function samsSimAdviceRun(R) {
         avgOnHand: base ? base.avgOnHand : 0, dailyShip: base ? base.dailyShip : 0,
         boxes: base ? base.boxes : 0, cars: base ? (base.boxes / P.car) : 0,
         orders: base ? base.orders : 0, days: base ? base.days : 0,
-        short: base ? base.short : 0, ship: base ? base.ship : 0
+        short: base ? base.short : 0, ship: base ? base.ship : 0,
+        // v498：拆解「库存覆盖」为什么大于「覆盖天数」——
+        //   期初＝起算日预警线折合天数 + 安全库存折合天数，是主要两块。
+        openDays: (base && base.dailyShip > 0) ? (R.opening[w] / base.dailyShip) : null,
+        ssDays: (base && base.dailyShip > 0 && base.days > 0)
+          ? ((base.ssSum / base.days) / base.dailyShip) : null
       });
     }
   }
@@ -5257,14 +5262,6 @@ function samsSimAdviceKick() {
   }, 40);
 }
 
-function samsSimSetTarget(v) {
-  var S = window._samsSimState;
-  var n = Number(v);
-  S.targetInvCover = (v === '' || v == null || !isFinite(n) || n <= 0) ? null : n;
-  var el = document.getElementById('samsSimAdvBox');
-  if (el && S.result) el.innerHTML = samsSimAdviceHtml(S.advice, S.result);
-}
-
 function samsSimAdviceHtml(A, R) {
   var S = window._samsSimState;
   if (!A) {
@@ -5278,7 +5275,7 @@ function samsSimAdviceHtml(A, R) {
       + '建议计算失败：' + samsSimEsc(A.err) + '</div>';
   }
   var ACTIVE = R.active, h = '', i;
-  var target = S.targetInvCover, uni = A.uniform, uniAgg = null;
+  var uni = A.uniform, uniAgg = null;
   for (i = 0; i < A.agg.length; i++) if (A.agg[i].cd === uni) uniAgg = A.agg[i];
 
   h += '<div style="border:1px solid #BFDBFE;background:#F8FBFF;border-radius:10px;padding:12px 14px;margin-bottom:14px">';
@@ -5337,41 +5334,36 @@ function samsSimAdviceHtml(A, R) {
       + '在 ' + A.range[1] + ' 天内没有任何统一档位能让三仓同时零缺货。</div>';
   }
 
-  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12px">'
-    + '<span style="color:var(--text-secondary)">目标平均库存覆盖天数</span>'
-    + '<input type="number" min="1" step="0.5" value="' + (target == null ? '' : target) + '" '
-    + 'placeholder="留空＝不约束" onchange="samsSimSetTarget(this.value)" '
-    + 'style="width:104px;padding:3px 7px;border-radius:6px;font-size:12px;border:1px solid #378ADD;'
-    + 'background:#fff;color:var(--text-primary)">'
-    + '<span style="color:var(--text-secondary)">天（可调）</span></div>';
-
-  if (target != null && uni != null && uniAgg) {
-    if (uniAgg.avgCover <= target + 1e-9) {
-      h += '<div style="margin-top:7px;background:#ECFDF5;border-left:3px solid #16A34A;border-radius:6px;'
-        + 'padding:8px 11px;font-size:12px;color:#065F46">✅ <b>目标可达</b>：统一 ' + uni
-        + ' 天时平均库存覆盖 ' + uniAgg.avgCover.toFixed(1) + ' 天 ≤ 目标 ' + target
-        + ' 天，且三仓全部起算日零缺货。</div>';
-    } else {
-      var alt = null;
-      for (i = A.agg.length - 1; i >= 0; i--) {
-        if (A.agg[i].cd < uni && A.agg[i].avgCover <= target + 1e-9) { alt = A.agg[i]; break; }
-      }
-      h += '<div style="margin-top:7px;background:#FFFBEB;border-left:3px solid #F59E0B;border-radius:6px;'
-        + 'padding:8px 11px;font-size:12px;color:#92400E">⚠ <b>目标与「零缺货」冲突</b>：零缺货最低 '
-        + uni + ' 天，平均库存覆盖 ' + uniAgg.avgCover.toFixed(1) + ' 天 > 目标 ' + target + ' 天。';
-      if (alt) {
-        h += '压到 <b>' + alt.cd + ' 天</b>可贴近库存目标（平均覆盖 ' + alt.avgCover.toFixed(1)
-          + ' 天），代价是三仓最坏缺货 <b>' + (alt.worst * 100).toFixed(1) + '%</b>。';
-      } else {
-        h += '即使压到 ' + A.range[0] + ' 天档，平均覆盖仍有 ' + A.agg[0].avgCover.toFixed(1)
-          + ' 天，仍超目标。';
-      }
-      h += '</div>';
-    }
-  } else if (target == null && uni != null) {
-    h += '<div style="margin-top:7px;font-size:11.5px;color:var(--text-secondary)">'
-      + '填写目标天数后，这里会判断「可行 / 冲突 / 代价」；留空只看上面的最低零缺货天数。</div>';
+  // v498（用户 2026-11-14「这个天数设置看起来有点鸡肋，因为对覆盖天数建议没影响，建议删掉」）：
+  //   已删除「目标平均库存覆盖天数」输入框与「可达 / 冲突」判定。
+  //   原因：建议值 =「全部起算日零缺货」的最小档位，是硬约束下的唯一解，与库存目标无关，
+  //   那个输入框只能改一句判定文案、改不了建议本身 → 确属鸡肋。
+  //   替换为「库存覆盖为什么大于覆盖天数」的折叠解释（这是用户紧接着问的问题）。
+  var covWhy = '', openWhy = '';
+  for (i = 0; i < ACTIVE.length; i++) {
+    var wq = ACTIVE[i], cq = A.minOk[wq];
+    var rq = cq != null ? samsSimAdvAt(A, wq, cq) : null;
+    if (!rq) continue;
+    if (rq.invCover != null) covWhy += (covWhy ? '、' : '') + wq + ' <b>' + rq.invCover.toFixed(1) + ' 天</b>';
+    if (rq.openDays != null) openWhy += (openWhy ? '、' : '') + wq + ' ' + rq.openDays.toFixed(1) + ' 天';
   }
+  h += '<details style="margin-top:8px;border-top:1px dashed var(--border-card);padding-top:7px">'
+    + '<summary style="cursor:pointer;font-size:11.5px;color:#1E40AF;font-weight:600">'
+    + '❓ 为什么「库存覆盖」远大于「覆盖天数」？点开看构成</summary>'
+    + '<div style="font-size:11.5px;color:var(--text-secondary);line-height:1.9;padding:7px 0 0">'
+    + '两者不是同一个东西：<b>覆盖天数</b>是补货目标参数（每次补到「未来 N 天需求 ＋ 安全库存」）；'
+    + '<b>库存覆盖</b>是实际平均在库 ÷ 日均出货，衡量实际压了多少货。'
+    + '所以库存覆盖必然大于覆盖天数，原因有四：'
+    + '<br>① <b>期初＝起算日预警线</b>（含安全库存），本身就比覆盖天数厚：'
+    + (openWhy || '—') + '（折合天数）。'
+    + '<br>② <b>补货目标里另含安全库存</b>：N 天档 ＝ 未来 N 天需求 ＋ 安全库存，'
+    + '安全库存单独再占约 3~5 天。'
+    + '<br>③ <b>整车 ' + samsSimNum((R.params && R.params.car) || 5568) + ' 箱取整</b>：'
+    + '按车补货，零头必然多压一部分。'
+    + '<br>④ <b>需求下降后消化慢</b>：10 月 DP 高于 11 月，前期按高需求补的货只能靠出货慢慢消化，'
+    + '期间平均水位被推高。'
+    + '<br>各仓在本档位的实际库存覆盖：' + (covWhy || '—') + '。'
+    + '</div></details>';
 
   var line = A.agg.filter(function (x) { return x.cd >= 10 && x.cd <= 18; })
     .map(function (x) { return x.cd + '天 ' + x.avgCover.toFixed(1); }).join(' · ');
