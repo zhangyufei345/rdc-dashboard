@@ -1297,7 +1297,24 @@ const DB_NAME = 'RDC_Dashboard';
 //   【DB_VERSION 不动】纯前端入参 + 派生字段，无新增持久化字段；dayOrder 与 curStock 一样不写 localStorage。
 //   【影响面·V3 探针实测】页面留空 15 车不变；填入实绩后三仓合计 15→13 车（天津 7 / 惠州 5 / 嘉兴 1），
 //      典型单仓少 1 车、天津 10-22 少 2 车；全起算日「不允许缺货最低覆盖天数」13/11/4、统一 13 均不变。
-const BUILD_VERSION = 500;
+// v501（2026-11-15 用户裁定「模拟推演同步按当日订单扣需求」）：
+//   ① 补货卡片 v500 只改了页面版 samsRopAt，**没有重建沙箱引擎** —— 引擎是
+//      tools/build_sams_sim_bundle.py 从本文件逐字抽取的产物，sha16 校验只比
+//      sams-sim-data.json 与 sams-sim-engine.js，**不比 HTML**，所以线上模拟页一直静默跑 v499 旧公式，
+//      既没有当日订单扣减、也没有 v500 的目标水位公式，且不会报任何错。本次一并根治。
+//   ② 重跑构建脚本 → 引擎自动带上 v500 的「只扣当周剩余 DP」公式（同源红线：不手改引擎），
+//      并给 calc 增加第 5 参 dayOrder（每次调用重建 st.dayOrder，防上一笔订单串到下一天）。
+//      不传该参 → ded=0 → 与离线原型基线 .cache/_fdc_sim/fdc_sim_real.json 逐位一致
+//      （tools/verify_sams_sim_engine.cjs 的数值对拍靠这条证明公式同源，不受本次口径改动影响）。
+//   ③ 模拟侧「当日订单实绩」自动取每个决策日的真实出货 daily[i].ship[仓]
+//      = 相邻两次「山姆需求」切片的累计出货差分（LOCF 零前视，下单即出货，整笔不摊分）；
+//      与补货卡片人工填的是同一笔，不再另开输入栏。
+//   ④ 两处推演循环同步代入：samsSimRun 主推演 + samsSimAdvOne 最佳覆盖天数建议；
+//      期初 opening 只取 rop（rop 定义于扣减之前，不受影响），保持不传。
+//   ⑤ paramsKey 加入 engine.sha16：引擎重建后公式变了，参数没动时也不能复用旧推演结果。
+//   【影响面·真实数据 A/B 见 .cache/_v501/】不扣减 → 扣减，三仓合计车数与 minOk 见验收脚本。
+//   【DB_VERSION 不动】纯前端入参 + 同源引擎重建，无新增持久化字段。
+const BUILD_VERSION = 501;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -5042,7 +5059,8 @@ function samsSimRun() {
       minCarRatio: p0.minCarRatio, csl: p0.csl, useExclude: p0.useExclude,
       freeDays: p0.freeDays, coverDays: p0.coverDays
     };
-    var key = JSON.stringify(P);
+    // v501：引擎重建后公式会变，sha16 必须进缓存 key，否则参数没动时会复用旧公式的推演结果。
+    var key = JSON.stringify(P) + '|' + S.engine.sha16;
     if (S.result && S.paramsKey === key) { samsSimRender(); return; }
 
     var D = S.data, daily = D.daily, ACTIVE = D.activeWarehouses;
@@ -5120,7 +5138,9 @@ function samsSimRun() {
           onHand -= served; shortage += demand - served; shipSum += demand;
           var invPos = onHand + transit;                            // 库存位置 = 在库 + 在途
           eng.setToday(day); st.data = built[day];
-          var r = eng.calc(w, c, invPos, P.coverW); ver.calls++;
+          // v501：把当日真实出货作为「当日订单实绩」代入引擎（与补货卡片同口径，只扣当周剩余 DP）。
+          //   x.ship[w] 是该决策日的切片差分，决策日快照尚未计入这笔（零前视），故不与 actualM 重复。
+          var r = eng.calc(w, c, invPos, P.coverW, Number(x.ship[w]) || 0); ver.calls++;
           // v486（用户 2026-11-13 裁定）：默认非工作日不补货。
           //   周末仍照常入账到货、消耗当日真实出货，只是不新开转储单；
           //   下一个工作日按当天 DP 快照与库存位置重新决策 → 补货机会顺延、不作废。
@@ -5225,7 +5245,8 @@ function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P, wantRows) {
     shortage += shortD;
     var invPos = onHand + transit;
     eng.setToday(day); st.data = built[day];
-    var r = eng.calc(w, cd, invPos, P.coverW);
+    // v501：最佳覆盖天数建议与主推演同口径，同样代入当日订单实绩。
+    var r = eng.calc(w, cd, invPos, P.coverW, Number(x.ship[w]) || 0);
     var isWd = samsSimIsWorkday(day);
     var order = (isWd && x.decisionAllowed[w]) ? r.batchBoxes : 0;
     if (order > 0) {

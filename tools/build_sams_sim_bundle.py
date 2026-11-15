@@ -34,8 +34,15 @@ for key in (
     'function samsBuild(', 'function samsFutureDemand(', 'function samsDemandAxis(',
     'function samsRopAt(', 'var rop = reqCover + ssFinal;',
     'var coverTarget = coverDemandArr + ssFinalC;',
-    'var coverDays = (st.coverDays > 0) ? st.coverDays : 14;',
+    # v494 起默认值已从 14 改成 10，这里只校验前缀，避免默认值再调就误判「抽取块结构已变」。
+    'var coverDays = (st.coverDays > 0) ? st.coverDays : ',
     'var _carFrac = _carQ - _carWhole;',
+    # v501 同源断言：补货卡片「当日订单实绩 → 只扣当周剩余 DP」公式必须真的被抽进引擎。
+    #   sha16 只比 sams-sim-data.json 与引擎文件，**不比 HTML**；若抽取边界漂移导致公式没进去，
+    #   页面不会报任何错，只会静默跑旧公式 —— 必须在这里硬拦。
+    'dayOrder: {},',
+    'var coverDemandRaw = samsCumAt(axToday, coverDays);',
+    'Math.min(dayOrder, dedCap)',
 ):
     if key not in src:
         raise SystemExit('抽取块缺少关键行: ' + key)
@@ -75,6 +82,8 @@ for d in sorted(used_slices):
 
 rules = {
     'ship': '每日实际出货 = 相邻两次「山姆需求」切片的累计出货差分（T 出货 = 截止 T+1 累计 − 截止 T 累计），整笔记在区间末日，不摊分',
+    # v501：模拟侧与补货卡片同口径（用户 2026-11-15 裁定「模拟推演同步按当日订单扣需求」）。
+    'dayOrder': '每个决策日把当日真实出货 x.ship[仓] 作为「当日订单实绩」代入引擎，只从「当周剩余 DP = 当周 DP 共识 − 本周实际已发生订单」里扣减需求；集中下单按实绩全额扣、不按天摊分，下周需求与安全库存完整保留。与补货卡片公式同源，不传该入参时 ded=0（离线原型对拍仍逐位一致）',
     'dp': '每个决策日只用当日可得的最近一次切片 DP 快照（LOCF，零前视）',
     'stock': '期初不取真实库存：假设各仓起算日 0 点在库正好等于当日真实预警线（需求覆盖 + 安全库存）',
     'start': '逐仓起点：各仓从「该仓首次有正数 DP 共识」那天开始模拟，不把三仓起算日拉平',
@@ -119,9 +128,10 @@ head = """/* ===================================================================
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *
  * 🔴 完整仿真红线：水位/安全库存/车数全部由线上 samsRopAt 自己算，
- *    本文件不重写任何公式，只做两件事：
+ *    本文件不重写任何公式，只做三件事：
  *      ① 用形参 window / Date 遮蔽全局，令 new Date() 可固定到历史决策日（零前视）；
- *      ② 把模拟的「库存位置 = 在库 + 在途」代入 st.curStock[仓] 作为当前库存入参。
+ *      ② 把模拟的「库存位置 = 在库 + 在途」代入 st.curStock[仓] 作为当前库存入参；
+ *      ③ 把当日真实出货作为「当日订单实绩」代入 st.dayOrder[仓]（v501，只扣当周剩余 DP）。
  * 🔴 不加 'use strict'：线上 samsDemandAxis 有隐式全局 i，严格模式会 ReferenceError。
  * ========================================================================== */
 (function (global) {
@@ -166,11 +176,17 @@ tail = """
       },
       // coverW 缺省 1（线上默认）：页面把「覆盖周数」参数透传进来，
       // 让预警线 / 统计法安全库存也随参数联动；不传时与离线原型口径完全一致。
-      calc: function (whShort, coverDays, invPos, coverW) {
+      // v501 第 5 参 dayOrder = 该决策日的真实出货（当日订单实绩）。
+      //   每次调用都重建 st.dayOrder，避免上一笔订单残留串到下一天；
+      //   不传 / 非正数 → 空对象 → ded=0 → 与离线原型基线逐位一致（数值对拍靠这条保证公式同源）。
+      calc: function (whShort, coverDays, invPos, coverW, dayOrder) {
         var wh = st.data.whs.find(function (w) { return w.name === '山姆-' + whShort + 'FDC'; });
         if (!wh) throw new Error('找不到仓 ' + whShort);
         st.coverDays = coverDays;
         st.curStock = {}; st.curStock[whShort] = invPos;
+        st.dayOrder = {};
+        var _do = Number(dayOrder);
+        if (isFinite(_do) && _do > 0) st.dayOrder[whShort] = _do;
         return eng.samsRopAt(wh, (Number(coverW) > 0 ? Number(coverW) : 1), st);
       }
     };
@@ -193,10 +209,13 @@ with open(p_data, 'w', encoding='utf-8', newline='\n') as f:
 with open(p_eng, 'w', encoding='utf-8', newline='\n') as f:
     f.write(engine_js)
 
-if sha16 in open(p_eng, encoding='utf-8').read() and data_obj['engineSha16'] == sha16:
+_eng_txt = open(p_eng, encoding='utf-8').read()
+if (sha16 in _eng_txt and data_obj['engineSha16'] == sha16
+        and 'st.dayOrder = {};' in _eng_txt
+        and 'var coverDemandRaw = samsCumAt(axToday, coverDays);' in _eng_txt):
     pass
 else:
-    raise SystemExit('sha16 写入校验失败')
+    raise SystemExit('sha16 / v501 当日订单扣减公式 写入校验失败')
 
 print('抽取线上函数块 L%d~L%d，%d 行，sha16=%s' % (i_start + 1, i_ret + 3, i_ret + 3 - i_start, sha16))
 print('sams-sim-data.json  %d 字节 | %d 决策日 / %d 份 DP 快照 / 出货合计 %s'

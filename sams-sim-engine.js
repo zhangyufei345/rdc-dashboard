@@ -1,19 +1,20 @@
 /* ==========================================================================
  * 山姆前置仓「补货量 → 库存演化」沙箱引擎 —— 自动生成，请勿手改
  * 生成脚本 : tools/build_sams_sim_bundle.py
- * 来源     : rdc-dashboard.html 逐字抽取 L2836~L3776（941 行，sha16=4d3441e1597ce943）
+ * 来源     : rdc-dashboard.html 逐字抽取 L2909~L3880（972 行，sha16=b09850e4a0cd639f）
  * 用法     : 页面按需 fetch 本文件文本，用 new Function('window', code) 编译，
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *
  * 🔴 完整仿真红线：水位/安全库存/车数全部由线上 samsRopAt 自己算，
- *    本文件不重写任何公式，只做两件事：
+ *    本文件不重写任何公式，只做三件事：
  *      ① 用形参 window / Date 遮蔽全局，令 new Date() 可固定到历史决策日（零前视）；
- *      ② 把模拟的「库存位置 = 在库 + 在途」代入 st.curStock[仓] 作为当前库存入参。
+ *      ② 把模拟的「库存位置 = 在库 + 在途」代入 st.curStock[仓] 作为当前库存入参；
+ *      ③ 把当日真实出货作为「当日订单实绩」代入 st.dayOrder[仓]（v501，只扣当周剩余 DP）。
  * 🔴 不加 'use strict'：线上 samsDemandAxis 有隐式全局 i，严格模式会 ReferenceError。
  * ========================================================================== */
 (function (global) {
   var RealDate = global.Date;
-  var SHA16 = '4d3441e1597ce943';
+  var SHA16 = 'b09850e4a0cd639f';
 
   // 形参 window / Date 遮蔽全局：SRC 里的 window._samsState 落在沙箱对象上，
   // new Date() 走 FakeDate，绝不污染看板主页面的 Date / _samsState。
@@ -21,7 +22,7 @@
   function makeEngine(window, Date) {
     var i;
 window._samsState = {
-  win: 8,            // 历史窗口（周）: 4 / 8 / 12 / 0=全部
+  win: 12,           // 历史窗口（周）: 4 / 8 / 12 / 0=全部（v494 用户 2026-11-13 定默认「近12周」）
   coverW: 1,         // 覆盖周数（唯一决策变量）
   basis: 'plan',     // 基准口径: plan=未来计划优先 / hist=按历史销售覆盖(预警线+车数全走历史) / max=取两者高
   selWh: '__all__',  // 图2 仓选择
@@ -43,13 +44,17 @@ window._samsState = {
   //      加上安全库存才是真正不同的口径（D=7 时 6 车 → 9 车）。两套差异点就在 ss 这一项。
   //   🔴 v434（2026-10-18 用户裁定「删掉目标售罄天数的算法」）：target 模式全链路删除，覆盖天数为唯一算法；
   //      「到货后单批售罄 X 天」指标保留（KPI 卡 / 明细表 / 免租校验），见 samsRopAt 内 batchDays。
-  coverDays: 14,     // 覆盖天数（目标库存口径）· 单位：天
+  coverDays: 10,     // 覆盖天数（目标库存口径）· 单位：天（v494 用户 2026-11-13 定默认 10 天）
   csl: 0.95,         // 统计法服务水平（对应公司公式 F⁻¹(csl)；95% → z≈1.6449）
   useExclude: true,  // 是否剔除「异常周」（一次性铺货/促销等非经常性尖峰，清单见 sams-exclude.json）
   // 🔴 v420：【当前库存】各仓「下单那一刻的在库量」（仓短名 → 箱）。用户 2026-10-18 要求做输入口。
   //   未填该仓 = 走原假设（下单瞬间水位正好在预警线）；填了 = 用实测值算期初库存。
   //   ⚠ 存的是**下单时**在库，不是到仓时 —— 到仓时要再扣掉 lead 天的消耗，换算在 samsRopAt 内统一做。
   curStock: {},
+  // v500：各仓「补货当日已下单/已出货的订单实绩」（仓短名 → 箱）。不填 = 无订单，不扣需求。
+  //   只从「当周剩余 DP = 当周 DP 共识 − 本周实际已发生订单」里扣，不从全量覆盖窗口扣。
+  //   与 curStock 一样不写 localStorage：当日订单是天天变的实盘数，跨会话残留会拿昨天的数当今天用。
+  dayOrder: {},
   data: null, loading: false, err: '', loadedAt: ''
 };
 var SAMS_CSL = 0.95;   // 统计法：服务水平（可配，对应公司公式 F⁻¹(csl)；95% → z≈1.6449）
@@ -775,8 +780,32 @@ function samsRopAt(wh, coverW, st) {
   //     ⇒ D = 覆盖周数×7 时**精确退化成预警线本身**（两个旋钮合成一个），语义最干净。
   //   代价（已知并接受）：补货车 5 天后才到仓，那 7 天窗口已后移，到仓后实际需求 17,259 > 今天起 15,204，
   //     所以"补到今天的预警线"在到仓那天缓冲会薄 2,055 箱（≈0.8 天）——补完仍 ≥ 到仓日的预警线是运气，不是保证。
-  var coverDays = (st.coverDays > 0) ? st.coverDays : 14;
-  var coverDemandArr = samsCumAt(axToday, coverDays);        // v429：今天起 coverDays 天的累计需求（原 axArr）
+  var coverDays = (st.coverDays > 0) ? st.coverDays : 10;
+  var coverDemandRaw = samsCumAt(axToday, coverDays);        // v429：今天起 coverDays 天的累计需求（原 axArr）
+  // ===== v500：【当日订单实绩 → 只扣当周剩余 DP】用户 2026-11-15 裁定 =====
+  //   为什么必须扣：人工填的 curStock 已含「在库+在途」，且是下单后的库存位置；当天下单那笔已从库存侧扣掉，
+  //   但未来需求轴（samsDemandAxis）只用 wh.plan 的 DP 周量÷天数均摊，DP 共识在周内不随当日订单递减
+  //   ⇒ 同一笔需求在「库存侧」和「需求侧」各算一次，补货量虚高。
+  //   为什么只扣当周：山姆每周一、四集中下单（单笔含 3~4 天量），若从「今天起 coverDays 天」全窗口扣，
+  //   大单会把下周需求一并扣穿 → 本次补货 0 车。用户指定当周剩余 = 当周 DP − 本周实际已发生订单，
+  //   且下周需求与 ssFinalC 必须完整保留；集中订单按实绩全额扣，不按天摊分。
+  //   cap 第二项 min(..., coverDemandRaw) 只是防「D 很短时扣穿整个覆盖窗口」的兜底，
+  //   ded 恒 ≤ weekRemain（当周剩余），也恒 ≤ 当日填的实绩。
+  var _wkIdx = -1;
+  for (var _wi = 0; _wi < mw.length; _wi++) {
+    if (!mw[_wi] || mw[_wi].mon == null) continue;
+    var _mMs = new Date(mw[_wi].mon).getTime();
+    if (isFinite(_mMs) && _todayMs >= _mMs && _todayMs < _mMs + 7 * 86400000) { _wkIdx = _wi; break; }
+  }
+  var weekDp      = (_wkIdx >= 0 && p[_wkIdx] != null && isFinite(p[_wkIdx]) && p[_wkIdx] > 0) ? p[_wkIdx] : null;
+  var weekActual  = (_wkIdx >= 0 && a[_wkIdx] != null && isFinite(a[_wkIdx])) ? a[_wkIdx] : 0;
+  var weekRemain  = (weekDp != null) ? Math.max(0, weekDp - weekActual) : 0;
+  var weekLabel   = (_wkIdx >= 0 && mw[_wkIdx]) ? (mw[_wkIdx].short || '') : '';
+  var dedCap      = Math.min(weekRemain, Math.max(0, coverDemandRaw));
+  var _doRaw      = (st.dayOrder && st.dayOrder[_leadKey] != null) ? Number(st.dayOrder[_leadKey]) : null;
+  var dayOrder    = (_doRaw != null && isFinite(_doRaw) && _doRaw > 0) ? _doRaw : 0;
+  var ded         = Math.min(dayOrder, dedCap);
+  var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求（ded=0 时与改前逐字相等）
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
@@ -918,7 +947,10 @@ function samsRopAt(wh, coverW, st) {
     batchOk: batchDays != null && batchDays <= st.freeDays,
     // v434: 补货车数（唯一算法 = 覆盖天数；原 target 字段已删）
     nCar: nCar, batchBoxes: batchBoxes,
-    coverDays: coverDays, coverDemandArr: coverDemandArr, coverTarget: coverTarget,
+    coverDays: coverDays, coverDemandRaw: coverDemandRaw, coverDemandArr: coverDemandArr, coverTarget: coverTarget,
+    // v500：当日订单实绩 → 当周剩余 DP 扣减的完整拆解（展示层据此如实标出扣了什么、扣了多少、为什么封顶）
+    dayOrder: dayOrder, weekIdx: _wkIdx, weekLabel: weekLabel, weekDp: weekDp,
+    weekActual: weekActual, weekRemain: weekRemain, dedCap: dedCap, ded: ded,
     ss1c: ss1c, ss2c: ss2c, ssc: ssc, ssPickC: ssPickC, ssFinalC: ssFinalC,   // 覆盖目标用的安全库存（按覆盖天数定）
     coverNeed: coverNeed, coverByTarget: coverByTarget,
     byTargetEff: byTargetEff, needEff: needEff, targetDaysEff: targetDaysEff,
@@ -991,11 +1023,17 @@ function samsRopAt(wh, coverW, st) {
       },
       // coverW 缺省 1（线上默认）：页面把「覆盖周数」参数透传进来，
       // 让预警线 / 统计法安全库存也随参数联动；不传时与离线原型口径完全一致。
-      calc: function (whShort, coverDays, invPos, coverW) {
+      // v501 第 5 参 dayOrder = 该决策日的真实出货（当日订单实绩）。
+      //   每次调用都重建 st.dayOrder，避免上一笔订单残留串到下一天；
+      //   不传 / 非正数 → 空对象 → ded=0 → 与离线原型基线逐位一致（数值对拍靠这条保证公式同源）。
+      calc: function (whShort, coverDays, invPos, coverW, dayOrder) {
         var wh = st.data.whs.find(function (w) { return w.name === '山姆-' + whShort + 'FDC'; });
         if (!wh) throw new Error('找不到仓 ' + whShort);
         st.coverDays = coverDays;
         st.curStock = {}; st.curStock[whShort] = invPos;
+        st.dayOrder = {};
+        var _do = Number(dayOrder);
+        if (isFinite(_do) && _do > 0) st.dayOrder[whShort] = _do;
         return eng.samsRopAt(wh, (Number(coverW) > 0 ? Number(coverW) : 1), st);
       }
     };

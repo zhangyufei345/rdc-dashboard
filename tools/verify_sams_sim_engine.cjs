@@ -9,14 +9,18 @@ const path = require('path');
 const ROOT = path.dirname(__dirname);
 
 const code = fs.readFileSync(path.join(ROOT, 'sams-sim-engine.js'), 'utf8');
-const sandboxGlobal = { Date: Date };
-const SamsSimEngine = (new Function('window', code + '\nreturn window.SamsSimEngine;'))(sandboxGlobal);
-if (!SamsSimEngine || SamsSimEngine.sha16 !== '4d3441e1597ce943') {
-  throw new Error('引擎编译失败或 sha16 漂移: ' + (SamsSimEngine && SamsSimEngine.sha16));
-}
 const DATA = JSON.parse(fs.readFileSync(path.join(ROOT, 'sams-sim-data.json'), 'utf8'));
 const BASE = JSON.parse(fs.readFileSync(path.join(ROOT, '.cache/_fdc_sim/fdc_sim_real.json'), 'utf8'));
-if (DATA.engineSha16 !== SamsSimEngine.sha16) throw new Error('数据文件与引擎 sha16 不一致');
+const sandboxGlobal = { Date: Date };
+const SamsSimEngine = (new Function('window', code + '\nreturn window.SamsSimEngine;'))(sandboxGlobal);
+// v501：sha16 不再写死 —— 抽取块随 rdc-dashboard.html 公式迭代会变，
+//   校验目标是「引擎产物 == 数据文件记录的哈希」，硬编码常量只会造成假红。
+if (!SamsSimEngine || !SamsSimEngine.sha16) throw new Error('引擎编译失败或 sha16 缺失');
+if (DATA.engineSha16 !== SamsSimEngine.sha16) {
+  throw new Error('数据文件与引擎 sha16 不一致: ' + DATA.engineSha16 + ' vs ' + SamsSimEngine.sha16);
+}
+// 本对拍刻意「不传第 5 参 dayOrder」= ded 0 = 旧口径，用于证明抽取的公式与离线原型逐位同源。
+//   模拟页真实推演会传入当日出货，改前/改后 A/B 见 .cache/_v501/ab_v501.cjs。
 
 const ACTIVE = DATA.activeWarehouses;
 const CDS = [7, 10, 14, 21, 30];
