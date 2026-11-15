@@ -1,7 +1,7 @@
 /* ==========================================================================
  * 山姆前置仓「补货量 → 库存演化」沙箱引擎 —— 自动生成，请勿手改
  * 生成脚本 : tools/build_sams_sim_bundle.py
- * 来源     : rdc-dashboard.html 逐字抽取 L2909~L3880（972 行，sha16=b09850e4a0cd639f）
+ * 来源     : rdc-dashboard.html 逐字抽取 L2928~L3912（985 行，sha16=a96b836afb858b2b）
  * 用法     : 页面按需 fetch 本文件文本，用 new Function('window', code) 编译，
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *
@@ -14,7 +14,7 @@
  * ========================================================================== */
 (function (global) {
   var RealDate = global.Date;
-  var SHA16 = 'b09850e4a0cd639f';
+  var SHA16 = 'a96b836afb858b2b';
 
   // 形参 window / Date 遮蔽全局：SRC 里的 window._samsState 落在沙箱对象上，
   // new Date() 走 FakeDate，绝不污染看板主页面的 Date / _samsState。
@@ -877,22 +877,35 @@ function samsRopAt(wh, coverW, st) {
   var noCarByFloor = noCar && coverNeed > 0;
   var batchBoxes = nCar * st.car;                            // 建议单批补货量（箱）
   // ===== v421: 天数全部改「分段累加求解」，不再做除法近似 =====
-  var _qArr = stockAtArrival + batchBoxes;                   // 到仓后的总可售量
-  var _bd = samsDaysToQ(axArr, _qArr);                       // 实际（入库起算）
+  var _qArr = stockAtArrival + batchBoxes;                   // 到仓后的总可售量（有补货口径）
+  // ===== v502（2026-11-15 用户裁定 · 方案A）：0 车 = 没有在途、没有到仓日 =====
+  //   旧口径把 batchDays 一律算成 samsDaysToQ(axArr, stockAtArrival + batchBoxes)：
+  //     0 车时 batchBoxes = 0、stockAtArrival = curStock − leadDemand，等于先扣掉「今天→到仓」的
+  //     预计消耗、再从到仓日起算。但 0 车没有新货入库 ⇒ 既不存在「到仓日」，也不该扣这段消耗
+  //     （那些货还在库里，从今天起就在被卖）。用户原话：「在库能消耗多少天，为什么还要扣在途消耗？」
+  //   ⇒ 0 车：Q = curStock（今天在库全额）、轴 = axToday（今天起算），不扣 leadDemand。
+  //   ⇒ 有补货分支（Q = _qArr、轴 = axArr）一字不动；免租/批量/车数公式一概未动。
+  //   ⇒ 实测（11/15 真实数据）：天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
+  //     惠州/嘉兴有补货，数字不变。
+  var _qShow = noCar ? curStock : _qArr;                     // v502：0 车用今天在库全额
+  var _axShow = noCar ? axToday : axArr;                     // v502：0 车从今天起算
+  var _bd = samsDaysToQ(_axShow, _qShow);                    // 有补货=入库起算 / 0 车=今天起算
   var batchDays = _bd.days;
   var batchDaysExtrap = _bd.extrapDays;                      // 其中靠外推的天数（DP 未覆盖）
   var batchDaysCons = samsDaysToQ(axToday, rop + batchBoxes).days;   // 保守（下单起算，假设下单时=预警线）
   // ===== v458：「确定 X 天 · 计划外 Y 天」拆解（仅未来计划口径下有边界概念）=====
   //   历史口径下整条轴是恒定历史日均、可无限延伸，不存在"计划覆盖到哪天" → batchDaysFixed 置 null，卡片不拆。
-  var _bdFix = samsDaysFixed(axArr, _qArr);
+  //   v502：拆解必须跟着 _axShow 走，否则 0 车会出现「天数按今天起、外推按到仓起」的混轴数字。
+  var _bdFix = samsDaysFixed(_axShow, _qShow);
   var batchDaysFixed = (reqBasis === 'future' && _bdFix.days != null) ? _bdFix.days : null;
   var batchDaysFixedExact = !!_bdFix.exact;                  // true = 在 DP 覆盖区内就卖完了（无计划外部分）
-  var extrapRate = axArr.dpAvgRate;                          // 越界外推用的加权均值（箱/天）
-  var dpEndStr = axArr.dpEndMs ? ((new Date(axArr.dpEndMs - 86400000).getMonth() + 1) + '/' + new Date(axArr.dpEndMs - 86400000).getDate()) : '';
+  var extrapRate = _axShow.dpAvgRate;                        // 越界外推用的加权均值（箱/天）
+  var dpEndStr = _axShow.dpEndMs ? ((new Date(_axShow.dpEndMs - 86400000).getMonth() + 1) + '/' + new Date(_axShow.dpEndMs - 86400000).getDate()) : '';
   // 再下单间隔（v434 起唯一口径）：到仓日已过去 lead 天，覆盖期还剩 coverDays − lead 天要覆盖；
   //   本批水位能撑 batchDays 天，差额就是可以推迟下单的天数。
-  //   （v430 起 cover 口径的定义；target 口径的「到货后降回预警线」定义随算法删除一并移除。）
-  var _covRest = Math.max(0, coverDays - lead);
+  //   v502：0 车没有到仓日，目标窗口本来就是「今天起 coverDays 天」，故不再减 lead
+  //   —— 否则天数口径换了、间隔却凭空多出 lead 天（实测天津 6.34 → 6.35，基本不变）。
+  var _covRest = noCar ? coverDays : Math.max(0, coverDays - lead);
   var cycleDays = (batchDays == null) ? null : Math.max(0, batchDays - _covRest);
   var cycleShort = false;
   // ===== v426 的「补完仍欠预警线 / 地板未采用」量化：v434 起 target 模式删除，恒为 0/false（字段保留避免展示层报错）=====
@@ -936,7 +949,7 @@ function samsRopAt(wh, coverW, st) {
     dropDays: dropDays,
     reqCoverDays: D,
     ssDays: dUse > 0 ? ssFinal / dUse : 0,          // 安全库存折合天数
-    batchDays: batchDays,                 // 实际（入库起算，已扣时效）· 分段累加求解
+    batchDays: batchDays,                 // v502：有补货=入库起算（已扣时效）/ 0车=今天起算（在库全额）· 分段累加求解
     batchDaysExtrap: batchDaysExtrap,     // 其中靠「DP 未覆盖外推」的天数（诚实标注）
     // v458：把「确定 / 计划外」拆开 —— 确定 = DP 已排计划区间内算得死的天数；计划外 = batchDaysExtrap
     batchDaysFixed: batchDaysFixed,               // DP 覆盖区间内能撑的天数（历史口径下为 null）

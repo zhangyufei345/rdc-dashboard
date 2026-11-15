@@ -1314,7 +1314,26 @@ const DB_NAME = 'RDC_Dashboard';
 //   ⑤ paramsKey 加入 engine.sha16：引擎重建后公式变了，参数没动时也不能复用旧推演结果。
 //   【影响面·真实数据 A/B 见 .cache/_v501/】不扣减 → 扣减，三仓合计车数与 minOk 见验收脚本。
 //   【DB_VERSION 不动】纯前端入参 + 同源引擎重建，无新增持久化字段。
-const BUILD_VERSION = 501;
+// v502（2026-11-15 用户裁定「0 车库存可售天数不扣在途消耗」· 方案 A）：
+//   ① 用户原话：「这个 11.3 天你是按扣除 7175 算的，完全不合逻辑。这里显示的是在库能消耗多少天数，
+//      为什么还要扣除 7175 的在途消耗数量？因为没有在途」。核查属实：batchDays 原为
+//      samsDaysToQ(axArr, stockAtArrival + batchBoxes)，0 车时 batchBoxes=0、
+//      stockAtArrival = curStock − leadDemand(天津 7,174.86)，既先扣掉「今天→到仓」的预计消耗，
+//      又从到仓日起算。但没有补货就没有新货入库 ⇒ 没有「到仓日」，那些货仍在库里、从今天起就在被卖。
+//   ② 改法（只改 0 车分支）：Q = curStock（今天在库全额）、轴 = axToday（今天起算）；
+//      有补货分支 Q = stockAtArrival + batchBoxes、轴 = axArr 一字不动。
+//      派生字段 batchDaysExtrap / batchDaysFixed / extrapRate / dpEndStr 同步跟新轴走，避免混轴；
+//      再下单间隔的 _covRest 在 0 车时取 coverDays（目标窗口本就从今天起），不再减 lead，
+//      否则天数换口径、间隔会凭空多出 lead 天（实测天津 6.34 → 6.35 天，基本不变）。
+//   ③ 展示层同步口径：0 车卡片「库存可售 X 天（今天起算）」、明细表列头与副标题、CSV 表头、
+//      图4 副标题 / tooltip、免租合规口径说明与「计算过程」面板均标出该例外；
+//      有补货仓的所有文案与数值不变。车数 / 需补量 / 安全库存 / 预警线 / 当日订单扣减一概未动。
+//   ④ 改动落在沙箱引擎抽取块内 ⇒ 必须重跑 tools/build_sams_sim_bundle.py 重建引擎与数据文件。
+//      数值对拍 tools/verify_sams_sim_engine.cjs 的 FIELDS 不含 batchDays，故基线仍逐位一致。
+//   【影响面·真实数据 11/15】天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
+//      惠州 1 车 10.03 天、嘉兴 1 车 13.40 天不变；5 仓 batchOk 仍全部合规。
+//   【DB_VERSION 不动】纯前端展示口径 + 同源引擎重建，无新增持久化字段。
+const BUILD_VERSION = 502;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -3762,22 +3781,35 @@ function samsRopAt(wh, coverW, st) {
   var noCarByFloor = noCar && coverNeed > 0;
   var batchBoxes = nCar * st.car;                            // 建议单批补货量（箱）
   // ===== v421: 天数全部改「分段累加求解」，不再做除法近似 =====
-  var _qArr = stockAtArrival + batchBoxes;                   // 到仓后的总可售量
-  var _bd = samsDaysToQ(axArr, _qArr);                       // 实际（入库起算）
+  var _qArr = stockAtArrival + batchBoxes;                   // 到仓后的总可售量（有补货口径）
+  // ===== v502（2026-11-15 用户裁定 · 方案A）：0 车 = 没有在途、没有到仓日 =====
+  //   旧口径把 batchDays 一律算成 samsDaysToQ(axArr, stockAtArrival + batchBoxes)：
+  //     0 车时 batchBoxes = 0、stockAtArrival = curStock − leadDemand，等于先扣掉「今天→到仓」的
+  //     预计消耗、再从到仓日起算。但 0 车没有新货入库 ⇒ 既不存在「到仓日」，也不该扣这段消耗
+  //     （那些货还在库里，从今天起就在被卖）。用户原话：「在库能消耗多少天，为什么还要扣在途消耗？」
+  //   ⇒ 0 车：Q = curStock（今天在库全额）、轴 = axToday（今天起算），不扣 leadDemand。
+  //   ⇒ 有补货分支（Q = _qArr、轴 = axArr）一字不动；免租/批量/车数公式一概未动。
+  //   ⇒ 实测（11/15 真实数据）：天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
+  //     惠州/嘉兴有补货，数字不变。
+  var _qShow = noCar ? curStock : _qArr;                     // v502：0 车用今天在库全额
+  var _axShow = noCar ? axToday : axArr;                     // v502：0 车从今天起算
+  var _bd = samsDaysToQ(_axShow, _qShow);                    // 有补货=入库起算 / 0 车=今天起算
   var batchDays = _bd.days;
   var batchDaysExtrap = _bd.extrapDays;                      // 其中靠外推的天数（DP 未覆盖）
   var batchDaysCons = samsDaysToQ(axToday, rop + batchBoxes).days;   // 保守（下单起算，假设下单时=预警线）
   // ===== v458：「确定 X 天 · 计划外 Y 天」拆解（仅未来计划口径下有边界概念）=====
   //   历史口径下整条轴是恒定历史日均、可无限延伸，不存在"计划覆盖到哪天" → batchDaysFixed 置 null，卡片不拆。
-  var _bdFix = samsDaysFixed(axArr, _qArr);
+  //   v502：拆解必须跟着 _axShow 走，否则 0 车会出现「天数按今天起、外推按到仓起」的混轴数字。
+  var _bdFix = samsDaysFixed(_axShow, _qShow);
   var batchDaysFixed = (reqBasis === 'future' && _bdFix.days != null) ? _bdFix.days : null;
   var batchDaysFixedExact = !!_bdFix.exact;                  // true = 在 DP 覆盖区内就卖完了（无计划外部分）
-  var extrapRate = axArr.dpAvgRate;                          // 越界外推用的加权均值（箱/天）
-  var dpEndStr = axArr.dpEndMs ? ((new Date(axArr.dpEndMs - 86400000).getMonth() + 1) + '/' + new Date(axArr.dpEndMs - 86400000).getDate()) : '';
+  var extrapRate = _axShow.dpAvgRate;                        // 越界外推用的加权均值（箱/天）
+  var dpEndStr = _axShow.dpEndMs ? ((new Date(_axShow.dpEndMs - 86400000).getMonth() + 1) + '/' + new Date(_axShow.dpEndMs - 86400000).getDate()) : '';
   // 再下单间隔（v434 起唯一口径）：到仓日已过去 lead 天，覆盖期还剩 coverDays − lead 天要覆盖；
   //   本批水位能撑 batchDays 天，差额就是可以推迟下单的天数。
-  //   （v430 起 cover 口径的定义；target 口径的「到货后降回预警线」定义随算法删除一并移除。）
-  var _covRest = Math.max(0, coverDays - lead);
+  //   v502：0 车没有到仓日，目标窗口本来就是「今天起 coverDays 天」，故不再减 lead
+  //   —— 否则天数口径换了、间隔却凭空多出 lead 天（实测天津 6.34 → 6.35，基本不变）。
+  var _covRest = noCar ? coverDays : Math.max(0, coverDays - lead);
   var cycleDays = (batchDays == null) ? null : Math.max(0, batchDays - _covRest);
   var cycleShort = false;
   // ===== v426 的「补完仍欠预警线 / 地板未采用」量化：v434 起 target 模式删除，恒为 0/false（字段保留避免展示层报错）=====
@@ -3821,7 +3853,7 @@ function samsRopAt(wh, coverW, st) {
     dropDays: dropDays,
     reqCoverDays: D,
     ssDays: dUse > 0 ? ssFinal / dUse : 0,          // 安全库存折合天数
-    batchDays: batchDays,                 // 实际（入库起算，已扣时效）· 分段累加求解
+    batchDays: batchDays,                 // v502：有补货=入库起算（已扣时效）/ 0车=今天起算（在库全额）· 分段累加求解
     batchDaysExtrap: batchDaysExtrap,     // 其中靠「DP 未覆盖外推」的天数（诚实标注）
     // v458：把「确定 / 计划外」拆开 —— 确定 = DP 已排计划区间内算得死的天数；计划外 = batchDaysExtrap
     batchDaysFixed: batchDaysFixed,               // DP 覆盖区间内能撑的天数（历史口径下为 null）
@@ -3972,7 +4004,7 @@ function samsExportCSV() {
               '【1】需求覆盖(箱)', '①统计法(公式值)', '②峰值法(公式值)', '①统计法(已×k)', '②峰值法(已×k)', '安全库存采用', '【2】安全库存(已×k)',
               '历史口径预警线(仅对照·箱)', '需求倍率k(仅缩放安全库存)', '预警线(箱)', '预警线折合天数',
               '运输时效(天)', '当前库存(下单时·实填·箱)', '期初库存来源', '到仓前消耗(今天起·箱)', '到仓时在库(箱)',
-              '到仓后日均(箱)', '单批售罄天数(入库起)', '售罄天数外推(天)', '单批售罄天数(下单起·保守上界)',
+              '到仓后日均(箱)', '售罄/库存可售天数(有补货=入库起·0车=今天起)', '售罄天数外推(天)', '单批售罄天数(下单起·保守上界)',
               '覆盖天数(天)', '建议车数(车/批)', '建议补货量(箱)', '再下单间隔(天)', '补完是否达到预警线',
               '免租上限(天)', '免租是否合规', '免租上限预警线(箱)', '需下调(箱)',
               '建议批量自身天数', '最新周实际(箱)', '参与统计的完整周数', '剔除异常周数', '最新周标签'];
@@ -4282,11 +4314,11 @@ function renderSamsFc() {
                  ? (r.noCarByFloor
                     ? ('需补 ' + F(r.needEff) + ' 箱（目标 ' + F(r.targetDemandEff) + ' − 当前库存 ' + F(r.curStock) + ' 箱）'
                        + ' < 最小起补量 ' + F(r.minCarBoxes) + ' 箱（' + r.minCarRatio + ' 车 × ' + F(st.car) + ' 箱/车）'
-                       + ' → 本批不补；现有库存可售 ' + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' 天（入库起算）')
+                       + ' → 本批不补；现有库存可售 ' + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' 天（今天起算）')
                     : ('当前库存 ' + (r.curKnown ? '（实填）' : '（未填·按预警线）') + F(r.curStock) + ' 箱 ≥ 今天起 '
                        + r.targetDaysEff + ' 天需求 ' + demTxt(r) + F(r.coverDemandArr) + ' ＋ 安全库存 ' + F(r.ssFinalC)
                        + ' ＝ 目标 ' + F(r.targetDemandEff) + ' 箱 → 本批不补；现有库存可售 '
-                       + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' 天（入库起算）'))
+                       + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' 天（今天起算）'))
                  : ('今天起 ' + r.targetDaysEff + ' 天需求 ' + demTxt(r) + F(r.coverDemandArr) + ' ＋ 安全库存 ' + F(r.ssFinalC)
                     + ' ＝ 目标 ' + F(r.targetDemandEff) + ' 箱 − 当前库存 ' + F(r.curStock) + ' 箱'
                     + (r.curKnown ? '（实填）' : '（未填·按预警线）') + ' ＝ 需补 ' + F(r.needEff) + ' 箱 → ' + r.byTargetEff + ' 车；'
@@ -4399,7 +4431,7 @@ function renderSamsFc() {
      + '<th>覆盖天数<br>(今天起·含安全库存)</th>'
      + '<th style="background:#E6F1FB">建议车数<br>(车/批)</th>'
      + '<th style="background:#E6F1FB">建议补货量<br>(箱/批)</th>'
-     + '<th>到货后单批<br>售罄(天)</th><th>免租上限<br>线(箱)</th>'
+     + '<th>到货后售罄 /<br>库存可售(天)</th><th>免租上限<br>线(箱)</th>'
      + '<th>再下单间隔<br>(天)</th>'
      + '<th style="text-align:left;white-space:normal;min-width:190px">车数是怎么定出来的</th>'
      + '<th>最新周<br>实际(箱)</th><th>完整<br>周数</th></tr></thead><tbody>';
@@ -4445,7 +4477,7 @@ function renderSamsFc() {
       + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' ' + (r.noCar ? '' : (r.batchOk ? '✅' : '❌'))
       + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">'
       + (r.noCar
-          ? (r.noCarByFloor ? '未达起补量 · 现有库存可售' : '本批不补 · 现有库存可售') + (r.batchOk ? '' : ' <span style="color:var(--color-orange)">已超免租</span>')
+          ? (r.noCarByFloor ? '未达起补量 · 库存可售(今天起)' : '本批不补 · 库存可售(今天起)') + (r.batchOk ? '' : ' <span style="color:var(--color-orange)">已超免租</span>')
           : (r.batchOk ? '合规' : '超 ' + (r.batchDays - st.freeDays).toFixed(1) + ' 天'))
       + (r.batchDaysCons == null ? '' : ' · 下单起 ' + r.batchDaysCons.toFixed(1))
       + '</div>'
@@ -4537,6 +4569,8 @@ function renderSamsFc() {
      + '<b>到仓时在库</b> = 下单时在库 − 「今天→到仓」这几天的<b>实际消耗</b>（货在路上的这几天，在库旧货仍在被消化）；'
      + '下单时在库<b>默认按预警线假设</b>，在预警线卡片内<b>实填当前库存</b>后改为实测值（格内小字「实测 X − Y 在途」标出）；'
      + '<b>到货后单批售罄</b> = 从到仓日起<b>分段累加</b>需求，卖完（到仓时在库 + 建议补货量）所需天数，须 ≤ 免租 ' + st.freeDays + ' 天。<br>'
+     + '⚠ <b>v502 例外</b>：本批不补（0 车）时没有新货入库、也没有到仓日 → 该列改叫<b>「库存可售」</b>，'
+     + '按<b>今天起、当前在库全额</b>分段累加，不扣「今天→到仓」的预计消耗（那批货还在库里）。<br>'
      + '⚠ 售罄天数格内「外推 X 天」= 该段已超出 DP 计划覆盖范围（源表只到最后一两周），靠最后一档速率外推，属估算。<br>'
      + '⚠ 「建议车数」是<b>按目标天数算出的最小满足车数</b>，不含整车的取整余量与在途/在产的真实差额；'
      + '请先在上方卡片实填各仓当前库存，再据此下单 —— 车队/仓库给的实盘数与卡内数值不一致时，以实盘数为准。'
@@ -4617,7 +4651,7 @@ function renderSamsFc() {
   if (overWh.length) {
     h += '<div class="card" style="border-left:4px solid var(--color-red);background:var(--bg-card)">'
        + '<div style="font-size:13px;font-weight:600;color:var(--color-red)">⚠ 免租超限：'
-       + overWh.length + ' 个仓的「单批售罄天数」超过 ' + st.freeDays + ' 天（入库起算）</div>'
+       + overWh.length + ' 个仓的「单批售罄天数」超过 ' + st.freeDays + ' 天（有补货=入库起算 / 0 车=今天起算）</div>'
        + '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px;line-height:1.9">';
     overWh.forEach(function (r) {
       var bd = (r.batchDays == null) ? null : r.batchDays;
@@ -4643,14 +4677,17 @@ function renderSamsFc() {
       + '(到仓时在库 + 建议批量) 所需天数；其中到仓时在库 = 下单时在库 − 「今天→到仓」这几天的实际消耗。'
       + '下单时在库默认取<b>预警线</b>（v420 起可在卡片内填当前库存覆盖）。'
       + '批量越大 → 免租上限线越低（(免租天数 + 时效) 内的需求 − 批量），两者互相挤压；'
-      + '若该仓能谈到「低谷期小批量 / 部分直发」，可把目标天数调低再算。</span>'
+      + '若该仓能谈到「低谷期小批量 / 部分直发」，可把目标天数调低再算。'
+      + '<br>⚠ <b>v502 例外</b>：0 车（本批不补）没有新货入库、没有到仓日，该仓天数改为<b>从今天起算、按当前在库全额</b>，'
+      + '不扣「今天→到仓」的预计消耗；上一段「从入库起算」只适用于有补货的仓。</span>'
       + '</div></div>';
   } else {
     h += '<div class="card" style="border-left:4px solid var(--color-green);padding:12px 20px">'
        + '<span style="font-size:12px;color:var(--color-green);font-weight:600">✅ 免租合规：按「' + modeLabel + '」反推的建议批量下，' + rows.length + ' 个仓的单批售罄天数均在 '
        + st.freeDays + ' 天以内</span>'
        + '<span style="font-size:11px;color:var(--text-secondary);margin-left:10px">（口径 v411：自「入库（到仓）」起算，已扣各仓运输时效，批量按「覆盖天数」反推车数'
-       + (noLeadWh.length ? '；' + noLeadWh.map(function (r) { return r.short; }).join('、') + ' 时效未配置，按 0 天保守估' : '') + '）</span>'
+       + (noLeadWh.length ? '；' + noLeadWh.map(function (r) { return r.short; }).join('、') + ' 时效未配置，按 0 天保守估' : '')
+       + '；0 车仓按今天起算）</span>'
        + '</div>';
   }
 
@@ -4719,6 +4756,7 @@ function renderSamsFc() {
   h += '<div class="card" style="margin-bottom:0"><div class="card-header"><div class="card-title">图4 · 单批售罄天数 vs 免租上限（按「' + modeLabel + '」反推的建议批量）</div></div>'
      + '<div class="card-subtitle" style="margin-bottom:8px">⚠ 本页无库存/在途数据，仅给「应维持的水位线」，不做触发判断。'
      + '单批售罄天数<b>自「入库（到仓）」起算</b> = (到仓时在库 + 建议批量 N 车) ÷ 基准日均；'
+     + ' ⚠ 0 车仓无到仓日，改按<b>今天起、当前在库全额</b>算「库存可售」；'
      + '到仓时在库 = 预警线 − 日均 × 运输时效（下单到到仓这段路上，在库旧货仍在被消化）。'
      + '红线以下即合规；绿虚线 = 建议批量自身能卖几天（批量越大这根线越高，免租余量越紧）。</div>'
      + '<div id="sams-chart-free" style="height:320px"></div></div>';
@@ -6228,7 +6266,7 @@ function samsCharts(data, rows, st) {
           var i = ps[0].dataIndex, r = rows[i] || null;
           if (!r) return '';
           var o = r.short + '<br>';
-          o += '单批售罄：<b>' + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' 天</b> / 上限 ' + st.freeDays + ' 天 ' + (r.batchOk ? '✅ 合规' : '❌ 超限') + '<br>';
+          o += (r.noCar ? '库存可售' : '单批售罄') + '：<b>' + (r.batchDays == null ? '—' : r.batchDays.toFixed(1)) + ' 天</b> / 上限 ' + st.freeDays + ' 天 ' + (r.batchOk ? '✅ 合规' : '❌ 超限') + '<br>';
           o += r.noCar
             ? (r.noCarByFloor
                 ? '　· <span style="color:#0F7B4F">未达最小起补量·本批不补</span>（缺口 ' + samsFmt(r.needEff) + ' 箱 < 起补线 ' + samsFmt(r.minCarBoxes) + ' 箱 = ' + r.minCarRatio + ' 车）<br>'

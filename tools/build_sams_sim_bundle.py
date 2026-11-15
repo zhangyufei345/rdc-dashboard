@@ -43,6 +43,10 @@ for key in (
     'dayOrder: {},',
     'var coverDemandRaw = samsCumAt(axToday, coverDays);',
     'Math.min(dayOrder, dedCap)',
+    # v502 同源断言：0 车「库存可售天数」改走 axToday + curStock，也必须真的被抽进引擎。
+    #   该字段模拟页虽不消费，但抽取块变了引擎就必须重建，否则 sha16 仍是旧值、静默跑旧公式。
+    'var _qShow = noCar ? curStock : _qArr;',
+    'var _axShow = noCar ? axToday : axArr;',
 ):
     if key not in src:
         raise SystemExit('抽取块缺少关键行: ' + key)
@@ -84,6 +88,8 @@ rules = {
     'ship': '每日实际出货 = 相邻两次「山姆需求」切片的累计出货差分（T 出货 = 截止 T+1 累计 − 截止 T 累计），整笔记在区间末日，不摊分',
     # v501：模拟侧与补货卡片同口径（用户 2026-11-15 裁定「模拟推演同步按当日订单扣需求」）。
     'dayOrder': '每个决策日把当日真实出货 x.ship[仓] 作为「当日订单实绩」代入引擎，只从「当周剩余 DP = 当周 DP 共识 − 本周实际已发生订单」里扣减需求；集中下单按实绩全额扣、不按天摊分，下周需求与安全库存完整保留。与补货卡片公式同源，不传该入参时 ded=0（离线原型对拍仍逐位一致）',
+    # v502：0 车天数口径（模拟页不展示该指标，但引擎与页面同源，留痕避免以后误判）。
+    'noCarDaysBasis': '与补货卡片同源：0 车（本批不补）没有新货入库，「库存可售天数」按今天起、当前在库全额分段累加，不扣到货前消耗；有补货仍按到仓起算。车数/需补量/安全库存公式不受影响',
     'dp': '每个决策日只用当日可得的最近一次切片 DP 快照（LOCF，零前视）',
     'stock': '期初不取真实库存：假设各仓起算日 0 点在库正好等于当日真实预警线（需求覆盖 + 安全库存）',
     'start': '逐仓起点：各仓从「该仓首次有正数 DP 共识」那天开始模拟，不把三仓起算日拉平',
@@ -212,10 +218,12 @@ with open(p_eng, 'w', encoding='utf-8', newline='\n') as f:
 _eng_txt = open(p_eng, encoding='utf-8').read()
 if (sha16 in _eng_txt and data_obj['engineSha16'] == sha16
         and 'st.dayOrder = {};' in _eng_txt
-        and 'var coverDemandRaw = samsCumAt(axToday, coverDays);' in _eng_txt):
+        and 'var coverDemandRaw = samsCumAt(axToday, coverDays);' in _eng_txt
+        and 'var _qShow = noCar ? curStock : _qArr;' in _eng_txt
+        and 'var _axShow = noCar ? axToday : axArr;' in _eng_txt):
     pass
 else:
-    raise SystemExit('sha16 / v501 当日订单扣减公式 写入校验失败')
+    raise SystemExit('sha16 / v501 当日订单扣减 / v502 0车天数口径 写入校验失败')
 
 print('抽取线上函数块 L%d~L%d，%d 行，sha16=%s' % (i_start + 1, i_ret + 3, i_ret + 3 - i_start, sha16))
 print('sams-sim-data.json  %d 字节 | %d 决策日 / %d 份 DP 快照 / 出货合计 %s'
