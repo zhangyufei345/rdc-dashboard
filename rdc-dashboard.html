@@ -1333,7 +1333,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   【影响面·真实数据 11/15】天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
 //      惠州 1 车 10.03 天、嘉兴 1 车 13.40 天不变；5 仓 batchOk 仍全部合规。
 //   【DB_VERSION 不动】纯前端展示口径 + 同源引擎重建，无新增持久化字段。
-const BUILD_VERSION = 505;
+const BUILD_VERSION = 506;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -6968,7 +6968,7 @@ function renderOverview() {
       <!-- 左：满足率趋势 -->
       <div class="card">
         <div class="card-header" style="display:flex;align-items:center">
-          <span class="card-title">📈 日订单满足率趋势<span class="card-sub">近 7 个工作日</span></span>
+          <span class="card-title">📈 日订单满足率趋势<span class="card-sub">默认近 7 个工作日 · 按住曲线区左右拖动可查看更早</span></span>
           <select id="trend-rdc-filter" onchange="window._trendRdc=this.value;renderOverview()" style="margin-left:auto;padding:4px 8px;background:rgba(15,23,42,0.7);color:#e2e8f0;border:1px solid rgba(99,179,237,0.3);border-radius:6px;font-size:11px;outline:none">
             <option value="all" ${(window._trendRdc||'all')==='all'?'selected':''}>全部RDC（KA/经销商）</option>
             ${RDC_LIST.map(r => '<option value="'+r+'"' + ((window._trendRdc||'')===r?' selected':'') + '>'+r+'</option>').join('')}
@@ -7161,13 +7161,20 @@ function renderOverview() {
     }
   });
   const trendDates = Object.keys(trendDayMap).sort();
-  const trendLast7 = trendDates.slice(-7);
-  if (trendLast7.length > 0) {
+  // v506（用户 2026-11-16）：「近 7 个工作日」原来是 slice(-7) 只把最后 7 天喂给 ECharts，
+  //   更早的日期压根不在数据里 → 拖不动。改为**全月工作日全部喂入**，
+  //   再用 dataZoom 把「默认可见窗口」限定为最后 7 个工作日（口径与改版前一致），
+  //   用户按住曲线区左右拖动即可查看当月更早日期的日满足率。
+  const trendAllDays = trendDates;
+  const TREND_WIN = 7;                       // 默认可见窗口天数（= 改版前「近 7 个工作日」）
+  const trendStartPct = trendAllDays.length > TREND_WIN
+    ? (1 - TREND_WIN / trendAllDays.length) * 100 : 0;
+  if (trendAllDays.length > 0) {
     const chartTrend = initChart('chart-trend');
     if (chartTrend) {
       const legendData = ['KA 满足率', '经销商 满足率'];
-      const kaData = trendLast7.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
-      const jxData = trendLast7.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
+      const kaData = trendAllDays.map(d => trendDayMap[d].ka.orderQty > 0 ? trendDayMap[d].ka.firstQty / trendDayMap[d].ka.orderQty : null);
+      const jxData = trendAllDays.map(d => trendDayMap[d].jx.orderQty > 0 ? trendDayMap[d].jx.firstQty / trendDayMap[d].jx.orderQty : null);
       const seriesData = [
         { name: 'KA 满足率', type: 'line', smooth: true, data: kaData, lineStyle: { width: 3, color: '#60a5fa', shadowBlur: 8, shadowColor: 'rgba(96,165,250,0.5)' }, itemStyle: { color: '#60a5fa' }, symbol: 'circle', symbolSize: 8 },
         { name: '经销商 满足率', type: 'line', smooth: true, data: jxData, lineStyle: { width: 3, color: '#34d399', shadowBlur: 8, shadowColor: 'rgba(52,211,153,0.5)' }, itemStyle: { color: '#34d399' }, symbol: 'circle', symbolSize: 8 }
@@ -7206,7 +7213,7 @@ function renderOverview() {
           },
           formatter: function(params) {
             const idx = params[0] && typeof params[0].dataIndex === 'number' ? params[0].dataIndex : -1;
-            const fullDate = (idx >= 0 && idx < trendLast7.length) ? trendLast7[idx] : '';
+            const fullDate = (idx >= 0 && idx < trendAllDays.length) ? trendAllDays[idx] : '';
             const dayLabel = params[0] && params[0].name ? params[0].name : '';
             // v100.5: 整体包一层 min-width wrapper，保证下面 buildTop5TooltipHtml 的 flex:1（物料/品名列）不被压扁
             let html = '<div style="min-width:380px;box-sizing:border-box">' +
@@ -7233,8 +7240,24 @@ function renderOverview() {
           }
         },
         legend: { data: legendData, textStyle: { color: '#94a3b8', fontSize: 11 }, top: 18 },
+        // v506（用户 2026-11-16）：可拖拽查看当月更早日期。
+        //   ① 只开「按住拖动平移」（moveOnMouseMove），滚轮既不缩放也不平移 → 不抢页面滚动；
+        //   ② start=最后 7 天窗口起点、end=100 → 首屏与改版前完全一致，只是多出左侧可拖的历史；
+        //   ③ 当月工作日 ≤7 天时不注入 dataZoom（全量即窗口，拖也拖不动，反而可能干扰 tooltip）。
+        dataZoom: (trendAllDays.length > TREND_WIN) ? [{
+          type: 'inside',
+          xAxisIndex: 0,
+          start: trendStartPct,
+          end: 100,
+          moveOnMouseMove: true,
+          zoomOnMouseWheel: false,
+          moveOnMouseWheel: false,
+          preventDefaultMouseMove: true,
+          minValueSpan: 2,          // 至少保留 3 个点，避免被拖成 1~2 个点看不出趋势
+          filterMode: 'filter'
+        }] : [],
         grid: { left: 50, right: 20, top: 50, bottom: 30 },
-        xAxis: { type: 'category', data: trendLast7.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
+        xAxis: { type: 'category', data: trendAllDays.map(d => d.slice(5)), axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11 } },
         yAxis: { type: 'value', min: 0, max: 1.03, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { lineStyle: { color: 'rgba(99,179,237,0.1)' } }, axisLabel: { color: '#94a3b8', formatter: v => (v*100).toFixed(0)+'%' } },
         series: seriesData
       });
