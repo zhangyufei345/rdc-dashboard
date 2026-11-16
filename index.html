@@ -1333,7 +1333,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   【影响面·真实数据 11/15】天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
 //      惠州 1 车 10.03 天、嘉兴 1 车 13.40 天不变；5 仓 batchOk 仍全部合规。
 //   【DB_VERSION 不动】纯前端展示口径 + 同源引擎重建，无新增持久化字段。
-const BUILD_VERSION = 504;
+const BUILD_VERSION = 505;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -17100,6 +17100,45 @@ function renderReplenishment() {
         if ((_pm[r.sku] && _pm[r.sku].obsolete) || (_pm[_skuN] && _pm[_skuN].obsolete)) return false;
         return true;
       });
+      // ===== v505：下调预警「有缺口 / 真超销」硬排除 + 进度领先打标（用户 2026-11-16 裁决·口径C）=====
+      // 【问题】本清单的入选只看「未来两月 DP 衰减」，不含「本月超销 / 当前有缺口」的否决位：
+      //   downScore = 0.35×滞后 + 0.45×衰减 + 0.10×长期低销 + 0.10×无压力（L27336），
+      //   而滞后项在「领先」时归 0（_devMag = min(max(-dev,0),0.5)/0.5，L27325）——
+      //   于是「本月卖超」只是一项少拿 0.35 分的减分项，不是否决项；decay=1.0 单独就给 0.45。
+      // 【实测 2026-11-16（60 条清单）】进度偏差>0（领先）13 条、完成率≥100% 3 条、当前仍有缺口 3 条
+      //   （且这 3 条全落在领先那 13 条里）。13 条的滞后项**全部精确 0.00**，
+      //   下调分全靠 0.45×衰减 + 长期低销 + 无压力 凑到 0.505~0.642。
+      //   既有上调通道也没兜住：缺货 fast-path 要求缺货天数≥3（L27374），这 3 条实测 0/2/2 天；
+      //   超销 fast-path 要求完成率≥150% 且缺口=0（L27383），20809/20896 正好 100.0%、09649 仅 103.8%。
+      // 【裁决·口径C】用户原话「超销的或者有缺货的不应该出现在下调清单吧」：
+      //   ① 硬排除：shortQty>0（当前有缺口）或 comp≥1（完成率≥100% 真超销）
+      //      理由：现有计划已经不够卖 / 已经卖超，此时建议下调计划方向自相矛盾。
+      //   ② 打标不排除：dev>0 但无缺口且 comp<1（进度领先）→ 保留 + 行内「📈 领先」徽章
+      //      理由：领先 ≠ 超销（09855 华北 dev 仅 +1.3pt，51.3% vs 时间进度 50%，几乎打平），
+      //      一把刀会连「本月尾段卖得好但下月确实换季退市」的品一起误杀。
+      // 【实测影响】60 → 55 条：排除 09855华南(缺431箱)/09854西北(缺11箱)/09649华南(缺69箱)
+      //   + 20809东北(100%)/20896华北(100%)；另 8 条打标。
+      //   ⚠ 联动：09855华南、09649华南 被排除后不再与「上调建议」构成交集 → 下方 v504 互斥闸门
+      //     不再把它们移出上调建议，会**重新出现在上调建议表**里（有缺口→上调，方向自洽）；
+      //     09854西北 上调分仅 14 < 40 门槛，两侧都不进（已在提示条留痕）。
+      // 【层级】只作用于本清单 + 导出（导出 Sheet2 读 window._dwList，自动同步），
+      //   **不改 buildPlanOptimAdvice 的 direction/downScore**——「分仓计划优化建议」页对 20809/20896
+      //   仍显示「下调分仓计划」，这是刻意的（口径层未动，避免牵连优化建议页方向分布与下调幅度）。
+      var _gOversellLog = { cut: [], lead: [] };
+      _dwList = _dwList.filter(function(r){
+        var _sq = r.shortQty || 0;
+        var _cp = (r.comp == null) ? null : r.comp;
+        var _dv = (r.dev == null) ? null : r.dev;
+        var _tag = String(r.sku) + ' ' + r.rdc;
+        if (_sq > 0) { _gOversellLog.cut.push(_tag + '（当前缺口 ' + _sq + ' 箱）'); return false; }
+        if (_cp != null && _cp >= 1) { _gOversellLog.cut.push(_tag + '（完成率 ' + (_cp * 100).toFixed(0) + '%）'); return false; }
+        if (_dv != null && _dv > 0.005) {
+          _gOversellLog.lead.push(_tag + '（+' + (_dv * 100).toFixed(0) + 'pt）');
+          r._leadFlag = true;   // 打标：渲染层与导出层都读这个字段
+        }
+        return true;
+      });
+      window._gOversellLog = _gOversellLog;   // 暴露到 window：探针/调试与渲染层共用，避免闭包不可见
       // v323: 排序改为「需求量（计划量×后续衰减量）为主、打分微调」，不再仅按下调分
       //   理由：需求量小的 SKU 即使下调分高，对补货调整建议意义不大；真正该优先盯的是
       //   「计划量大 + 后续衰减量大」的品（换季/退市前冗余），避免变成呆滞库存。
@@ -17525,6 +17564,20 @@ function renderReplenishment() {
     if (_gGateLog.dwCut.length) {
       downWarnHtml += '<br>🔒 <b>已做上下调互斥</b>：以下 SKU×RDC 在「分仓计划优化建议」已判 <b>上调分仓计划</b>，已从本清单移出，避免同一份数据出现相反建议 —— <b style="color:#334155">' + _gGateLog.dwCut.join('、') + '</b>。';
     }
+    // v505: 超销/有缺口 硬排除留痕（用户 2026-11-16 裁决·口径C）
+    if (typeof _gOversellLog !== 'undefined' && _gOversellLog.cut.length) {
+      downWarnHtml += '<br>🔒 <b>已排除「当前有缺口 / 真超销」</b>：以下 SKU×RDC 现在仍有缺口或完成率已达 100%，'
+        + '此时再建议下调计划等于「不够卖还要砍」，方向自相矛盾，已从本清单移出（共 <b>' + _gOversellLog.cut.length + ' 条</b>；'
+        + '本清单 ' + _dwList.length + ' 条 = 候选 ' + (_dwList.length + _gOversellLog.cut.length) + ' 条 − 排除 ' + _gOversellLog.cut.length
+        + ' 条，候选数含「上下调互斥」处理前的全部入选行）—— '
+        + '<b style="color:#334155">' + _gOversellLog.cut.join('、') + '</b>。'
+        + '<span style="color:#64748B">（口径层未改：「分仓计划优化建议」页对其中已判下调的行仍显示下调，请以该页方向为准做最终决策）</span>';
+    }
+    if (typeof _gOversellLog !== 'undefined' && _gOversellLog.lead.length) {
+      downWarnHtml += '<br>📈 <b>本月进度领先（但无缺口、未超销）</b>：以下 <b>' + _gOversellLog.lead.length + ' 条</b>完成率高于已过时间进度，'
+        + '仍保留在本清单（进清单主因是未来两月 DP 衰减，而非本月卖得差），行内已加「📈 领先」徽章 —— '
+        + '<b style="color:#334155">' + _gOversellLog.lead.join('、') + '</b>。<b>下调前请先复核 DP 是否砍错</b>（本月已跑赢时间进度时，砍计划可能把下月做成缺货）。';
+    }
     downWarnHtml += '</div>';
     // v336: 262 条全量展示，加滚动容器避免页面被拉得过长（表头 sticky 便于长列表对照）
     downWarnHtml += '<div style="max-height:560px;overflow:auto"><table class="data-table" style="font-size:12px"><thead><tr>' +
@@ -17547,6 +17600,10 @@ function renderReplenishment() {
       var _dirBg = d.direction === '下调分仓计划' ? '#DBEAFE' : '#F1F5F9';
       var _dirLabel = d.direction === '下调分仓计划' ? '↓ 下调' : '⚠ 预警';
       var _act = (d.demandDecay || 0) >= 0.4 ? '下月下调防' + ((d.demandDecay || 0) >= 0.7 ? '换季/退市前冗余' : '季节性萎缩') : '复核是否呆滞';
+      // v505：进度领先打标（用户 2026-11-16 裁决·口径C ②）——领先≠超销，不排除但必须提示复核 DP
+      var _leadBadge = d._leadFlag
+        ? '<span style="display:inline-block;margin-right:6px;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:#DCFCE7;color:#15803D;border:1px solid #86EFAC;cursor:help" title="本月完成率高于已过时间进度（进度偏差为正），且当前无缺口、完成率<100% —— 进本清单的主因是未来两月 DP 衰减，不是本月卖得差。下调前请先复核 DP 是否砍错，避免把下月做成缺货。">📈 领先</span>'
+        : '';
       downWarnHtml += '<tr>' +
         '<td style="font-family:monospace;font-weight:600">' + d.sku + '</td>' +
         '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.skuName || '').replace(/"/g, '&quot;') + '">' + (d.skuName || '—') + '</td>' +
@@ -17561,7 +17618,7 @@ function renderReplenishment() {
         '<td style="text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:5px;font-weight:700;background:' + _dirBg + ';color:' + _dirColor + '">↓ ' + (d.downScore != null ? d.downScore.toFixed(2) : '—') + '</span></td>' +
         '<td style="text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10.5px;font-weight:700;background:' + _dirBg + ';color:' + _dirColor + '">' + _dirLabel + '</span></td>' +
         _paceCell +
-        '<td style="font-size:11px;color:var(--text-secondary);max-width:240px">' + _act + '</td>' +
+        '<td style="font-size:11px;color:var(--text-secondary);max-width:240px">' + _leadBadge + _act + '</td>' +
         '</tr>';
     });
     downWarnHtml += '</tbody></table></div>';   // 闭合主清单表格 + 其滚动容器
@@ -17569,7 +17626,11 @@ function renderReplenishment() {
   } else {
     downWarnHtml = '<div class="card" style="margin-bottom:16px;border-top:4px solid #2563EB">' +
       '<div class="card-header"><span class="card-title">⚠ 下调预警（须含前瞻需求衰减 · 下调分 ≥ 0.50' + _dwDirectLabel + '）</span></div>' +
-      '<div style="padding:16px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#065F46;text-align:center">当前无符合条件的下调信号（口径：下月+下下月计划均值低于当月计划，即需求衰减信号>0，且满足 下调分 ≥ 0.50 或「衰减 ≥0.7 且计划量 ≥1,000 支」的强衰减直通；已下调的 SKU 同样需带衰减信号）。本卡片聚焦「换季/退市前冗余」前瞻预警。</div></div>';
+      '<div style="padding:16px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#065F46;text-align:center">当前无符合条件的下调信号（口径：下月+下下月计划均值低于当月计划，即需求衰减信号>0，且满足 下调分 ≥ 0.50 或「衰减 ≥0.7 且计划量 ≥1,000 支」的强衰减直通；已下调的 SKU 同样需带衰减信号）。本卡片聚焦「换季/退市前冗余」前瞻预警。</div>' +
+      // v505：绝不静默——若本可入选但被「有缺口/真超销」排除掉，必须说清楚，否则会被误读成「本月没有任何下调信号」
+      ((typeof _gOversellLog !== 'undefined' && _gOversellLog.cut.length)
+        ? '<div style="padding:10px 16px;background:#F8FAFC;border-top:1px dashed var(--border-card);font-size:11.5px;color:#334155;line-height:1.7">🔒 <b>另已排除 ' + _gOversellLog.cut.length + ' 条「当前有缺口 / 真超销」</b>：' + _gOversellLog.cut.join('、') + '。<br><span style="color:#64748B">（这些行本可入选，但现有计划已不够卖/已卖超，再下调方向自相矛盾，故移出；「分仓计划优化建议」页的方向判定未改）</span></div>'
+        : '') + '</div>';
   }
 
   // v407: 未就绪必须**显式提示**，绝不静默展示全 0 的出货量（沿用 v371「不静默展示回退值」方针）
@@ -18408,7 +18469,8 @@ function exportReplenishmentExcel() {
       '下调分': d.downScore == null ? '' : _num(Math.round(d.downScore * 100) / 100),
       '调整方向': _dirLabel,
       '销售节奏偏差': _paceRec ? _paceRec.reasonFull : '',
-      '建议动作': _act
+      // v505：与页面「📈 领先」徽章同口径（打标不排除，提醒先复核 DP）
+      '建议动作': (d._leadFlag ? '📈领先·先复核DP；' : '') + _act
     };
   });
 
