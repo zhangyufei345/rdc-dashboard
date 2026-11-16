@@ -1333,7 +1333,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   【影响面·真实数据 11/15】天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
 //      惠州 1 车 10.03 天、嘉兴 1 车 13.40 天不变；5 仓 batchOk 仍全部合规。
 //   【DB_VERSION 不动】纯前端展示口径 + 同源引擎重建，无新增持久化字段。
-const BUILD_VERSION = 503;
+const BUILD_VERSION = 504;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -17119,6 +17119,60 @@ function renderReplenishment() {
     }
   } catch(e) { console.warn('[下调预警] 计算失败', e); }
 
+  // ===== v504：上调建议 × 下调预警 互斥闸门（用户 2026-11-16 裁决「只裁交集」）=====
+  // 【问题】同一 SKU×RDC 同时出现在「每日补货建议(上调)」表和「下调预警」卡里，导出 Excel 两个 sheet
+  //   各说一个方向 → 同一份文件自相矛盾。实例 09855 华南：上调建议 44 分 / 下调预警下调分 0.518。
+  //   全表实测（2026-11-16）：上调建议展示 15 条 × 下调预警 63 条 → 同 SKU×RDC 交集 2 条
+  //   （09855 华南、09649 华南），两条 direction 都是「保持观察」。
+  // 【裁决规则 —— 只作用于「两边都出现」的交集，不碰非交集行】
+  //   ① direction='下调分仓计划' 且在交集 → 移出上调建议（下月已判下调，本月不再挂上调）
+  //   ② direction='上调分仓计划' 且出现在下调预警 → 移出下调预警（本月已判上调，不该进下调清单）
+  //      注：这类行若分数未过 40 门槛、没进上调建议表，也算同类矛盾（优化建议页判上调 / 下调卡却列出），
+  //      一并移出；实测当前 1 条。
+  //   ③ direction='保持观察' 且在交集 → 保留在下调预警、移出上调建议。
+  //      依据：交集这 2 条上调侧「建议补货量=0」（无实质动作），下调侧有硬证据（未来两月需求衰减 100%，强衰减档）。
+  // 【为什么不"保持观察两边都不进"】上调建议 15 条里 9 条判保持观察，其中 7 条并非交集行
+  //   （09835 华中/西南/华南 缺口 144/382/243 箱、09859 华中、09876 西北/华北、20811 华中）。
+  //   一刀切全剔会把上调建议 15→6 条，漏掉本月确有缺口要补的 SKU → 用户选定「只裁交集」。
+  // 【实测影响】上调建议 15→13，下调预警 63→62（那 1 条 direction='上调分仓计划' 的），其余行零变化。
+  //   被移出的行必须在页面上显式留痕（下方 _gGateLog 渲染成提示条），绝不静默消失。
+  var _gGateLog = { upCut: [], dwCut: [] };
+  try {
+    var _gAdvRows = (typeof _dwAll !== 'undefined' && _dwAll) ? _dwAll : [];
+    var _gDirMap = {};
+    _gAdvRows.forEach(function(r) {
+      if (r && r.sku != null) _gDirMap[String(r.sku) + '|' + r.rdc] = r.direction;
+    });
+    // ② 下调预警：移出「优化建议已判上调」的行
+    if (window._dwList && window._dwList.length) {
+      var _gDwKept = [];
+      window._dwList.forEach(function(d) {
+        var _gk = String(d.sku) + '|' + d.rdc;
+        if (_gDirMap[_gk] === '上调分仓计划') { _gGateLog.dwCut.push(_gk); return; }
+        _gDwKept.push(d);
+      });
+      if (_gDwKept.length !== window._dwList.length) {
+        window._dwList = _gDwKept;
+        _dwList = _gDwKept;   // 局部变量同步：下方 dailyHtml 的头条标题/计数读的是 _dwList
+      }
+    }
+    // ①③ 上调建议：移出与下调预警交集的 SKU×RDC
+    if (displayList && displayList.length && window._dwList && window._dwList.length) {
+      var _gDwSet = {};
+      window._dwList.forEach(function(d) { _gDwSet[String(d.sku) + '|' + d.rdc] = 1; });
+      var _gUpKept = [];
+      displayList.forEach(function(d) {
+        var _gk = String(d.materialCode) + '|' + d.rdc;
+        if (_gDwSet[_gk]) { _gGateLog.upCut.push(_gk + '（' + (_gDirMap[_gk] || '—') + '）'); return; }
+        _gUpKept.push(d);
+      });
+      if (_gUpKept.length !== displayList.length) {
+        displayList = _gUpKept;
+        window._replDisplayList = displayList;   // 导出 Sheet1 读这份，必须同步，否则页面与导出不一致
+      }
+    }
+  } catch(e) { console.warn('[上下调互斥] 闸门计算失败', e); _gGateLog = { upCut: [], dwCut: [] }; }
+
   // ===== v480：销售节奏偏差（v477 落点不变，判据 = 「单月 T-1 · 逐仓 · 只判完成率 ≥2.0」）=====
   // 【模块边界】只服务 renderReplenishment() 的「下调预警」卡；不参与 buildPlanOptimAdvice 打分/排序，
   //   不改「每日补货建议」模块。判定结果只读，纯展示层。
@@ -17310,6 +17364,14 @@ function renderReplenishment() {
     '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">共 ' + displayList.length + ' 条</span>' +
     '</div>';
 
+  // v504: 互斥闸门留痕——被移出的行必须在页面显式说明，绝不静默消失（沿用「不静默展示回退值」方针）
+  if (_gGateLog.upCut.length) {
+    dailyHtml += '<div style="padding:8px 12px;margin-bottom:10px;background:#F1F5F9;border:1px solid var(--border-card);border-radius:8px;font-size:11.5px;color:#475569;line-height:1.75">'
+      + '🔒 <b>已做上下调互斥</b>：以下 SKU×RDC 同时命中下方「下调预警」，为避免同一份数据出现相反建议，已从本表移出，'
+      + '请到「下调预警」查看其下调依据 —— <b style="color:#334155">' + _gGateLog.upCut.join('、') + '</b>'
+      + '（本表 ' + displayList.length + ' 条 = 原 ' + (displayList.length + _gGateLog.upCut.length) + ' 条 − 互斥 ' + _gGateLog.upCut.length + ' 条）</div>';
+  }
+
   // Table
   dailyHtml += '<div class="table-wrap" style="max-height:500px;overflow-y:auto"><table class="data-table">' +
     '<thead><tr>' +
@@ -17459,11 +17521,15 @@ function renderReplenishment() {
       '<div class="card-header"><span class="card-title">⚠ 下调预警（须含前瞻需求衰减 · 下调分 ≥ 0.50' + _dwDirectLabel + '）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">与「分仓计划优化建议」同源 · 共 ' + _dwList.length + ' 条 · 按下调需求量级降序 · 表内可滚动</span></div>' +
       '<div style="padding:4px 14px 12px;font-size:10.5px;color:var(--text-secondary);line-height:1.7">';
     downWarnHtml += '⭐ <b>用户新提需求</b>：之前模块 A 只有上调没有下调，本次借鉴模块 B 的 5+5 维打分制（含前瞻需求衰减，未来两月需求下降 ≥33% 加分），让补货建议页也能预警"下月要下调"的 SKU，引导计划员提前处理避免变成呆滞库存。';
+    // v504: 互斥闸门留痕（另一半在上方「每日补货建议」卡）
+    if (_gGateLog.dwCut.length) {
+      downWarnHtml += '<br>🔒 <b>已做上下调互斥</b>：以下 SKU×RDC 在「分仓计划优化建议」已判 <b>上调分仓计划</b>，已从本清单移出，避免同一份数据出现相反建议 —— <b style="color:#334155">' + _gGateLog.dwCut.join('、') + '</b>。';
+    }
     downWarnHtml += '</div>';
     // v336: 262 条全量展示，加滚动容器避免页面被拉得过长（表头 sticky 便于长列表对照）
     downWarnHtml += '<div style="max-height:560px;overflow:auto"><table class="data-table" style="font-size:12px"><thead><tr>' +
       '<th style="text-align:left">SKU编码</th><th style="text-align:left">物料名称</th><th style="text-align:left">品牌</th><th style="text-align:left">RDC</th>' +
-      '<th style="text-align:center">完成率</th><th style="text-align:center">滞后(pt)</th><th style="text-align:center">需求衰减</th><th style="text-align:center">下调分</th><th style="text-align:center">调整方向</th>' +
+      '<th style="text-align:center">完成率</th><th style="text-align:center" title="v504（用户 2026-11-16）：原列名「滞后(pt)」但取值是 Math.abs(dev)，把「完成率领先时间进度」也显示成滞后——实例 09855 华南 完成率 72.29% / 时间进度 50% / dev=+22.29pt（领先），旧版却显示「滞后 22」。现改为带符号的进度偏差：正数=领先（完成率高于已过时间进度），负数=滞后。时间进度 = 当月已过自然日(T-1) ÷ 当月总天数（与卡片共用同一 _timeProg）">进度偏差(pt)</th><th style="text-align:center">需求衰减</th><th style="text-align:center">下调分</th><th style="text-align:center">调整方向</th>' +
       '<th style="text-align:center" title="v480 销售节奏偏差（加强提醒）：按 SKU×RDC 本仓单月，取最近一个「权威已完结月」(T-1) 的最终 DP共识数量与实际出货_数量；完成率 ≥2.0（实际出货达 DP 共识数量的 2 倍以上）且 T-1 出货 >1,000 支即打标，低销与 1.5~2.0 的普通超销不打标。T-1 必须在权威源（demand.json finalMonths）里且出货有记录，否则不判定。仅对原本已在下调清单内的行打标，不新增行。悬停查看完整证据。">销售节奏偏差</th>' +
       '<th style="text-align:left">建议动作</th>' +
       '</tr></thead><tbody>';
@@ -17487,7 +17553,10 @@ function renderReplenishment() {
         '<td>' + (d.brand || '—') + '</td>' +
         '<td><b style="color:#1D4ED8">' + d.rdc + '</b></td>' +
         '<td style="text-align:center">' + (d.comp != null ? (d.comp * 100).toFixed(0) + '%' : '—') + '</td>' +
-        '<td style="text-align:center;color:' + ((d.dev != null && d.dev < -0.2) ? '#2563EB' : '#64748B') + '">' + (d.dev != null ? Math.abs(d.dev * 100).toFixed(0) : '—') + '</td>' +
+        // v504（用户 2026-11-16）：带符号显示 —— 正=领先 / 负=滞后。
+        //   旧版 Math.abs(d.dev*100) 把「领先 22pt」写成「滞后 22」，列名还叫「滞后」→ 方向完全反了。
+        //   颜色约定：滞后(负)=红且加粗（要处理）；领先(正)=绿；≈0=灰。
+        '<td style="text-align:center;color:' + (d.dev == null ? '#64748B' : (d.dev < -0.005 ? '#DC2626' : (d.dev > 0.005 ? '#15803D' : '#64748B'))) + ';font-weight:' + (d.dev != null && d.dev < -0.005 ? '700' : '400') + '">' + (d.dev == null ? '—' : ((d.dev > 0.005 ? '+' : (d.dev < -0.005 ? '-' : '')) + Math.abs(d.dev * 100).toFixed(0))) + '</td>' +
         '<td style="text-align:center;color:' + _decayColor + ';font-weight:' + (((d.demandDecay||0) > 0) ? '700' : '400') + '">' + _decayTxt + '</td>' +
         '<td style="text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:5px;font-weight:700;background:' + _dirBg + ';color:' + _dirColor + '">↓ ' + (d.downScore != null ? d.downScore.toFixed(2) : '—') + '</span></td>' +
         '<td style="text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10.5px;font-weight:700;background:' + _dirBg + ';color:' + _dirColor + '">' + _dirLabel + '</span></td>' +
@@ -18283,7 +18352,7 @@ function exportReplenishmentExcel() {
   }
   // 数字列清单（除 SKU 编码列以外的所有数值列；一律常规格式）
   var _UP_NUM = { '评分': 1, '今日缺口箱数': 1, '近60天日均需求(支)': 1, '满足率': 1, '建议补货量': 1, '缺货严重度(月度)': 1 };
-  var _DOWN_NUM = { '计划量(支)': 1, '出货量(支)': 1, '完成率': 1, '滞后(pt)': 1, '下调分': 1 };
+  var _DOWN_NUM = { '计划量(支)': 1, '出货量(支)': 1, '完成率': 1, '进度偏差(pt)': 1, '下调分': 1 };
 
   // Sheet 1: 上调建议（页面实际展示列表，与 UI 口径一致）
   var upRows = scored.map(function(d) {
@@ -18331,7 +18400,10 @@ function exportReplenishmentExcel() {
       '计划量(支)': _num(d.plan),
       '出货量(支)': _num(d.shipped),
       '完成率': d.comp == null ? '' : _num(Math.round(d.comp * 100)),
-      '滞后(pt)': d.dev == null ? '' : _num(Math.round(Math.abs(d.dev) * 100)),
+      // v504（用户 2026-11-16）：带符号输出（正=领先 / 负=滞后）。
+      //   原 Math.abs(Math.round(d.dev*100)) 会把「领先 22pt」写成「滞后 22」；更直接的铁证是
+      //   华北 09855 自己的理由文案写「滞后 0pt」（文案取 _devMag，领先时归 0），本列却显示 1。
+      '进度偏差(pt)': d.dev == null ? '' : _num(Math.round(d.dev * 100)),
       '需求衰减': _decayTxt,
       '下调分': d.downScore == null ? '' : _num(Math.round(d.downScore * 100) / 100),
       '调整方向': _dirLabel,
