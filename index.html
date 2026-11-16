@@ -1333,7 +1333,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   【影响面·真实数据 11/15】天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
 //      惠州 1 车 10.03 天、嘉兴 1 车 13.40 天不变；5 仓 batchOk 仍全部合规。
 //   【DB_VERSION 不动】纯前端展示口径 + 同源引擎重建，无新增持久化字段。
-const BUILD_VERSION = 502;
+const BUILD_VERSION = 503;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -17841,6 +17841,7 @@ function _revCardInner() {
   s += '<div style="padding:8px 12px;background:#FAEEDA;border-radius:8px;font-size:11.5px;color:#854F0B;line-height:1.7;margin-bottom:12px">';
   s += '本期补货明细覆盖 <b>' + rdcs.map(function(r) { return r.replace('RDC', ''); }).join(' / ') + '</b>；其余 RDC 无补货明细，相关组合不做判定。';
   s += '<br>口径：缺货量 = 当月首日缺货累计（已剔双休日/节假日，被拒绝订单仍计入）；补货量按「应补量 / 调整后补货量」箱数统计。';
+  s += '<br><b>已满足</b> = 当月订单量 − 首日缺货累计（与左侧「缺货」互补，两者相加 = 订单量），用来判断该 SKU×RDC 是一直缺货、还是补货到货后已经满足。';
   s += '<br><b>归因口径</b>：只把「缺货日 ≥ 到货日（补货日 + 运输周期：华中/华南 4 天，华北/东北/西北 5 天，西南 7 天）」的缺口算作补货决策相关；到货前的缺货是补货前既有缺口，不计入归因。';
   s += '</div>';
 
@@ -17873,12 +17874,15 @@ function _revCardInner() {
     s += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed">';
     s += '<thead><tr style="color:var(--text-secondary);background:#FCFCFA">';
     s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:6%">RDC</th>';
-    s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:30%">SKU / 品名</th>';
-    s += '<th style="text-align:right;padding:6px;font-weight:400;width:12%">缺货(' + (unitBox ? '箱' : '支') + ')</th>';
+    s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:26%">SKU / 品名</th>';
+    s += '<th style="text-align:right;padding:6px;font-weight:400;width:11%">缺货(' + (unitBox ? '箱' : '支') + ')</th>';
+    // v503（用户 2026-11-16）：新增「已满足」列 —— 用来判断该 SKU×RDC 是一直缺货、还是补货后已经满足。
+    //   口径 = 当月订单支数 − 首日缺货累计，与右侧「缺货率」同分母（缺货率 = 缺货 ÷ 订单量）。
+    s += '<th style="text-align:right;padding:6px;font-weight:400;width:12%" title="当月已满足量 = 订单量 − 首日缺货累计；与左侧「缺货」同口径（两者相加 = 订单量），可据此判断是一直缺货还是补货后已满足">已满足(' + (unitBox ? '箱' : '支') + ')</th>';
     s += '<th style="text-align:right;padding:6px;font-weight:400;width:9%">缺货率</th>';
     s += '<th style="text-align:right;padding:6px;font-weight:400;width:8%">补货次</th>';
-    s += '<th style="text-align:right;padding:6px;font-weight:400;width:15%">应补/实补(箱)</th>';
-    s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:20%">决策结论</th>';
+    s += '<th style="text-align:right;padding:6px;font-weight:400;width:13%">应补/实补(箱)</th>';
+    s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:15%">决策结论</th>';
     s += '</tr></thead><tbody>';
     top.forEach(function(x) {
       var k = x.rdc + '|' + x.sku;
@@ -17896,6 +17900,9 @@ function _revCardInner() {
       s += '<td style="padding:6px 8px"><b style="color:#1D4ED8">' + x.rdc.replace('RDC', '') + '</b></td>';
       s += '<td style="padding:6px 8px"><span style="font-family:monospace;font-weight:600">' + x.sku + '</span> <span style="color:var(--text-secondary)">' + (x.name || '').slice(0, 18) + '</span></td>';
       s += '<td style="text-align:right;padding:6px;color:#A32D2D;font-weight:600">' + _revShown(x.short, bs, false) + '</td>';
+      // v503: 已满足 = 订单量 − 首日缺货累计（与「缺货」互补，两者相加即订单量）
+      var _sat = Math.max(0, (x.ord || 0) - (x.short || 0));
+      s += '<td style="text-align:right;padding:6px;color:#0F766E">' + _revShown(_sat, bs, false) + '</td>';
       s += '<td style="text-align:right;padding:6px;color:' + (pct != null && pct >= 50 ? '#A32D2D' : 'inherit') + '">' + (pct == null ? '—' : pct.toFixed(0) + '%') + '</td>';
       s += '<td style="text-align:right;padding:6px">' + recs.length + '</td>';
       s += '<td style="text-align:right;padding:6px">' + (recs.length ? formatNum(Math.round(p)) + ' / ' + formatNum(Math.round(a)) : '—') + '</td>';
@@ -17907,7 +17914,7 @@ function _revCardInner() {
         //   用户 2026-11-08：希望点开后展示的明细包含所有信息，而不仅仅是补货明细。
         var bsX = _revBoxSpec(recs[0], x.sku);
         var _uSuf = _revUnitSuffix(false);
-        s += '<tr style="border-top:1px dashed var(--border-card);background:#FCFCFA"><td colspan="7" style="padding:10px 12px">';
+        s += '<tr style="border-top:1px dashed var(--border-card);background:#FCFCFA"><td colspan="8" style="padding:10px 12px">';
         // —— 缺货侧（缺货 TOP10 的本体，展开时一并给出，含逐日缺口分布）
         s += '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:11px;margin-bottom:9px;line-height:1.9">';
         s += '<span style="font-size:11.5px;font-weight:600;color:#A32D2D">缺货合计 ' + _revShown(x.short, bsX, false) + ' ' + _uSuf + '</span>';
@@ -25455,7 +25462,13 @@ function renderAdjustTrack() {
   }
   html += '</div>';
   html += '<div class="table-wrap" style="max-height:520px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' +
-    ['补货日期', 'RDC', 'SKU编码', 'SKU名称', '调整类型', '应补(箱)', '调整后(箱)', '扣减量(箱)', '到货日', '观察窗口', '状态', '窗口缺货(箱)', '因果解释度'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
+    // v503（用户 2026-11-16）：新增「总仓库存(箱)」列。数据取自 adjustments.json 的 dcStock —— 每条调整记录本来就带该字段
+    //   （下方点击行弹窗里也一直在显示「大仓库存 X 箱」），只是明细表没列出来。
+    //   显示规则：0 是真实的「当时大仓库存 0 箱」，照实显示 0；字段缺失/空值才显示「—」（0 ≠ 无数据）。
+    ['补货日期', 'RDC', 'SKU编码', 'SKU名称', '调整类型', '应补(箱)', '调整后(箱)', '扣减量(箱)', '总仓库存(箱)', '到货日', '观察窗口', '状态', '窗口缺货(箱)', '因果解释度'].map(function(h) {
+      var tt = (h === '总仓库存(箱)') ? ' title="补货当日大仓（总仓）库存箱数，取自《补货调整记录》的 dcStock 字段；0 = 当时大仓确实无库存"' : '';
+      return '<th style="text-align:left"' + tt + '>' + h + '</th>';
+    }).join('') + '</tr></thead><tbody>';
   // v442: 默认排序改为「窗口缺货(箱)」降序（用户 2026-10-28：确保有缺货的排在最前面）。
   //   同缺货量时保持原序（补货日期倒序 → 同日期扣减量降序），避免每次渲染顺序漂移、也便于逐条比对。
   const rows = filtered.slice().sort(function(a, b) {
@@ -25480,6 +25493,8 @@ function renderAdjustTrack() {
       '<td style="text-align:left">' + _adjFmtNum(r.planQty) + '</td>' +
       '<td style="text-align:left">' + _adjFmtNum(r.adjQty) + '</td>' +
       '<td style="text-align:left;color:' + (r.cut > 0 ? '#DC2626' : (r.cut < 0 ? '#16A34A' : 'inherit')) + '">' + (r.cut > 0 ? '−' + _adjFmtNum(r.cut) : (r.cut < 0 ? '+' + _adjFmtNum(-r.cut) + '（加量）' : '0')) + '</td>' +
+      // v503: 总仓库存(箱) —— 0 照实显示（真实零库存），仅缺失/空值显示「—」
+      '<td style="text-align:left">' + (r.dcStock == null || r.dcStock === '' ? '—' : _adjFmtNum(r.dcStock)) + '</td>' +
       '<td style="text-align:left">' + (r.arrival || '-') + '</td>' +
       '<td style="text-align:left">' + (r.winStart ? r.winStart + ' ~ ' + r.winEnd : '-') + '</td>' +
       '<td style="text-align:left;color:' + stColor + '">' + r.status + '</td>' +
@@ -25487,7 +25502,7 @@ function renderAdjustTrack() {
       '<td style="text-align:left">' + (r.explain != null ? r.explain + '%' : '—') + '</td>' +
       '</tr>';
   });
-  if (!rows.length) html += '<tr><td colspan="13" style="text-align:left;color:var(--text-secondary);padding:24px">' + (st.batchShort ? ('批次 ' + (st.batch === 'all' ? '' : st.batch + ' ') + '在已进入的观察窗口内没有缺货记录 —— 可能该批次尚未进入观察窗口，或窗口内确实没缺货。点上方「仅看窗口缺货 ✕」可恢复该批次全部记录。') : (st.short === 'yes' ? '当前筛选下没有「走完后有缺货」的记录（该类型的观察窗口可能尚未走完）' : '当前筛选条件下无记录')) + '</td></tr>';
+  if (!rows.length) html += '<tr><td colspan="14" style="text-align:left;color:var(--text-secondary);padding:24px">' + (st.batchShort ? ('批次 ' + (st.batch === 'all' ? '' : st.batch + ' ') + '在已进入的观察窗口内没有缺货记录 —— 可能该批次尚未进入观察窗口，或窗口内确实没缺货。点上方「仅看窗口缺货 ✕」可恢复该批次全部记录。') : (st.short === 'yes' ? '当前筛选下没有「走完后有缺货」的记录（该类型的观察窗口可能尚未走完）' : '当前筛选条件下无记录')) + '</td></tr>';
   html += '</tbody></table></div>';
   // v442: 渐进展开控制条（在滚动区外，滚动表格时始终可见）
   if (rows.length) {
