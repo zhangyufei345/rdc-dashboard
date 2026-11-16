@@ -508,6 +508,14 @@ const AUTH_KEY = 'rdc_dashboard_auth';
 
 const RDC_LIST = ['华南RDC','华北RDC','东北RDC','西北RDC','华中RDC','西南RDC'];
 const BRAND_LIST = ['六神','美加净','家安','启初','传统','高夫','片仔癀','上海'];
+// v507（用户 2026-11-16 截图裁定）：分仓计划监控 →「🌡️ 品牌 × RDC 完成率矩阵」只保留这 7 个品牌。
+//   矩阵行是按 brandRdcShip / brandRdcPlan 的 key **动态聚合**出来的（某品牌只要有出货或有分仓计划就会
+//   自动长出一行），所以数据里一多就会冒出 佰草集/其他/典萃/片仔癀/玉泽 等非本矩阵关注品牌。
+//   ⇒ 在这里做**展示白名单**，从矩阵行里排除掉这些品牌。
+//   ⚠ 刻意不动 BRAND_LIST：它被「缺货分析」品牌筛选下拉 +「品牌渠道」勾选面板共用
+//     （缺货分析页 `filter-shortage-brand` 下拉 L11206 / 品牌渠道勾选面板 L13905-13919 / L14045），
+//     改了会连带影响那两个页面。本常量只服务 fillBrandRdcMatrix()。
+const BRAND_MATRIX_WHITELIST = ['上海','传统','美加净','六神','高夫','启初','家安'];
 const CHANNEL_LIST = ['经销商','KA'];
 
 let currentMode = localStorage.getItem(MODE_KEY) || 'default';
@@ -1333,7 +1341,20 @@ const DB_NAME = 'RDC_Dashboard';
 //   【影响面·真实数据 11/15】天津 11.34→16.35 天、武汉 5.66→10.66 天、成都 5.56→11.56 天；
 //      惠州 1 车 10.03 天、嘉兴 1 车 13.40 天不变；5 仓 batchOk 仍全部合规。
 //   【DB_VERSION 不动】纯前端展示口径 + 同源引擎重建，无新增持久化字段。
-const BUILD_VERSION = 506;
+// v507（2026-11-16 用户截图裁定）：分仓计划监控「🌡️ 品牌 × RDC 完成率矩阵」只保留 7 个品牌
+//   （上海/传统/美加净/六神/高夫/启初/家安）。用户原话：「这个品牌矩阵怎么现在有这么多品牌，
+//   请只保留上海，传统，美加净，六神，高夫，启初，家安这几个品牌」。
+//   ① 根因：矩阵行不是查 BRAND_LIST，而是按 brandRdcShip / brandRdcPlan 的 key **动态聚合**——
+//      某品牌只要当月有实际出货或有分仓计划就会自动长出一行。数据里品牌一多就冒出
+//      佰草集/其他/典萃/片仔癀/玉泽 → 实测 12 行（改动前基线，与用户截图逐行一致）。
+//   ② 改法：新增 BRAND_MATRIX_WHITELIST（L517）做**展示白名单**，在 fillBrandRdcMatrix() 里
+//      对 brands 数组过滤后再 sort。数据层 brandRdcPlan/brandRdcShip/rows 一概不动。
+//   ③ 刻意不动 BRAND_LIST（缺货分析品牌筛选 + 品牌渠道勾选面板共用，改了两处会连带变化）；
+//      概览页「品牌 × RDC 满足率矩阵」也未动（用户只点了这一个矩阵）。
+//   ④ 列数不变（品牌 + 各RDC合计 + 6 RDC = 8 列），故 .brand-rdc-matrix 的 nth-child 列宽规则不受影响；
+//      行数 12 → 7。
+//   【DB_VERSION 不动】纯展示层白名单，无新增持久化字段。
+const BUILD_VERSION = 507;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -26568,7 +26589,13 @@ html += '<span style="font-size:11px;color:var(--text-secondary)">当前目标�
     const matrixWrap = document.getElementById('pm-brand-rdc-matrix');
     if (!matrixWrap) return;
     // v111: 矩阵固定月度（日度去掉）；v378: 分子改用实际出货（brandRdcShip）
-    const brands = [...new Set([...Object.keys(brandRdcShip), ...Object.keys(brandRdcPlan)])].filter(Boolean).sort();
+    // v507（用户 2026-11-16）：加一层展示白名单，只保留 BRAND_MATRIX_WHITELIST 里的 7 个品牌。
+    //   过滤放在 sort 之前、只作用于本矩阵的 brands 数组；brandRdcPlan/brandRdcShip/_enrichRow 等
+    //   数据层一律不动，其他页面（缺货分析、品牌渠道、概览满足率矩阵）的品牌维度完全不受影响。
+    const brands = [...new Set([...Object.keys(brandRdcShip), ...Object.keys(brandRdcPlan)])]
+      .filter(Boolean)
+      .filter(function(b){ return BRAND_MATRIX_WHITELIST.indexOf(b) >= 0; })
+      .sort();
     if (brands.length === 0) {
       matrixWrap.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary)">当前筛选条件下无品牌×RDC 数据</div>';
       return;
