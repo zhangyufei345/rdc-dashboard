@@ -1354,14 +1354,15 @@ const DB_NAME = 'RDC_Dashboard';
 //   ④ 列数不变（品牌 + 各RDC合计 + 6 RDC = 8 列），故 .brand-rdc-matrix 的 nth-child 列宽规则不受影响；
 //      行数 12 → 7。
 //   【DB_VERSION 不动】纯展示层白名单，无新增持久化字段。
-// v510（2026-11-17 用户选定）：原「已满足」列直接改用到仓后累计履约量（含补货到仓后的满足）。
-//   首日缺货/缺货率口径不动；两者不再互补，口径说明同步改写。DB_VERSION 不动。
+// v511（2026-11-17 用户再次明确口径）：「已满足」= 首日未满足量中后来被满足的部分
+//   = max(0, 首日缺货量 − 最终仍未满足量)，因此已满足≤缺货、全部补齐时相等；不是总履约量。
+//   缺货/缺货率继续按首日口径不动。DB_VERSION 不动。
 // v509（2026-11-17 用户纠正）：恢复「补货决策复盘」展开明细的原位置、原顺序 —— 原全字段明细仍是第一块，
 //   v508 新增的逐笔时间线挪到原明细后面作为「补充」，不替换、不压缩原来的全链路明细。DB_VERSION 不动。
 // v508（2026-11-17 用户裁定）：「补货决策复盘」归因改为与「补货调整跟踪」逐笔同源——
 //   每笔补货独立算到货日 + 4 天观察窗，窗口内逐日缺货才归因；窗口未走完标观察中，不提前下结论。
 //   TOP10 月累计缺货只用于排序，不再当成某笔补货的责任量。DB_VERSION 不动（无新增持久化字段）。
-const BUILD_VERSION = 510;
+const BUILD_VERSION = 511;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -17778,13 +17779,12 @@ function _revShortAgg(month) {
   return map;
 }
 
-// v510：到仓后满足量（按 SKU×RDC 汇总总履约支数）。
-//   与 _revShortAgg 刻意分开：那个只统计有首日缺货的行、用于「缺货/缺货率」；
-//   这个统计当月全部订单行（同样剔除非工作日），用于 TOP10 的「已满足」列，
-//   才能把 11 月初补货到仓后的后续满足算进来。
+// v511（用户 2026-11-17 明确口径）：「已满足」= 首日未满足量中后来被满足的部分，
+//   不是总履约量。公式逐行 = max(0, 首日缺货量 − 最终仍未满足量)，再按 SKU×RDC 汇总。
+//   因此 已满足 ≤ 缺货；完全补齐时两者相等。与「缺货 / 缺货率」共用同一首日口径。
 function _revFinalAgg(month) {
   var od = dataStore.orderDetail || [];
-  var ck = 'final|' + month + '|' + od.length + '|' + (od.length ? od[0].dateStr : '') + '|' + (od.length ? od[od.length - 1].dateStr : '');
+  var ck = 'recovered|' + month + '|' + od.length + '|' + (od.length ? od[0].dateStr : '') + '|' + (od.length ? od[od.length - 1].dateStr : '');
   if (window._revFinalCache && window._revFinalCache.k === ck) return window._revFinalCache.v;
   var map = {};
   od.forEach(function(d) {
@@ -17794,9 +17794,13 @@ function _revFinalAgg(month) {
     if (rdc === '华东RDC') return;
     var k = rdc + '|' + d.skuCode;
     var a = map[k];
-    if (!a) a = map[k] = { final: 0, gap: 0, ord: 0 };
+    if (!a) a = map[k] = { short: 0, gap: 0, recovered: 0, final: 0, ord: 0 };
+    var fs = Number(d.firstDayShort || 0);
+    var tg = Number(d.totalGap || 0);
+    a.short += fs;
+    a.gap += tg;
+    a.recovered += Math.max(0, fs - tg);
     a.final += Number(d.totalFulfillQty || 0);
-    a.gap += Number(d.totalGap || 0);
     a.ord += Number(d.orderQty || 0);
   });
   window._revFinalCache = { k: ck, v: map };
@@ -18135,7 +18139,7 @@ function _revCardInner() {
   s += '<div style="padding:8px 12px;background:#FAEEDA;border-radius:8px;font-size:11.5px;color:#854F0B;line-height:1.7;margin-bottom:12px">';
   s += '本期补货明细覆盖 <b>' + rdcs.map(function(r) { return r.replace('RDC', ''); }).join(' / ') + '</b>；其余 RDC 无补货明细，相关组合不做判定。';
   s += '<br>口径：TOP10 的缺货量 = 当月首日缺货<b>累计</b>（已剔双休日/节假日，被拒绝订单仍计入），只用于排序；补货量按「应补量 / 调整后补货量」箱数统计。';
-  s += '<br><b>已满足</b> = 当月订单后续实际排单满足的量（含补货到仓后的满足，按箱规折算）。左侧「缺货 / 缺货率」仍是放行首日口径，所以两者不再相加等于订单量。';
+  s += '<br><b>已满足</b> = 首日未满足量里后来被满足的部分（首日缺货 − 最终仍未满足，负数按 0）。所以已满足不会超过缺货；全部补齐时两者相等。';
   s += '<br><b>归因口径</b>：与「补货调整跟踪」逐笔同源——每笔补货单独算到货日（补货日 + 运输周期：华中/华南 4 天，华北/东北/西北 5 天，西南 7 天），观察窗 = 到货日起 4 天；只统计该窗口内的首日缺货（支 ÷ 箱规 = 箱，剔非工作日）。到货前、窗口外的缺口不挂到这笔补货上；窗口没走完只标「观察中」，不下砍量/足额/加量结论。';
   s += '</div>';
 
@@ -18170,9 +18174,9 @@ function _revCardInner() {
     s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:6%">RDC</th>';
     s += '<th style="text-align:left;padding:6px 8px;font-weight:400;width:26%">SKU / 品名</th>';
     s += '<th style="text-align:right;padding:6px;font-weight:400;width:11%">缺货(' + (unitBox ? '箱' : '支') + ')</th>';
-    // v510（用户 2026-11-17 选定）：原「已满足」列直接改为到仓后满足量，列名保持不变。
-    //   左侧「缺货 / 缺货率」仍是首日口径；这列统计订单后续实际排单满足量（总履约量），含补货到仓后的满足。
-    s += '<th style="text-align:right;padding:6px;font-weight:400;width:12%" title="已满足 = 当月订单后续实际排单满足的量（含补货到仓后的满足），按箱规折算。左侧「缺货 / 缺货率」是放行首日口径，所以两者不再相加等于订单量。">已满足(' + (unitBox ? '箱' : '支') + ')</th>';
+    // v511（用户 2026-11-17 明确口径）：原「已满足」列改为「首日缺口中后来被满足的部分」，列名保持不变。
+    //   公式 = 首日缺货量 − 最终仍未满足量，负数按 0；全部补齐时与左侧「缺货」相等。
+    s += '<th style="text-align:right;padding:6px;font-weight:400;width:12%" title="已满足 = 首日未满足量里后来被满足的部分（首日缺货 − 最终仍未满足，负数按 0）。已满足不会超过缺货；全部补齐时两者相等。">已满足(' + (unitBox ? '箱' : '支') + ')</th>';
     s += '<th style="text-align:right;padding:6px;font-weight:400;width:9%">缺货率</th>';
     s += '<th style="text-align:right;padding:6px;font-weight:400;width:8%">补货次</th>';
     s += '<th style="text-align:right;padding:6px;font-weight:400;width:13%">应补/实补(箱)</th>';
@@ -18191,8 +18195,8 @@ function _revCardInner() {
       s += '<td style="padding:6px 8px"><b style="color:#1D4ED8">' + x.rdc.replace('RDC', '') + '</b></td>';
       s += '<td style="padding:6px 8px"><span style="font-family:monospace;font-weight:600">' + x.sku + '</span> <span style="color:var(--text-secondary)">' + (x.name || '').slice(0, 18) + '</span></td>';
       s += '<td style="text-align:right;padding:6px;color:#A32D2D;font-weight:600">' + _revShown(x.short, bs, false) + '</td>';
-      // v510: 已满足 = 到仓后累计履约量（含补货到仓后的满足），不再用「订单量 − 首日缺货」
-      var _sat = (finalMap[k] && finalMap[k].final) || 0;
+      // v511: 已满足 = 首日缺口中后来被补齐的量 = max(0, 首日缺货 − 最终仍未满足)
+      var _sat = (finalMap[k] && finalMap[k].recovered) || 0;
       s += '<td style="text-align:right;padding:6px;color:#0F766E">' + _revShown(_sat, bs, false) + '</td>';
       s += '<td style="text-align:right;padding:6px;color:' + (pct != null && pct >= 50 ? '#A32D2D' : 'inherit') + '">' + (pct == null ? '—' : pct.toFixed(0) + '%') + '</td>';
       s += '<td style="text-align:right;padding:6px">' + recs.length + '</td>';
