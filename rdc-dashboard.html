@@ -1354,10 +1354,12 @@ const DB_NAME = 'RDC_Dashboard';
 //   ④ 列数不变（品牌 + 各RDC合计 + 6 RDC = 8 列），故 .brand-rdc-matrix 的 nth-child 列宽规则不受影响；
 //      行数 12 → 7。
 //   【DB_VERSION 不动】纯展示层白名单，无新增持久化字段。
+// v509（2026-11-17 用户纠正）：恢复「补货决策复盘」展开明细的原位置、原顺序 —— 原全字段明细仍是第一块，
+//   v508 新增的逐笔时间线挪到原明细后面作为「补充」，不替换、不压缩原来的全链路明细。DB_VERSION 不动。
 // v508（2026-11-17 用户裁定）：「补货决策复盘」归因改为与「补货调整跟踪」逐笔同源——
 //   每笔补货独立算到货日 + 4 天观察窗，窗口内逐日缺货才归因；窗口未走完标观察中，不提前下结论。
 //   TOP10 月累计缺货只用于排序，不再当成某笔补货的责任量。DB_VERSION 不动（无新增持久化字段）。
-const BUILD_VERSION = 508;
+const BUILD_VERSION = 509;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -18190,12 +18192,29 @@ function _revCardInner() {
           }).join(' · ') + '</span>';
         }
         s += '</div>';
-        if (recs.length) {
-          // v508: 逐笔时间线 —— 每笔补货只展示自己的到货日 + 4 天观察窗内逐日缺货，
-          //   与上方「缺货合计（月累计）」刻意不同口径，避免把不同日期的缺口混成一笔账。
+        if (!recs.length) {
+          s += '<div style="font-size:11px;color:#94A3B8">本期明细中没有这条 SKU 的补货记录，不作判定。</div>';
+        } else {
+          s += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:5px">补货记录 ' + recs.length + ' 次 · 全部字段（与下方「补货明细」同口径，表内可横向滚动）</div>';
+          s += '<div style="overflow:auto;max-height:300px;max-width:100%;border:1px solid var(--border-card);border-radius:8px">';
+          // v473: data-freeze=6 → 横向滚动时「补货日/RDC/SKU编码/SKU名称/供应链品类/生命周期」6 列冻结（用户 2026-11-08 红框要求）
+          s += '<table data-freeze="6" data-freeze-bg="#FCFCFA" style="border-collapse:collapse;font-size:10.5px">';
+          s += '<thead><tr style="color:var(--text-secondary);background:#FCFCFA">';
+          s += _revColsHeadHtml();
+          s += '</tr></thead><tbody>';
+          recs.forEach(function(r) {
+            s += '<tr style="border-top:1px solid #F1F5F9">';
+            s += _revColsCellsHtml(r, x);
+            s += '</tr>';
+          });
+          s += '</tbody></table></div>';
+
+          // v508.1（2026-11-17 用户纠正）：原全字段明细必须保持原位、原顺序；逐笔时间线只放在后面做补充展示。
+          //   每笔补货只展示自己的到货日 + 4 天观察窗内逐日缺货，与上方「缺货合计（月累计）」刻意不同口径。
           var batches = _revBatchList(recs);
-          s += '<div style="font-size:11.5px;font-weight:600;color:#2C2C2A;margin:2px 0 6px">逐笔补货归因（补货日 → 到货日 → 4 天观察窗 → 窗口内缺货）</div>';
-          s += '<div style="overflow:auto;max-height:220px;border:1px solid var(--border-card);border-radius:8px;margin-bottom:10px">';
+          s += '<div style="border-top:1px dashed var(--border-card);margin-top:10px;padding-top:9px">';
+          s += '<div style="font-size:11.5px;font-weight:600;color:#2C2C2A;margin-bottom:6px">补充：逐笔补货归因（补货日 → 到货日 → 4 天观察窗 → 窗口内缺货）</div>';
+          s += '<div style="overflow:auto;max-height:220px;border:1px solid var(--border-card);border-radius:8px;margin-bottom:8px">';
           s += '<table style="border-collapse:collapse;font-size:10.5px;min-width:900px">';
           s += '<thead><tr style="color:var(--text-secondary);background:#FCFCFA">';
           s += '<th style="text-align:left;padding:5px 8px;font-weight:400">补货日</th>';
@@ -18223,24 +18242,8 @@ function _revCardInner() {
             s += '</tr>';
           });
           s += '</tbody></table></div>';
-          s += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.6;margin:-4px 0 10px">说明：这里的「窗口内逐日缺货」只取每笔补货到货后的 4 天责任窗，和上方「缺货合计（当月累计）」范围不同，两者不要求相等；窗口没走完的补货不参与结论判定。</div>';
-        }
-        if (!recs.length) {
-          s += '<div style="font-size:11px;color:#94A3B8">本期明细中没有这条 SKU 的补货记录，不作判定。</div>';
-        } else {
-          s += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:5px">补货记录 ' + recs.length + ' 次 · 全部字段（与下方「补货明细」同口径，表内可横向滚动）</div>';
-          s += '<div style="overflow:auto;max-height:300px;max-width:100%;border:1px solid var(--border-card);border-radius:8px">';
-          // v473: data-freeze=6 → 横向滚动时「补货日/RDC/SKU编码/SKU名称/供应链品类/生命周期」6 列冻结（用户 2026-11-08 红框要求）
-          s += '<table data-freeze="6" data-freeze-bg="#FCFCFA" style="border-collapse:collapse;font-size:10.5px">';
-          s += '<thead><tr style="color:var(--text-secondary);background:#FCFCFA">';
-          s += _revColsHeadHtml();
-          s += '</tr></thead><tbody>';
-          recs.forEach(function(r) {
-            s += '<tr style="border-top:1px solid #F1F5F9">';
-            s += _revColsCellsHtml(r, x);
-            s += '</tr>';
-          });
-          s += '</tbody></table></div>';
+          s += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.6">说明：这里的「窗口内逐日缺货」只取每笔补货到货后的 4 天责任窗，和上方「缺货合计（当月累计）」范围不同，两者不要求相等；窗口没走完的补货不参与结论判定。</div>';
+          s += '</div>';
         }
         s += '</td></tr>';
       }
