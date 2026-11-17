@@ -43,7 +43,8 @@ const eng = SamsSimEngine.create();
 const st = eng.state;
 
 // 参数 = 线上 _samsState 默认（与离线原型一致）
-st.car = 5568; st.minCarRatio = 0.5; st.win = 8; st.coverW = 1;
+// v494 起页面/基线默认 win=12（近12周）；此前写死 8 导致对拍用旧参数假红，同步为 12。
+st.car = 5568; st.minCarRatio = 0.5; st.win = 12; st.coverW = 1;
 st.basis = 'plan'; st.csl = 0.95; st.useExclude = true; st.freeDays = 30;
 
 const startOf = {};
