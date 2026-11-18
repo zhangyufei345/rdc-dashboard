@@ -1372,10 +1372,11 @@ const DB_NAME = 'RDC_Dashboard';
 // v514（2026-11-18 用户裁定）：实际库存图到仓日改按「提货运输天数」（表 1+4 取 4，T 当日不额外加），
 //   天津 11/12 补货 → 11/16 到仓；与模拟公式 SAMS_LEAD（1+4=5，ROP 口径）差 1 天，两套口径并存且已标注。
 //   模拟趋势视图（含 SAMS_LEAD/ROP/车数）一字未动，DB_VERSION 不动。
-// v515（2026-11-18 用户裁定）：模拟趋势图新增第三条线「在途」（橙虚线，右侧独立 0 起算刻度）。
-//   数据本来就有 r.transit（模型按当时库存决定的补货量，转储跳升/到货回落），之前没单独画；
-//   主 Y 轴仍是 v496 紧贴 inHand/invPos 的尺度，原两条线坐标/图例位置一律不动，DB_VERSION 不动。
-const BUILD_VERSION = 515;
+// v516（2026-11-18 用户纠错）：在途线改回与在库/库存位置**同一主轴刻度**。
+//   v515 用右侧独立 0 起算刻度是错的：两条不同尺度的线叠一起，在途线会跑到「在库+在途」灰线上方，
+//   违背 transit = invPos − onHand。共用主轴后 transit ≤ invPos 恒成立，橙线只能在灰线之下。
+//   低于主轴下限（含 0）clamp 到图底并标注。原两条线坐标/图例位置不动，DB_VERSION 不动。
+const BUILD_VERSION = 516;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -5779,9 +5780,10 @@ function samsSimRender() {
      + '。'
      + '<br>🔄 <b>参数联动</b>：本页参数栏任一改动，会按新参数<b>立即重算</b>下列全部结果'
      + '（本次重算 ' + S.lastMs + ' ms）。'
-     + '<br>📈 <b>v515 新增「在途」趋势线</b>（橙虚线，右侧独立 0 起算刻度）：在途＝按当前参数模拟下单后、'
-     + '尚未到仓的货，转储日跳升、到货日回落到在库；模拟图三条线的含义与实际库存图一致。'
-     + '在途线用副轴是因为主 Y 轴为紧贴「在库/在库+在途」的局部尺度，若把大量 0 值并入会把原有两条线压平。'
+     + '<br>📈 <b>「在途」趋势线</b>（橙虚线，与黑/灰线<b>同一主轴刻度</b>）：在途＝库存位置 − 在库 ＝ '
+     + '按当前参数模拟下单后尚未到仓的货，转储日跳升、到货日回落到在库。'
+     + '因共用主轴，橙线恒在灰线（在库+在途）之下，两者之间的垂直距离就是在库。'
+     + '在途为 0 或低于主轴下限的日子贴在图底显示。'
      + '<br>🖱 <b>鼠标悬停</b>折线任意位置看当日全部数据；悬停彩色点看该类数量：'
      + '<b style="color:#2563EB">蓝＝出货日（订单量）</b>，订单量＝当日真实出货差分，'
      + '<b>切片跨天时整笔记在本日</b>并在柱顶标「·Nd」；'
@@ -6101,21 +6103,16 @@ function samsSimSvg(w, rows, cd, R, keep) {
 
   var ptsInv = [], ptsOn = [], ptsTr = [], marks = [];
   var halfW = (Rt - L) / Math.max(1, n - 1) / 2;
-  // v515（用户 2026-11-18 要求）：模拟趋势也把「在途」单独画成一条线。
-  //   ⚠ 在途 0 的日子很多（如惠州14天档 20 天为 0），若并入主 Y 轴（v496 紧贴 inHand/invPos，
-  //   ymin≈5,988）会把 0 压到图外。故在途用**右侧独立 0 起算刻度**，主线两条的坐标/图例位置一律不动。
-  var trMax = 0;
-  for (i = 0; i < n; i++) {
-    r = rows[i]; if (!r.active) continue;
-    trMax = Math.max(trMax, Number(r.transit) || 0);
-  }
-  trMax = Math.max(1, trMax);
-  function YTr(v) { return B - (B - T) * (Math.max(0, Number(v) || 0) / trMax); }
+  // v516（用户 2026-11-18 纠错）：在途线**必须和灰线/黑线用同一主轴刻度**。
+  //   v515 用右侧独立 0 起算刻度是错的 —— 两条不同尺度的线叠在一张图上，
+  //   在途线会跑到「在库+在途」灰线上方，违背 transit = invPos − onHand 的数学关系。
+  //   改回主轴 Y() 后 transit ≤ invPos 恒成立 ⇒ 橙线永远在灰线之下（或在库为0时重合）。
+  //   低于主轴下限（含 0）的日子 clamp 到图底 B，并在图例说明「贴底＝低于轴下限/为0」。
   for (i = 0; i < n; i++) {
     r = rows[i]; if (!r.active) continue;
     ptsInv.push(f(X(i)) + ',' + f(Y(r.invPos)));
     ptsOn.push(f(X(i)) + ',' + f(Y(r.onHand)));
-    ptsTr.push(f(X(i)) + ',' + f(YTr(r.transit)));
+    ptsTr.push(f(X(i)) + ',' + f(Math.min(B, Y(r.transit))));
     var yy = Y(r.onHand);
     // 同一天可能同时有来订单 / 转储 / 到货，按类型做 ±12px 横向错位。
     //   v486：首单顺延后 10-19 同日既有下单又有转储，原 ±5px < 透明 hover 圆半径 9px，
@@ -6134,10 +6131,8 @@ function samsSimSvg(w, rows, cd, R, keep) {
   }
   p.push('<polyline fill="none" stroke="#8a94a6" stroke-width="1.7" stroke-dasharray="5 4" points="' + ptsInv.join(' ') + '"/>');
   p.push('<polyline fill="none" stroke="#111827" stroke-width="2.1" points="' + ptsOn.join(' ') + '"/>');
-  // v515：橙虚线=在途，按右侧独立刻度（0~trMax）；主线两条完全不动。
+  // v516：橙虚线=在途，与灰线/黑线同一主轴刻度 ⇒ 恒在灰线之下（transit = invPos − onHand）。
   p.push('<polyline fill="none" stroke="#EA580C" stroke-width="1.6" stroke-dasharray="5 4" points="' + ptsTr.join(' ') + '"/>');
-  p.push('<text x="' + (Rt - 4) + '" y="' + (T + 12) + '" font-size="9.5" fill="#EA580C" text-anchor="end">'
-       + '橙虚线·在途（右轴 0~' + samsSimNum(trMax) + '）</text>');
   // 透明竖条放在折线之上，让「鼠标放到折线任意位置」也能看到当日全部数据；
   // 彩色点最后画（更上层），hover 时优先显示该点的具体数量。
   for (i = 0; i < n; i++) {
@@ -6154,7 +6149,7 @@ function samsSimSvg(w, rows, cd, R, keep) {
   p.push('<circle cx="590" cy="' + (lg - 4) + '" r="3.6" fill="#EA580C"/><text x="598" y="' + lg + '" font-size="10" fill="#6b7280">转储日·转储量</text>');
   p.push('<circle cx="710" cy="' + (lg - 4) + '" r="3.6" fill="#16A34A"/><text x="718" y="' + lg + '" font-size="10" fill="#6b7280">到货日·到货量</text>');
   p.push('<line x1="804" y1="' + (lg - 4) + '" x2="840" y2="' + (lg - 4) + '" stroke="#EA580C" stroke-width="1.6" stroke-dasharray="5 4"/>');
-  p.push('<text x="846" y="' + lg + '" font-size="10" fill="#EA580C">在途(右轴)</text>');
+  p.push('<text x="846" y="' + lg + '" font-size="10" fill="#EA580C">在途(同轴·贴底=0)</text>');
   p.push('</svg>');
   return p.join('');
 }

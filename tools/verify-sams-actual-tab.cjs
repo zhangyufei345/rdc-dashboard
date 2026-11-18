@@ -54,9 +54,32 @@ function startServer() {
     return { view: window._samsSimState.view, tabs: (box.innerText.match(/模拟趋势|实际库存情况/g) || []).length,
       svgCount: box.querySelectorAll('svg').length,
       hasWuhan: /武汉FDC/.test(box.innerHTML),
-      hasTransitLine: /橙虚线·在途（右轴/.test(box.innerHTML) && /在途\(右轴\)/.test(box.innerHTML) };
+      hasTransitLine: /在途\(同轴·贴底=0\)/.test(box.innerHTML),
+      transitSameAxis: (() => {
+        const svgs = [...box.querySelectorAll('svg')].filter(s => /库存趋势/.test(s.textContent));
+        return svgs.length > 0 && svgs.every(s => !/右轴/.test(s.textContent) && /在途/.test(s.textContent));
+      })(),
+      transitBelowInv: (() => {
+        const svgs = [...box.querySelectorAll('svg')].filter(s => /库存趋势/.test(s.textContent));
+        const pts = el => (el.getAttribute('points') || '').trim().split(/\s+/).map(p => p.split(',').map(Number));
+        let checked = 0, bad = 0;
+        for (const s of svgs) {
+          const polys = [...s.querySelectorAll('polyline')];
+          const gray = polys.find(p => p.getAttribute('stroke') === '#8a94a6');
+          const orange = polys.find(p => p.getAttribute('stroke') === '#EA580C');
+          if (!gray || !orange) return false;
+          const g = pts(gray), o = pts(orange);
+          if (g.length !== o.length) return false;
+          for (let i = 0; i < g.length; i++) {
+            checked++;
+            if (o[i][1] < g[i][1] - 0.2) bad++;   // SVG y 向下：橙线 y 必须 >= 灰线 y（在之下）
+          }
+        }
+        return { checked: checked, bad: bad, ok: checked > 0 && bad === 0 };
+      })() };
   });
   console.log('默认模拟视图:', JSON.stringify(simInfo));
+  console.log('在途线几何校验: 逐点 ' + simInfo.transitBelowInv.checked + ' 个，越界 ' + simInfo.transitBelowInv.bad + ' 个');
 
   await page.evaluate(() => samsSimSetView('actual'));
   await page.waitForFunction(() => window._samsSimState.actualData || window._samsSimState.actualErr, { timeout: 30000 });
@@ -79,6 +102,7 @@ function startServer() {
   console.log('页面错误:', errs.length ? errs.slice(0, 5) : '无');
   const ok = simInfo.view === 'sim' && simInfo.tabs === 2 && simInfo.svgCount >= 4 && simInfo.hasWuhan && simInfo.hasTransitLine
     && actInfo.view === 'actual' && !actInfo.err && actInfo.svgCount === 5 && actInfo.hasTJ27840 && actInfo.hasWuhan
+    && simInfo.transitSameAxis && simInfo.transitBelowInv.ok
     && actInfo.hasSMWHNote && actInfo.hasLeadCorrect && errs.length === 0;
   console.log(ok ? '✅ v513 TAB 与武汉模拟渲染验证通过' : '❌ v513 验证失败');
   await browser.close(); server.close();
