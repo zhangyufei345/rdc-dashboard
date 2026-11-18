@@ -1362,7 +1362,9 @@ const DB_NAME = 'RDC_Dashboard';
 // v508（2026-11-17 用户裁定）：「补货决策复盘」归因改为与「补货调整跟踪」逐笔同源——
 //   每笔补货独立算到货日 + 4 天观察窗，窗口内逐日缺货才归因；窗口未走完标观察中，不提前下结论。
 //   TOP10 月累计缺货只用于排序，不再当成某笔补货的责任量。DB_VERSION 不动（无新增持久化字段）。
-const BUILD_VERSION = 511;
+// v512（2026-11-18 用户裁定）：山姆模拟「最佳补货覆盖天数建议」剔除 4~24 全档无解的起算日，
+//   只用剩余有解起算日取最小档并留痕；主趋势图/明细/DB_VERSION 均不动。
+const BUILD_VERSION = 512;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -5293,6 +5295,8 @@ function samsSimRun() {
 //   ③「库存覆盖天数」= 当前起算日全窗口的 平均在库 ÷ 日均出货（逐日平均，不是期末快照）。
 //      用户可输入目标上限：目标 ≥ 该值 → 可行；目标 < 该值 → 冲突，并给出「压到几天的代价」。
 //   ④ 不做「一键应用」（用户明确不要），也不做分仓 coverDays（coverDays 仍是全局参数）。
+// v512（用户 2026-11-18 裁定）：若某起算日在 4~24 全档都无零缺货解，则剔除该起算日的模拟；
+//   只用剩余「有解起算日」重算最坏缺货率并取最小覆盖天数，卡片上留痕剔除数量。主库存趋势图不动。
 function samsSimAdvOne(eng, st, built, daily, w, cd, sd, P, wantRows) {
   eng.setToday(sd); st.data = built[sd];
   var opening = eng.calc(w, 14, 0, P.coverW).rop;
@@ -5382,21 +5386,26 @@ function samsSimAdviceRun(R) {
   }
   var CDS = [], c;
   for (c = 4; c <= 24; c++) CDS.push(c);
-  var perWh = {};
+  var SOLVE_EPS = 0.0005;
+  var perWh = {}, feasibleStarts = {}, droppedStarts = {};
   for (i = 0; i < ACTIVE.length; i++) {
     w = ACTIVE[i]; perWh[w] = [];
     var baseStart = R.startOf[w];
+    var rateByStart = {}, bestByStart = {}, baseByCd = {};
     for (var ci = 0; ci < CDS.length; ci++) {
-      var cd = CDS[ci], worst = 0, base = null, worstStart = null;
+      var cd = CDS[ci], base = null;
       for (var si = 0; si < starts[w].length; si++) {
         var sd = starts[w][si];
         var rr = samsSimAdvOne(eng, st, built, daily, w, cd, sd, P);
         var rate = rr.ship > 0 ? rr.short / rr.ship : 0;
-        if (rate > worst) { worst = rate; worstStart = sd; }
+        if (!rateByStart[sd]) rateByStart[sd] = {};
+        rateByStart[sd][cd] = rate;
+        if (bestByStart[sd] == null || rate < bestByStart[sd]) bestByStart[sd] = rate;
         if (sd === baseStart) base = rr;
       }
+      baseByCd[cd] = base;
       perWh[w].push({
-        cd: cd, worstShortRate: worst, worstStart: worstStart,
+        cd: cd, worstShortRate: 0, worstStart: null,
         invCover: (base && base.dailyShip > 0) ? base.avgOnHand / base.dailyShip : null,
         shortRate: (base && base.ship > 0) ? base.short / base.ship : 0,
         avgOnHand: base ? base.avgOnHand : 0, dailyShip: base ? base.dailyShip : 0,
@@ -5410,12 +5419,30 @@ function samsSimAdviceRun(R) {
           ? ((base.ssSum / base.days) / base.dailyShip) : null
       });
     }
+    // v512：先按起算日筛掉「4~24 全档都无解」的窗口，再用剩余有解起算日重算每档最坏缺货率。
+    feasibleStarts[w] = []; droppedStarts[w] = [];
+    for (var si0 = 0; si0 < starts[w].length; si0++) {
+      var sd0 = starts[w][si0];
+      if (bestByStart[sd0] <= SOLVE_EPS) feasibleStarts[w].push(sd0);
+      else droppedStarts[w].push(sd0);
+    }
+    // 极端兜底：若某仓全部起算日都无解，则退回原全量口径，至少保留旧有的「无解」提示，不静默清空。
+    var useStarts = feasibleStarts[w].length ? feasibleStarts[w] : starts[w];
+    for (var ci1 = 0; ci1 < CDS.length; ci1++) {
+      var cd1 = CDS[ci1], cell1 = perWh[w][ci1], worst1 = 0, worstStart1 = null;
+      for (var si1 = 0; si1 < useStarts.length; si1++) {
+        var sd1 = useStarts[si1];
+        var rate1 = (rateByStart[sd1] && rateByStart[sd1][cd1] != null) ? rateByStart[sd1][cd1] : 0;
+        if (rate1 > worst1) { worst1 = rate1; worstStart1 = sd1; }
+      }
+      cell1.worstShortRate = worst1; cell1.worstStart = worstStart1;
+    }
   }
   var minOk = {}, allOk = true;
   for (i = 0; i < ACTIVE.length; i++) {
     w = ACTIVE[i]; minOk[w] = null;
     for (var k = 0; k < CDS.length; k++) {
-      if (perWh[w][k].worstShortRate <= 0.0005) { minOk[w] = CDS[k]; break; }
+      if (perWh[w][k].worstShortRate <= SOLVE_EPS) { minOk[w] = CDS[k]; break; }
     }
     if (minOk[w] == null) allOk = false;
   }
@@ -5424,8 +5451,14 @@ function samsSimAdviceRun(R) {
     uniform = 0;
     for (i = 0; i < ACTIVE.length; i++) uniform = Math.max(uniform, minOk[ACTIVE[i]]);
   }
-  var startsCount = {};
-  for (i = 0; i < ACTIVE.length; i++) startsCount[ACTIVE[i]] = starts[ACTIVE[i]].length;
+  var startsCount = {}, feasibleCount = {}, droppedCount = {}, droppedStartDates = {};
+  for (i = 0; i < ACTIVE.length; i++) {
+    w = ACTIVE[i];
+    startsCount[w] = starts[w].length;
+    feasibleCount[w] = feasibleStarts[w].length;
+    droppedCount[w] = droppedStarts[w].length;
+    droppedStartDates[w] = droppedStarts[w].slice();
+  }
   // v499（用户 2026-11-14「逐日显示 出货/在库/缺口」）：
   //   对每仓「再少 1 天」那一档，把**最坏起算日**重跑一次并保留逐日行（含出货/在库/缺口/下单/到货）。
   //   只重跑这几个样本（3 仓 × 1 起点），代价约 0.1s；全量扫描仍保持轻量不收集 rows。
@@ -5456,7 +5489,9 @@ function samsSimAdviceRun(R) {
       avgCover: covs.reduce(function (a, b) { return a + b; }, 0) / covs.length, worst: worst2 });
   }
   return { cds: CDS, range: [CDS[0], CDS[CDS.length - 1]], perWh: perWh, agg: agg,
-           minOk: minOk, uniform: uniform, startsCount: startsCount, worstDays: worstDays,
+           minOk: minOk, uniform: uniform, startsCount: startsCount,
+           feasibleCount: feasibleCount, droppedCount: droppedCount,
+           droppedStartDates: droppedStartDates, worstDays: worstDays,
            startOf: R.startOf, lastDate: lastDate, ms: Date.now() - t0 };
 }
 
@@ -5519,7 +5554,12 @@ function samsSimAdviceHtml(A, R) {
     h += '<div style="flex:1 1 200px;min-width:180px;background:#fff;border:1px solid #DBEAFE;'
       + 'border-radius:8px;padding:9px 11px">'
       + '<div style="font-size:11px;color:var(--text-secondary)">' + w + 'FDC · '
-      + A.startsCount[w] + ' 个起算日</div>';
+      + A.startsCount[w] + ' 个起算日</div>'
+      + ((A.droppedCount && A.droppedCount[w] > 0)
+          ? '<div style="font-size:10px;color:#B45309;margin-top:2px" title="无解起算日：'
+            + A.droppedStartDates[w].join('、') + '">已剔除 ' + A.droppedCount[w]
+            + ' 个无解起算日，按剩余 ' + A.feasibleCount[w] + ' 个取值</div>'
+          : '');
     if (cd == null) {
       h += '<div style="font-size:15px;font-weight:600;color:var(--color-red);margin-top:2px">'
         + A.range[1] + ' 天内无解</div>';
