@@ -55,6 +55,14 @@ PLAN_METRIC = "DP_共识数量"      # 计划（分仓计划）
 SHIP_METRIC = "实际出货_数量"     # 实际出货（出货量，已合并 已放行+未放行+大仓直发）
 
 HISTORY_FILE = "demand-history.json"   # 每日 MTD 实际出货快照（与 demand.json 同目录）
+KA_ONLY_FILE = "ka-only-demand.json"   # v519：按 DP子渠道 拆分的当月 KA/经销商数据（纯KA清单源）
+
+# v519（2026-11-18 用户裁定）：分仓需求新增 D 列「DP子渠道 Name」，取值 经销商 / KA_其他。
+#   用途：在「每日补货建议」新增独立卡片展示纯 KA SKU×仓清单（KA 需求>0 且 经销商=0）。
+#   🔴 守恒铁律：每个 SKU×仓 的 分仓需求(DP_共识) = KA + 经销商；实际出货同样 = KA出货 + 经销商出货；
+#      且两个合计必须与 demand.json 的 plan/actualShip 当月值逐值相等（防拆分抽取错列/漏行）。
+KA_CH_DEALER = "经销商"
+KA_CH_KA = "KA_其他"
 
 # v479（2026-11-11）：源表「分仓需求」曾每天随当月一起给出**上月最终值**
 #   （DP_共识数量 + 实际出货_数量 两个指标成对、全 SKU）。旧归档 data-YYYY-MM.json
@@ -425,6 +433,122 @@ def merge_archived_months(plan, actualShip, out_path, final_months=None):
     return done, skipped
 
 
+def build_ka_only(src, out, rows, hdr, month_cols, cur_ym, plan, actualShip, meta):
+    """v519：按「DP子渠道 Name」拆分当月 KA/经销商，产出纯 KA 清单数据源。
+
+    🔴 守恒校验（用户 2026-11-18 明确要求）：
+       · 分仓需求(DP_共识) 当月 = KA + 经销商
+       · 实际出货 当月 = KA出货 + 经销商出货
+       · 两个合计都必须 == demand.json 的 plan/actualShip 当月值（同一 SKU×仓）
+       任何一处不等 → raise，绝不产出静默错误的数据。
+    """
+    idx = {str(h).strip(): i for i, h in enumerate(hdr) if h is not None}
+    ch_key = "DP子渠道 Name"
+    if ch_key not in idx:
+        print("   ⚠️ 源表无「%s」列，跳过 KA 拆分（ka-only-demand.json 不更新）" % ch_key)
+        return None
+    ci, ri, mi, chi = idx["产品 Code"], idx["计划仓 Name"], idx["计划指标"], idx[ch_key]
+    if cur_ym not in idx:
+        print("   ⚠️ 源表无当月列 %s，跳过 KA 拆分" % cur_ym)
+        return None
+    ycol = idx[cur_ym]
+
+    # split[(metric][sku][rdc] = {KA: v, 经销商: v}
+    split = {PLAN_METRIC: {}, SHIP_METRIC: {}}
+    ch_seen = {}
+    for r in rows[1:]:
+        if r[ci] is None:
+            continue
+        code, rdc, metric = norm_sku(r[ci]), norm_rdc(r[ri]), str(r[mi]).strip() if r[mi] is not None else ""
+        if not code or not rdc or metric not in split:
+            continue
+        ch = str(r[chi]).strip() if r[chi] is not None else ""
+        if ch not in (KA_CH_DEALER, KA_CH_KA):
+            continue
+        ch_seen[ch] = ch_seen.get(ch, 0) + 1
+        v = r[ycol]
+        try:
+            fv = float(v) if v not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            fv = 0.0
+        d = split[metric].setdefault(code, {}).setdefault(rdc, {KA_CH_DEALER: 0.0, KA_CH_KA: 0.0})
+        d[ch] += fv
+
+    # ---- 守恒校验：拆分量 vs demand.json 合并值，逐 SKU×仓 对齐 ----
+    errs, checked = [], 0
+    for metric, merged in ((PLAN_METRIC, plan), (SHIP_METRIC, actualShip)):
+        for sku, rdcs in split[metric].items():
+            for rdc, chd in rdcs.items():
+                checked += 1
+                ka, dealer = chd[KA_CH_KA], chd[KA_CH_DEALER]
+                total = ka + dealer
+                base = merged.get(sku, {}).get(rdc, {}).get(cur_ym)
+                if base is None:
+                    # demand.json 该 SKU×仓 当月无键：拆分量必须全 0，否则是漏并
+                    if abs(total) > 0.005:
+                        errs.append("%s/%s/%s 拆分合计 %.2f 但 demand.json 无当月值" % (metric, sku, rdc, total))
+                    continue
+                if abs(total - float(base)) > 0.02:
+                    errs.append("%s/%s/%s 拆分 KA %.2f + 经销商 %.2f = %.2f ≠ demand.json %.2f"
+                                % (metric, sku, rdc, ka, dealer, total, float(base)))
+    # 反向：demand.json 有值但拆分表整组缺失
+    for metric, merged in ((PLAN_METRIC, plan), (SHIP_METRIC, actualShip)):
+        for sku, rdcs in merged.items():
+            for rdc, md in rdcs.items():
+                if cur_ym not in md:
+                    continue
+                if sku not in split[metric] or rdc not in split[metric].get(sku, {}):
+                    if abs(float(md[cur_ym])) > 0.02:
+                        errs.append("%s/%s/%s demand.json 有值 %.2f 但拆分表无该组"
+                                    % (metric, sku, rdc, float(md[cur_ym])))
+    if errs:
+        preview = "；".join(errs[:8])
+        raise SystemExit("🔴 KA 拆分守恒校验失败（%d 处）：%s%s"
+                         % (len(errs), preview, " …" if len(errs) > 8 else ""))
+
+    # ---- 纯 KA 清单：DP_共识当月 KA>0 且 经销商=0 ----
+    ka_only = []
+    for sku, rdcs in split[PLAN_METRIC].items():
+        for rdc, chd in rdcs.items():
+            ka, dealer = chd[KA_CH_KA], chd[KA_CH_DEALER]
+            if ka > 0 and dealer == 0:
+                shipd = split[SHIP_METRIC].get(sku, {}).get(rdc, {})
+                m = meta.get(sku, {})
+                ka_only.append({
+                    "sku": sku, "name": m.get("name", ""), "rdc": rdc,
+                    "ka": round(ka, 2), "dealer": 0,
+                    "planTotal": round(ka + dealer, 2),
+                    "shipKa": round(shipd.get(KA_CH_KA, 0), 2),
+                    "shipDealer": round(shipd.get(KA_CH_DEALER, 0), 2),
+                    "shipTotal": round(shipd.get(KA_CH_KA, 0) + shipd.get(KA_CH_DEALER, 0), 2),
+                    "cat": m.get("cat", ""), "life": m.get("life", ""),
+                })
+    ka_only.sort(key=lambda x: (-x["ka"], x["sku"], x["rdc"]))
+
+    obj = {
+        "generatedAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source": os.path.basename(src),
+        "month": cur_ym,
+        "channels": [KA_CH_DEALER, KA_CH_KA],
+        "channelRows": ch_seen,
+        "verification": {
+            "groupsChecked": checked,
+            "conservationErrors": 0,
+            "planTotalEqualToDemandJson": True,
+            "shipTotalEqualToDemandJson": True,
+        },
+        "kaOnly": ka_only,
+    }
+    fp = os.path.join(os.path.dirname(os.path.abspath(out)), KA_ONLY_FILE)
+    with open(fp, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+    print("✅ 已生成 %s（%d 字节）｜当月 %s ｜ 守恒校验 %d 组全过 ｜ 纯KA SKU×仓 %d 条"
+          % (KA_ONLY_FILE, os.path.getsize(fp), cur_ym, checked, len(ka_only)))
+    print("   渠道行数: %s ｜ 纯KA合计需求 %.0f 支"
+          % (ch_seen, sum(x["ka"] for x in ka_only)))
+    return obj
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
     out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
@@ -450,6 +574,12 @@ def main():
             sys.exit(1)
     ci, ni, ri, cati, lifei, mi = idx["产品 Code"], idx["产品 Name"], idx["计划仓 Name"], idx["供应链品类"], idx["生命周期标签"], idx["计划指标"]
     mc = {m: idx[m] for m in month_cols}
+    # v519：源表新增 D 列「DP子渠道 Name」后，同一 SKU×仓×指标×月 会拆成 经销商/KA 两行。
+    #   主表 must 累加合并（=经销商+KA），否则 d[m]=v 覆盖只留最后一行 → 总数凭空少一半。
+    chi = idx.get("DP子渠道 Name")
+    _split_mode = chi is not None
+    if _split_mode:
+        print("   ✓ 检测到「DP子渠道 Name」列 → 分仓需求按 经销商+KA 累加合并（总数据恢复为拆分前口径）")
 
     plan = {}
     actualShip = {}
@@ -479,7 +609,7 @@ def main():
                 if v is None or v == "":
                     continue
                 try:
-                    d[m] = float(v)
+                    d[m] = d.get(m, 0.0) + float(v) if _split_mode else float(v)
                 except (ValueError, TypeError):
                     pass
         elif metric == SHIP_METRIC:
@@ -490,7 +620,7 @@ def main():
                 if v is None or v == "":
                     continue
                 try:
-                    d[m] = float(v)
+                    d[m] = d.get(m, 0.0) + float(v) if _split_mode else float(v)
                 except (ValueError, TypeError):
                     pass
 
@@ -603,6 +733,9 @@ def main():
             print("   [%s] 最新 %s 合计 %.0f 支 ｜ %s" % (
                 m, _last[-1], sum(_row.values()),
                 ", ".join("%s=%.0f" % (k, x) for k, x in sorted(_row.items()))))
+
+    # ===== v519：KA 拆分 + 纯 KA 清单（守恒校验不通过会 raise，不产出错误数据）=====
+    build_ka_only(src, out, rows, hdr, month_cols, _curYM, plan, actualShip, meta)
 
 if __name__ == "__main__":
     main()

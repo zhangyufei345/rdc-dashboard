@@ -1381,7 +1381,14 @@ const DB_NAME = 'RDC_Dashboard';
 // v518（2026-11-18 用户裁定）：实际库存图出货日期重排 —— 惠州 10-22 的 5,916 箱改计入 10-23，
 //   只挪日期、总量守恒；期初日（惠州正好 10-23 到仓）同步扣当天出货。模拟趋势图出货来自 git 切片链，
 //   牵动引擎对拍，本轮不动。看板口径说明带新增「出货日期重排」提示。DB_VERSION 不动。
-const BUILD_VERSION = 518;
+// v519（2026-11-18 用户新需求）：分仓需求新格式增加 D 列「DP子渠道 Name」（经销商 / KA_其他），
+//   总数守恒（合计 = 经销商 + KA）。每日补货建议页**末尾追加**「纯 KA 需求 SKU 清单」独立卡片：
+//   当月 KA_其他 > 0 且 经销商 = 0，粒度 SKU×单仓，数据源 ka-only-demand.json（随分仓需求导出链生成）。
+//   商品名/品类/生命周期、分仓需求与实际出货两条守恒（plan = KA+经销商、ship = KA出货+经销商出货）
+//   均在导出脚本侧强校验（4,842 组全过）后落盘；前端只展示并复核，不重算、不覆盖。
+//   🔴 只新增卡片，原每日建议 / 下调预警 / 中期策略 / 说明卡的位置、顺序、默认展开状态一律不动。
+//   DB_VERSION 不动（无新持久化字段）。
+const BUILD_VERSION = 519;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -16797,6 +16804,31 @@ function exportShortageCompareCSV() {
 // [模块A] 每日补货建议 —— 机制：方案F 5维加权打分(缺货规模26/满足缺口16/趋势恶化12/缺货严重度26/长期高严重度20) → 紧急/重要/关注 + 建议补货(箱)；时间基准=缺货报告最新一天；候选=最新一天有缺货的SKU×RDC。
 //    ❗≠ [模块B] 分仓计划优化建议(buildPlanOptimAdvice L17708 / renderPlanAdvice L18375，v272起规则链布尔判定 → 上调/下调/保持分仓计划)。
 //    ⚠️ 两模块共用底层 sevDimCalc/ltDimCalc(L4794)，但上层机制完全不同，禁止混谈；改任一方前先确认归属。
+// ===== v519: 纯 KA 清单数据源（ka-only-demand.json，随分仓需求导出链生成）=====
+// 只负责取数 + 完成后重渲染；判定与守恒校验在 tools/export_demand.py 侧已完成并留痕。
+window._kaOnly = window._kaOnly || { loaded: false, loading: false, data: null, err: '' };
+function ensureKaOnlyLoaded() {
+  var K = window._kaOnly;
+  if (K.loaded || K.loading) return;
+  K.loading = true; K.err = '';
+  fetch('./ka-only-demand.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) {
+      if (!r.ok) throw new Error('ka-only-demand.json HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (j) {
+      K.data = j; K.loaded = true; K.loading = false;
+      if (typeof currentPage === 'string' && currentPage === 'replenishment' && typeof renderReplenishment === 'function') renderReplenishment();
+    })
+    .catch(function (e) {
+      K.err = String((e && e.message) || e);
+      K.loading = false; K.loaded = false; K.data = null;
+      console.warn('[ka-only] 加载失败:', K.err);
+      if (typeof currentPage === 'string' && currentPage === 'replenishment' && typeof renderReplenishment === 'function') renderReplenishment();
+    });
+}
+window.kaOnlyReload = function () { window._kaOnly.loaded = false; ensureKaOnlyLoaded(); };
+
 function renderReplenishment() {
   setTitle('补货建议');
   var page = document.getElementById('page-replenishment');
@@ -16804,6 +16836,8 @@ function renderReplenishment() {
     if (page) page.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-secondary)">请先导入数据</div>';
     return;
   }
+  // v519: 纯 KA 清单独立数据源，未就绪时显式提示，就绪后自动重渲染（不改原有任何卡片）
+  ensureKaOnlyLoaded();
 
   var shortageData = dataStore.shortage;
   var orderData = dataStore.orderDetail;
@@ -17955,8 +17989,102 @@ function renderReplenishment() {
   var shipNotReadyBanner = _replShipReady ? '' : '<div style="padding:10px 14px;margin-bottom:12px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;font-size:12px;color:#92400E;line-height:1.7">'
     + '⚠ <b>实际出货数据尚未就绪</b>（demand.json 未并入）：下方「下调预警」的<b>出货量会显示为 0</b>，请勿据此判断，也不要导出。'
     + '已自动触发重新加载，几秒后本页会自动刷新；若长时间不变，请按 <b>Ctrl+Shift+R</b> 强制刷新。</div>';
+  // ===== v519: 纯 KA 需求 SKU 清单（独立卡片，只追加在原页面末尾；原卡片位置/顺序/默认状态不动）=====
+  var kaOnlyHtml = '';
+  (function _buildKaOnlyCard() {
+    function _kaEsc(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _kaNum(n) {
+      var v = Number(n);
+      return (isFinite(v) ? v : 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+    }
+    var K = window._kaOnly || {};
+    var cardOpen = '<div class="card" style="margin-bottom:16px;border-top:4px solid #7C3AED">' +
+      '<div class="card-header"><span class="card-title">🟣 纯 KA 需求 SKU 清单</span>' +
+      '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当月分仓需求口径 · SKU×单仓</span></div>';
+    if (!K.loaded) {
+      kaOnlyHtml = cardOpen + '<div style="padding:14px;font-size:12px;line-height:1.8;color:' + (K.err ? '#92400E' : 'var(--text-secondary)') + '">' +
+        (K.loading ? '⏳ 正在加载 ka-only-demand.json…'
+          : ('⚠ 数据未加载成功' + (K.err ? '（' + _kaEsc(K.err) + '）' : '')
+             + ' · <span onclick="kaOnlyReload()" style="cursor:pointer;color:#6D28D9;text-decoration:underline">点击重试</span>')) +
+        '</div></div>';
+      return;
+    }
+    var J = K.data || {};
+    var rows = Array.isArray(J.kaOnly) ? J.kaOnly.slice() : [];
+    rows.sort(function (a, b) {
+      return (Number(b.ka) || 0) - (Number(a.ka) || 0)
+        || String(a.sku).localeCompare(String(b.sku))
+        || String(a.rdc).localeCompare(String(b.rdc));
+    });
+    var V = J.verification || {};
+    var broken = rows.filter(function (r) {
+      var ka = Number(r.ka) || 0, dealer = Number(r.dealer) || 0;
+      var pt = Number(r.planTotal) || 0, st = Number(r.shipTotal) || 0;
+      var ska = Number(r.shipKa) || 0, sde = Number(r.shipDealer) || 0;
+      return !(ka > 0) || dealer !== 0 || Math.abs(pt - ka - dealer) > 0.5 || Math.abs(st - ska - sde) > 0.5;
+    }).length;
+    var vOK = V.conservationErrors === 0 && V.planTotalEqualToDemandJson === true
+      && V.shipTotalEqualToDemandJson === true && broken === 0;
+    var sumKa = 0, sumPlan = 0, sumShipKa = 0, sumShip = 0;
+    rows.forEach(function (r) {
+      sumKa += Number(r.ka) || 0;
+      sumPlan += Number(r.planTotal) || 0;
+      sumShipKa += Number(r.shipKa) || 0;
+      sumShip += Number(r.shipTotal) || 0;
+    });
+    kaOnlyHtml = cardOpen
+      + '<div style="padding:12px 16px 16px">'
+      + '<div style="font-size:11.5px;line-height:1.8;color:var(--text-secondary);margin-bottom:10px">'
+      + '数据源：' + _kaEsc(J.source || '分仓需求') + ' · 分仓需求 D 列「DP子渠道 Name」（经销商 / KA_其他）。'
+      + '判定：<b style="color:#6D28D9">当月 KA_其他需求 &gt; 0 且经销商需求 = 0</b>，粒度 SKU×单仓；'
+      + '实际出货列保留全部渠道，<b>只作展示、不参与清单判定</b>。'
+      + '<br>守恒：分仓需求 = KA需求 + 经销商需求；实际出货 = KA出货 + 经销商出货（导出时强校验，不平则整批拒绝生成）。'
+      + '</div>'
+      + '<div style="padding:8px 12px;margin-bottom:12px;border-radius:8px;font-size:11.5px;line-height:1.7;background:'
+      + (vOK ? '#ECFDF5;border:1px solid #A7F3D0;color:#065F46' : '#FEF2F2;border:1px solid #FECACA;color:#991B1B') + '">'
+      + (vOK ? '✅' : '🔴') + ' 守恒校验：导出侧 ' + _kaNum(V.groupsChecked) + ' 组全过（分仓需求 / 实际出货均与分仓需求主表一致）'
+      + '；前端逐行复核 ' + rows.length + ' 条，不平 ' + broken + ' 条。'
+      + (vOK ? '' : ' 数据异常，请以导出日志为准，勿直接用于决策。')
+      + '</div>'
+      + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">'
+      + '<div style="flex:1;min-width:110px;border:1px solid var(--border-card);border-radius:8px;padding:9px;text-align:center;background:#F5F3FF"><div style="font-size:11px;color:var(--text-secondary)">纯KA SKU×仓</div><div style="font-size:21px;font-weight:600;color:#6D28D9">' + _kaNum(rows.length) + '</div></div>'
+      + '<div style="flex:1;min-width:110px;border:1px solid var(--border-card);border-radius:8px;padding:9px;text-align:center;background:#F5F3FF"><div style="font-size:11px;color:var(--text-secondary)">当月KA需求(支)</div><div style="font-size:21px;font-weight:600;color:#6D28D9">' + _kaNum(sumKa) + '</div></div>'
+      + '<div style="flex:1;min-width:110px;border:1px solid var(--border-card);border-radius:8px;padding:9px;text-align:center;background:#F8FAFC"><div style="font-size:11px;color:var(--text-secondary)">当月KA出货(支)</div><div style="font-size:21px;font-weight:600;color:#2563EB">' + _kaNum(sumShipKa) + '</div></div>'
+      + '<div style="flex:1;min-width:110px;border:1px solid var(--border-card);border-radius:8px;padding:9px;text-align:center;background:#F8FAFC"><div style="font-size:11px;color:var(--text-secondary)">当月实际出货(支)</div><div style="font-size:21px;font-weight:600;color:#0F766E">' + _kaNum(sumShip) + '</div></div>'
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">当月 ' + _kaEsc(J.month || '') + ' · 按 KA 需求从高到低排列 · 共 ' + rows.length + ' 条（分仓需求合计 ' + _kaNum(sumPlan) + ' 支）</div>'
+      + '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table class="data-table" style="text-align:left"><thead><tr>'
+      + '<th>SKU编码</th><th>物料名称</th><th>RDC</th>'
+      + '<th title="当月 DP_共识数量 的 KA_其他渠道">KA需求(支)</th><th title="当月 DP_共识数量 的经销商渠道；本清单恒为0">经销商需求(支)</th><th title="KA需求+经销商需求">分仓需求合计(支)</th>'
+      + '<th title="当月实际出货_数量 的 KA_其他渠道">KA出货(支)</th><th title="当月实际出货_数量 的经销商渠道">经销商出货(支)</th><th title="KA出货+经销商出货">实际出货合计(支)</th>'
+      + '<th>品类</th><th>生命周期</th></tr></thead><tbody>';
+    if (!rows.length) {
+      kaOnlyHtml += '<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text-secondary)">当月无纯 KA 需求 SKU×仓（KA&gt;0 且经销商=0）</td></tr>';
+    } else {
+      rows.forEach(function (r) {
+        var nm = _kaEsc(r.name);
+        kaOnlyHtml += '<tr>'
+          + '<td>' + _kaEsc(r.sku) + '</td>'
+          + '<td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + nm + '">' + nm + '</td>'
+          + '<td>' + _kaEsc(r.rdc) + '</td>'
+          + '<td class="num" style="color:#6D28D9;font-weight:600">' + _kaNum(r.ka) + '</td>'
+          + '<td class="num" style="color:#64748B">' + _kaNum(r.dealer) + '</td>'
+          + '<td class="num" style="font-weight:600">' + _kaNum(r.planTotal) + '</td>'
+          + '<td class="num" style="color:#2563EB">' + _kaNum(r.shipKa) + '</td>'
+          + '<td class="num">' + _kaNum(r.shipDealer) + '</td>'
+          + '<td class="num" style="font-weight:600">' + _kaNum(r.shipTotal) + '</td>'
+          + '<td>' + _kaEsc(r.cat) + '</td>'
+          + '<td>' + _kaEsc(r.life) + '</td>'
+          + '</tr>';
+      });
+    }
+    kaOnlyHtml += '</tbody></table></div></div></div>';
+  })();
+
   page.innerHTML = shipNotReadyBanner + planBanner + '<div class="filter-bar"><span style="font-size:12px;color:var(--text-secondary)">注：补货建议根据 ' + latestDate + ' 的缺货数据和近60天历史订单生成（含上月数据）</span></div>' +
-    dailyHtml + downWarnHtml + midHtml + helpHtml;
+    dailyHtml + downWarnHtml + midHtml + helpHtml + kaOnlyHtml;
 
   // Register global functions
   window.replToggleStatus = function(key) {
