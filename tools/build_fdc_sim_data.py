@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(ROOT, '.cache', '_fdc_sim')
 OUT = os.path.join(OUT_DIR, 'fdc-sim-data.json')
 WHS = ['天津', '惠州', '嘉兴', '武汉', '成都', '常州']
-ACTIVE = ['天津', '惠州', '嘉兴']
+ACTIVE = ['天津', '惠州', '嘉兴', '武汉']   # v513：用户 2026-11-18 要求新增武汉仓模拟（首车 11/18 已发）
 SKU = '69001'
 START = '2026-10-18'
 # v486：END 不再写死。差分只能算到「最后一个切片日期 − 1 天」，

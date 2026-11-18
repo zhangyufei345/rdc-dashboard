@@ -1364,7 +1364,12 @@ const DB_NAME = 'RDC_Dashboard';
 //   TOP10 月累计缺货只用于排序，不再当成某笔补货的责任量。DB_VERSION 不动（无新增持久化字段）。
 // v512（2026-11-18 用户裁定）：山姆模拟「最佳补货覆盖天数建议」剔除 4~24 全档无解的起算日，
 //   只用剩余有解起算日取最小档并留痕；主趋势图/明细/DB_VERSION 均不动。
-const BUILD_VERSION = 512;
+// v513（2026-11-18 用户裁定）：①补货模拟页红框位置新增「模拟趋势 | 实际库存情况」TAB，默认仍是模拟趋势，
+//   原图表/明细/档位下拉的内容、顺序、位置、默认展开状态全部不动；实际库存数据按需懒加载。
+//   ②模拟仓由天津/惠州/嘉兴扩到含武汉（首车 11/18 已发），数据链与引擎对拍 8060/8060 通过。
+//   ③实际库存按真实转储（发货过账）+ 真实出货逐日推演；SMWH 读取层修正为武汉；天津期初 10/18=27,840，
+//   其他仓首笔转储到仓后作为期初。DB_VERSION 不动（纯新增静态数据 + 展示层）。
+const BUILD_VERSION = 513;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -4933,6 +4938,9 @@ function renderSamsFc() {
 window._samsSimState = {
   data: null, engine: null, loading: false, err: '', result: null,
   selCd: null, paramsKey: '', lastMs: 0,
+  // v513（用户 2026-11-18 裁定）：新增「实际库存情况」TAB。默认 view='sim'，原模拟趋势图
+  //   内容/顺序/位置/默认展开状态一字不动；实际库存数据按需懒加载，不阻塞原页面。
+  view: 'sim', actualData: null, actualLoading: false, actualErr: '',
   // v497：最佳补货覆盖天数建议（全起算日扫描，异步补算，不阻塞主结果）
   advice: null, adviceKey: '', adviceTimer: null, adviceMs: 0
 };
@@ -5701,6 +5709,31 @@ function samsSimSetCd(v) {
   samsSimRender();
 }
 
+// ---------- v513：模拟趋势 / 实际库存情况 TAB（只新增，不改原视图） ----------
+function samsSimTabHtml(v, label) {
+  var S = window._samsSimState, on = (S.view || 'sim') === v;
+  return '<span onclick="samsSimSetView(\'' + v + '\')" style="cursor:pointer;padding:4px 10px;'
+    + 'border-radius:6px;font-size:12px;white-space:nowrap;'
+    + (on ? 'background:#378ADD;color:#fff;font-weight:600'
+          : 'background:var(--bg-card);color:var(--text-secondary);border:1px solid var(--border-card)')
+    + '">' + label + '</span>';
+}
+function samsSimSetView(v) {
+  var S = window._samsSimState;
+  S.view = v;
+  if (v === 'actual' && !S.actualData && !S.actualLoading) samsSimActualLoad();
+  samsSimRender();
+}
+function samsSimActualLoad() {
+  var S = window._samsSimState;
+  S.actualLoading = true; S.actualErr = '';
+  samsSimRender();
+  fetch('./sams-actual-stock.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('sams-actual-stock.json HTTP ' + r.status); return r.json(); })
+    .then(function (j) { S.actualData = j; S.actualLoading = false; samsSimRender(); })
+    .catch(function (e) { S.actualErr = String(e && e.message || e); S.actualLoading = false; samsSimRender(); });
+}
+
 // ---------- 渲染 ----------
 function samsSimRender() {
   var S = window._samsSimState, box = document.getElementById('samsSimBox');
@@ -5840,15 +5873,23 @@ function samsSimRender() {
          return '<option value="' + c + '"' + (c === sel ? ' selected' : '') + '>覆盖 ' + c + ' 天'
            + (c === R.cur ? '（当前参数）' : '') + '</option>';
        }).join('')
-     + '</select></div>';
-  h += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">'
-     + '转储当日「在途」跳升 → 虚线先上抬；到货当日在途转在库 → 实线跳升与虚线重合。'
-     + '下单日（来订单）消耗库存、不跳升在途。窗口外到货留在期末库存位置中。</div>';
-  // v486：复用函数开头算好的 keep（三张图同一套显示坐标）；切档只重渲染、不重算。
-  for (var wi = 0; wi < ACTIVE.length; wi++) {
-    var w2 = ACTIVE[wi];
-    h += '<div style="border:1px solid var(--border-card);border-radius:8px;margin-bottom:12px;overflow:hidden;background:#fff">'
-       + samsSimSvg(w2, R.scenarios[String(sel)][w2], sel, R, keep) + '</div>';
+     + '</select>'
+     // v513：红框位置新增 TAB（只新增，原标题/档位下拉/图表顺序位置全部不动）
+     + '<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center">'
+     + samsSimTabHtml('sim', '模拟趋势') + samsSimTabHtml('actual', '实际库存情况')
+     + '</span></div>';
+  if ((S.view || 'sim') === 'sim') {
+    h += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">'
+       + '转储当日「在途」跳升 → 虚线先上抬；到货当日在途转在库 → 实线跳升与虚线重合。'
+       + '下单日（来订单）消耗库存、不跳升在途。窗口外到货留在期末库存位置中。</div>';
+    // v486：复用函数开头算好的 keep（三张图同一套显示坐标）；切档只重渲染、不重算。
+    for (var wi = 0; wi < ACTIVE.length; wi++) {
+      var w2 = ACTIVE[wi];
+      h += '<div style="border:1px solid var(--border-card);border-radius:8px;margin-bottom:12px;overflow:hidden;background:#fff">'
+         + samsSimSvg(w2, R.scenarios[String(sel)][w2], sel, R, keep) + '</div>';
+    }
+  } else {
+    h += samsSimActualHtml(S);
   }
 
   // ⑤ 明细（默认折叠，同页不新开 TAB）
@@ -6088,6 +6129,157 @@ function samsSimSvg(w, rows, cd, R, keep) {
   p.push('<circle cx="470" cy="' + (lg - 4) + '" r="3.6" fill="#2563EB"/><text x="478" y="' + lg + '" font-size="10" fill="#6b7280">出货日·订单量</text>');
   p.push('<circle cx="590" cy="' + (lg - 4) + '" r="3.6" fill="#EA580C"/><text x="598" y="' + lg + '" font-size="10" fill="#6b7280">转储日·转储量</text>');
   p.push('<circle cx="710" cy="' + (lg - 4) + '" r="3.6" fill="#16A34A"/><text x="718" y="' + lg + '" font-size="10" fill="#6b7280">到货日·到货量</text>');
+  p.push('</svg>');
+  return p.join('');
+}
+
+// ---------- v513：实际库存情况（真实转储 + 真实出货，与模拟参数无关） ----------
+function samsSimActualHtml(S) {
+  if (S.actualLoading) return '<div style="padding:24px;text-align:center;font-size:12px;color:var(--text-secondary)">⏳ 正在加载实际转储 / 实际出货数据…</div>';
+  if (S.actualErr) return '<div style="padding:16px;font-size:12px;color:var(--color-red)">⚠ 实际库存数据加载失败：'
+    + samsSimEsc(S.actualErr) + '</div>';
+  var D = S.actualData;
+  if (!D) return '<div style="padding:16px;font-size:12px;color:var(--text-secondary)">点击「实际库存情况」加载真实数据。</div>';
+  var notes = D.notes || {}, whs = D.warehouses || [];
+  var h = '<div style="font-size:11.5px;line-height:1.85;color:var(--text-secondary);'
+    + 'background:var(--bg-primary);border:1px solid var(--border-card);border-radius:6px;'
+    + 'padding:9px 12px;margin-bottom:12px">'
+    + '<b style="color:var(--text-primary)">口径（真实数据，不随本页参数/档位变化）</b>：'
+    + '转储取《' + samsSimEsc(D.sourceXlsx) + '》发货过账数量，D 列库位 ' + 'SMWH 按用户裁定映射到<b>武汉</b>'
+    + '（源 Sheet2 写成惠州，与 SMHZ 重复，是笔误，源文件未改）；'
+    + '到仓日 = 创建日期 + 运输时效（天津 5 / 惠州 5 / 嘉兴 3 / 武汉 5 天）。'
+    + '<br>天津期初 = 用户给定的 <b>2026-10-18 期末库存 27,840 箱</b>；'
+    + '其他仓不给单独期初，按用户裁定「首次转储量在运输周期后可视为期初」——'
+    + '即该仓首笔转储到仓日，在库 = 首笔转储量；到仓前无库存数据，图上留白（不画 0）。'
+    + '<br>逐日出货取 ' + samsSimEsc(D.sourceSim) + ' 的真实出货差分，已知到 '
+    + D.verification.shipKnownThrough + '；此后出货未到，库存按最后已知值平推，图上灰区标注。'
+    + '档位下拉只对上方「模拟趋势」生效，本视图不受其影响。</div>';
+  for (var i = 0; i < whs.length; i++) {
+    h += '<div style="border:1px solid var(--border-card);border-radius:8px;margin-bottom:12px;overflow:hidden;background:#fff">'
+       + samsSimActualSvg(whs[i], D) + '</div>';
+  }
+  return h;
+}
+
+function samsSimActualSvg(w, D) {
+  var rows = (D.daily && D.daily[w]) || [];
+  var n = rows.length;
+  if (!n) return '<div style="padding:20px;font-size:12px;color:var(--text-secondary)">' + w + ' 无实际库存数据</div>';
+  var W = 940, H = 366, L = 76, Rt = 916, T = 46, B = 230, AT = 272, AB = 326;
+  var lo = Infinity, hi = -Infinity, cnt = 0, i, r;
+  for (i = 0; i < n; i++) {
+    r = rows[i];
+    if (r.onHand != null) { lo = Math.min(lo, r.onHand, r.invPos); hi = Math.max(hi, r.onHand, r.invPos); cnt++; }
+    if (r.transit != null) { lo = Math.min(lo, r.transit); hi = Math.max(hi, r.transit); }
+  }
+  if (!cnt) { lo = 0; hi = 1; }
+  if (!isFinite(lo) || !isFinite(hi) || hi <= lo) { lo = 0; hi = Math.max(1, hi); }
+  var pad = (hi - lo) * 0.08;
+  var ymin = lo - pad, ymax = hi + pad;
+  function X(k) { return L + (Rt - L) * (k / Math.max(1, n - 1)); }
+  function Y(v) { return B - (B - T) * ((v - ymin) / (ymax - ymin)); }
+  function f1(v) { return Number(v).toFixed(1); }
+  var nt = D.notes[w] || {};
+  var p = [];
+  p.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" '
+       + 'style="font-family:system-ui,-apple-system,Segoe UI,Arial;display:block">');
+  p.push('<rect width="100%" height="100%" fill="#fff"/>');
+  p.push('<text x="14" y="16" font-size="13" font-weight="700" fill="#111827">山姆-' + w
+       + 'FDC · 实际库存 / 在途（按日）</text>');
+  p.push('<text x="14" y="32" font-size="10" fill="#6b7280">期初 ' + (nt.openingDate || '—') + ' '
+       + samsSimNum(nt.openingQty) + ' 箱（' + samsSimEsc(nt.openingSource || '') + '）'
+       + '｜运输 ' + nt.leadDays + ' 天｜累计转储 ' + samsSimNum(nt.transferTotal)
+       + ' 箱（' + nt.transferCount + ' 笔）｜' + D.dateRange[0].slice(5) + '~' + D.dateRange[1].slice(5) + '</text>');
+  // 出货数据未到的灰区：只标注，不假造出货
+  var unknownFrom = -1;
+  for (i = 0; i < n; i++) if (!rows[i].shipKnown) { unknownFrom = i; break; }
+  if (unknownFrom >= 0) {
+    p.push('<rect x="' + f1(X(unknownFrom)) + '" y="' + T + '" width="' + f1(Rt - X(unknownFrom))
+         + '" height="' + (B - T) + '" fill="#F1EFE8" opacity="0.6"/>');
+    p.push('<text x="' + f1((X(unknownFrom) + Rt) / 2) + '" y="' + (T + 16)
+         + '" font-size="10" fill="#6b7280" text-anchor="middle">出货数据未到 · 在库按最后已知值平推</text>');
+  }
+  for (var g = 0; g < 6; g++) {
+    var gv = ymin + (ymax - ymin) * g / 5, gy = Y(gv);
+    p.push('<line x1="' + L + '" y1="' + f1(gy) + '" x2="' + Rt + '" y2="' + f1(gy)
+         + '" stroke="#e6e8eb" stroke-dasharray="3 3"/>');
+    p.push('<text x="' + (L - 8) + '" y="' + f1(gy + 3) + '" font-size="10" fill="#6b7280" text-anchor="end">'
+         + samsSimNum(gv) + '</text>');
+  }
+  p.push('<line x1="' + L + '" y1="' + B + '" x2="' + Rt + '" y2="' + B + '" stroke="#9ca3af"/>');
+  var step = Math.max(1, Math.ceil(n / 16));
+  for (i = 0; i < n; i += step) {
+    p.push('<g transform="translate(' + f1(X(i)) + ',' + (B + 14) + ') rotate(45)">'
+         + '<text x="0" y="0" font-size="8.5" fill="#6b7280">'
+         + rows[i].date.slice(5).replace('-', '/') + '</text></g>');
+  }
+  // 连续有效段路径（期初之前 onHand 为 null，断线留白）
+  function paths(field, stroke, dash, width) {
+    var segs = [], cur = [];
+    for (var k = 0; k < n; k++) {
+      var v = rows[k][field];
+      if (v == null || !isFinite(Number(v))) {
+        if (cur.length) { segs.push(cur); cur = []; }
+        continue;
+      }
+      cur.push(f1(X(k)) + ',' + f1(Y(v)));
+    }
+    if (cur.length) segs.push(cur);
+    for (var s = 0; s < segs.length; s++) {
+      if (segs[s].length === 1) {
+        p.push('<circle cx="' + segs[s][0].split(',')[0] + '" cy="' + segs[s][0].split(',')[1]
+             + '" r="2.5" fill="' + stroke + '"/>');
+      } else {
+        p.push('<polyline points="' + segs[s].join(' ') + '" fill="none" stroke="' + stroke
+             + '" stroke-width="' + width + '"' + (dash ? ' stroke-dasharray="5 4"' : '') + '/>');
+      }
+    }
+  }
+  paths('transit', '#EA580C', true, 1.6);
+  paths('invPos', '#2563EB', true, 2);
+  paths('onHand', '#111827', false, 2.1);
+  // 关键事件点：橙=转储日，绿=到仓日
+  for (i = 0; i < n; i++) {
+    r = rows[i];
+    var yy = (r.invPos != null) ? Y(r.invPos) : Y(r.transit);
+    if (r.transfer > 0) p.push('<circle cx="' + f1(X(i)) + '" cy="' + f1(yy) + '" r="3.4" fill="#EA580C"/>');
+    if (r.arrival > 0 && r.onHand != null) p.push('<circle cx="' + f1(X(i)) + '" cy="' + f1(Y(r.onHand))
+      + '" r="3.4" fill="#16A34A"/>');
+  }
+  // 每日动作带：蓝=实际出货，绿=实际到仓
+  var actMax = 1;
+  for (i = 0; i < n; i++) actMax = Math.max(actMax, Number(rows[i].ship) || 0, Number(rows[i].arrival) || 0);
+  var bw = Math.min(9, (Rt - L) / Math.max(1, n - 1) / 4.5);
+  p.push('<line x1="' + L + '" y1="' + AB + '" x2="' + Rt + '" y2="' + AB + '" stroke="#d1d5db"/>');
+  for (i = 0; i < n; i++) {
+    r = rows[i];
+    var sv = Math.max(0, Number(r.ship) || 0), av = Math.max(0, Number(r.arrival) || 0);
+    if (sv > 0) p.push('<rect x="' + f1(X(i) - bw - 1) + '" y="' + f1(AB - sv / actMax * (AB - AT))
+      + '" width="' + f1(bw) + '" height="' + f1(sv / actMax * (AB - AT)) + '" fill="#2563EB" opacity="0.9"/>');
+    if (av > 0) p.push('<rect x="' + f1(X(i) + 1) + '" y="' + f1(AB - av / actMax * (AB - AT))
+      + '" width="' + f1(bw) + '" height="' + f1(av / actMax * (AB - AT)) + '" fill="#16A34A" opacity="0.9"/>');
+  }
+  p.push('<text x="' + L + '" y="' + (AB + 15) + '" font-size="10" fill="#374151">'
+    + '每日实际动作（箱）：<tspan fill="#2563EB" font-weight="700">出货</tspan> / '
+    + '<tspan fill="#16A34A" font-weight="700">到仓</tspan></text>');
+  p.push('<line x1="310" y1="' + (AB + 11) + '" x2="346" y2="' + (AB + 11) + '" stroke="#111827" stroke-width="2.1"/>');
+  p.push('<text x="352" y="' + (AB + 14) + '" font-size="10.5" fill="#374151">在库（实线）</text>');
+  p.push('<line x1="452" y1="' + (AB + 11) + '" x2="488" y2="' + (AB + 11) + '" stroke="#2563EB" stroke-width="2" stroke-dasharray="5 4"/>');
+  p.push('<text x="494" y="' + (AB + 14) + '" font-size="10.5" fill="#374151">在库+在途（虚线）</text>');
+  p.push('<line x1="648" y1="' + (AB + 11) + '" x2="684" y2="' + (AB + 11) + '" stroke="#EA580C" stroke-width="1.6" stroke-dasharray="5 4"/>');
+  p.push('<text x="690" y="' + (AB + 14) + '" font-size="10.5" fill="#374151">在途（橙虚线）</text>');
+  // hover：整日透明热区
+  for (i = 0; i < n; i++) {
+    r = rows[i];
+    var tip = r.date + '|在库 ' + (r.onHand == null ? '无数据' : samsSimNum(r.onHand) + ' 箱')
+      + '|在途 ' + samsSimNum(r.transit) + ' 箱|库存位置 '
+      + (r.invPos == null ? '无数据' : samsSimNum(r.invPos) + ' 箱')
+      + '|转储 ' + samsSimNum(r.transfer) + ' 箱|到仓 ' + samsSimNum(r.arrival) + ' 箱'
+      + '|出货 ' + (r.ship == null ? '未到' : samsSimNum(r.ship) + ' 箱');
+    p.push('<rect x="' + f1(X(i) - (Rt - L) / Math.max(1, n - 1) / 2) + '" y="' + T
+         + '" width="' + f1((Rt - L) / Math.max(1, n - 1)) + '" height="' + (B - T)
+         + '" fill="transparent" data-tip="' + tip + '"/>');
+  }
   p.push('</svg>');
   return p.join('');
 }

@@ -1,7 +1,7 @@
 /* ==========================================================================
  * 山姆前置仓「补货量 → 库存演化」沙箱引擎 —— 自动生成，请勿手改
  * 生成脚本 : tools/build_sams_sim_bundle.py
- * 来源     : rdc-dashboard.html 逐字抽取 L2957~L3941（985 行，sha16=a96b836afb858b2b）
+ * 来源     : rdc-dashboard.html 逐字抽取 L2959~L3943（985 行，sha16=a96b836afb858b2b）
  * 用法     : 页面按需 fetch 本文件文本，用 new Function('window', code) 编译，
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *

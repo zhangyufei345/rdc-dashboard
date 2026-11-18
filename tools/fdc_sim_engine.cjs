@@ -35,7 +35,7 @@ const EX = JSON.parse(fs.readFileSync(path.join(ROOT, 'sams-exclude.json'), 'utf
 const ACTIVE = SIM.activeWarehouses;
 const CAR = 5568;
 const COVER_DAYS_LIST = [7, 10, 14, 21, 30];   // 可调档位（线上默认 14）
-const LEAD = { '天津': 5, '惠州': 5, '嘉兴': 3 };
+const LEAD = { '天津': 5, '惠州': 5, '嘉兴': 3, '武汉': 5 };   // v513：武汉纳入门禁/运输时效输出
 
 console.log('抽取线上函数块 L%d~L%d，%d 行，sha16=%s',
   iStart + 1, iRet + 3, iRet + 3 - iStart, SRC_SHA);
