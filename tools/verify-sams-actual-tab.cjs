@@ -37,13 +37,17 @@ function startServer() {
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push(m.text().slice(0, 200)); });
-  await page.goto('http://127.0.0.1:' + port + '/rdc-dashboard.html', { waitUntil: 'domcontentloaded', timeout: 120000 });
+  const target = process.env.TARGET_URL || ('http://127.0.0.1:' + port + '/rdc-dashboard.html');
+  console.log('目标页面:', target);
+  await page.goto(target + (target.includes('?') ? '&' : '?') + 't=' + Date.now(),
+    { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.fill('#login-user', 'admin').catch(() => {});
   await page.fill('#login-pass', 'admin123').catch(() => {});
   await page.click('#login-page button').catch(() => {});
   await page.waitForFunction(() => typeof dataStore !== 'undefined' && dataStore && dataStore.loaded === true, { timeout: 180000 });
   await page.evaluate(() => navigateTo('sams-sim'));
   await page.waitForFunction(() => window._samsSimState && window._samsSimState.result, { timeout: 60000 });
+  console.log('浏览器标题:', await page.title());
 
   const simInfo = await page.evaluate(() => {
     const box = document.getElementById('samsSimBox');
