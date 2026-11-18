@@ -88,7 +88,7 @@ function startServer() {
     const box = document.getElementById('samsSimBox'), h = box.innerHTML;
     return { view: window._samsSimState.view, err: window._samsSimState.actualErr || '',
       svgCount: box.querySelectorAll('svg').length,
-      hasTJ27840: /27,840/.test(h), hasWuhan: /山姆-武汉FDC/.test(h),
+      hasTJOpening: /期初 16,876 箱|期初库存 16,876 箱/.test(h), hasWuhan: /山姆-武汉FDC/.test(h),
       hasSMWHNote: /SMWH/.test(h), hasLeadCorrect: /11\/12 补货 → 11\/16 到仓/.test(h), h: h.length };
   });
   console.log('实际库存视图:', JSON.stringify(actInfo));
@@ -101,7 +101,7 @@ function startServer() {
   } catch (e) { console.log('截图跳过（不影响断言）:', String(e.message).slice(0, 80)); }
   console.log('页面错误:', errs.length ? errs.slice(0, 5) : '无');
   const ok = simInfo.view === 'sim' && simInfo.tabs === 2 && simInfo.svgCount >= 4 && simInfo.hasWuhan && simInfo.hasTransitLine
-    && actInfo.view === 'actual' && !actInfo.err && actInfo.svgCount === 5 && actInfo.hasTJ27840 && actInfo.hasWuhan
+    && actInfo.view === 'actual' && !actInfo.err && actInfo.svgCount === 5 && actInfo.hasTJOpening && actInfo.hasWuhan
     && simInfo.transitSameAxis && simInfo.transitBelowInv.ok
     && actInfo.hasSMWHNote && actInfo.hasLeadCorrect && errs.length === 0;
   console.log(ok ? '✅ v513 TAB 与武汉模拟渲染验证通过' : '❌ v513 验证失败');
