@@ -53,7 +53,8 @@ function startServer() {
     const box = document.getElementById('samsSimBox');
     return { view: window._samsSimState.view, tabs: (box.innerText.match(/模拟趋势|实际库存情况/g) || []).length,
       svgCount: box.querySelectorAll('svg').length,
-      hasWuhan: /武汉FDC/.test(box.innerHTML) };
+      hasWuhan: /武汉FDC/.test(box.innerHTML),
+      hasTransitLine: /橙虚线·在途（右轴/.test(box.innerHTML) && /在途\(右轴\)/.test(box.innerHTML) };
   });
   console.log('默认模拟视图:', JSON.stringify(simInfo));
 
@@ -76,7 +77,7 @@ function startServer() {
     await page.locator('#samsSimBox').screenshot({ path: path.join(outDir, 'actual_tab.png'), timeout: 8000 });
   } catch (e) { console.log('截图跳过（不影响断言）:', String(e.message).slice(0, 80)); }
   console.log('页面错误:', errs.length ? errs.slice(0, 5) : '无');
-  const ok = simInfo.view === 'sim' && simInfo.tabs === 2 && simInfo.svgCount >= 4 && simInfo.hasWuhan
+  const ok = simInfo.view === 'sim' && simInfo.tabs === 2 && simInfo.svgCount >= 4 && simInfo.hasWuhan && simInfo.hasTransitLine
     && actInfo.view === 'actual' && !actInfo.err && actInfo.svgCount === 5 && actInfo.hasTJ27840 && actInfo.hasWuhan
     && actInfo.hasSMWHNote && actInfo.hasLeadCorrect && errs.length === 0;
   console.log(ok ? '✅ v513 TAB 与武汉模拟渲染验证通过' : '❌ v513 验证失败');
