@@ -1388,7 +1388,14 @@ const DB_NAME = 'RDC_Dashboard';
 //   均在导出脚本侧强校验（4,842 组全过）后落盘；前端只展示并复核，不重算、不覆盖。
 //   🔴 只新增卡片，原每日建议 / 下调预警 / 中期策略 / 说明卡的位置、顺序、默认展开状态一律不动。
 //   DB_VERSION 不动（无新持久化字段）。
-const BUILD_VERSION = 519;
+// v520（2026-11-18 用户裁定）：「补货调整跟踪 → 按调整类型归因」的损失口径改为**逐笔取小**。
+//   原「缺货量(箱)」= 窗口实际缺货全额，导致两种高估：扣6箱/缺125箱记125箱、扣135箱/缺45箱记135箱。
+//   现改为 lossBoxes = min(本笔扣减箱数, 到货后4天窗口缺货箱数)，只对「扣减且窗口走完」计。
+//   影响范围**仅限归因表**：「归因损失(箱)」列、「无谓损失 N 箱」结论、损失占比分母同步；
+//   下方调整明细的「窗口缺货量(箱)」、批次红柱、四象限/KPI 卡仍是事实值，**一律不动**（用户选「只改归因表」）。
+//   诚实边界：取小值是「最多可避免」的上限，不是严格因果；相邻批次窗口重叠时仍可能重复计。
+//   DB_VERSION 不动。
+const BUILD_VERSION = 520;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -25969,7 +25976,10 @@ function buildAdjComputed() {
       idx: idx, rdcFull: full, arrival: arrival, winStart: winStart, winEnd: winEnd,
       cut: cut, direction: cut > 0 ? '扣减' : (cut < 0 ? '加量' : '未调'),
       spec: spec, status: status, coveredDays: coveredDays,
-      shortBoxes: shortBoxes, dailyShort: dailyShort, quadrant: quadrant, explain: explain
+      shortBoxes: shortBoxes, dailyShort: dailyShort, quadrant: quadrant, explain: explain,
+      // v520: 可归因损失上限 = min(本笔扣减箱数, 到货后4天窗口缺货箱数)，只对「扣减且窗口走完」计。
+      //   保留 shortBoxes 原值给明细表/批次图（它们是事实口径「窗口缺货量」，不参与损失归因）。
+      lossBoxes: (cut > 0 && status === '已完成') ? Math.min(cut, shortBoxes) : 0
     });
   });
   window._adjCache = { sig: sig, maxOrd: maxOrd, list: list };
@@ -26046,16 +26056,21 @@ function renderAdjustTrack() {
     const cutB = gCuts.reduce(function(s, r) { return s + r.cut; }, 0);
     const shortB = gShort.reduce(function(s, r) { return s + r.shortBoxes; }, 0);
     const bB = bItems.reduce(function(s, r) { return s + r.cut; }, 0);
+    // v520: 归因表专用——逐笔取 min(扣减, 窗口缺货) 后再求和；shortBoxes 原值仍用于「缺货条数/率」与明细
+    const lossB = gDone.reduce(function(s, r) { return s + r.lossBoxes; }, 0);
     return {
       type: tp, recs: g.length, cuts: gCuts.length, cutBoxes: cutB, done: gDone.length,
       shortCnt: gShort.length, shortBoxes: shortB, boxRate: cutB > 0 ? shortB / cutB : null,
+      lossBoxes: lossB,
       bCnt: bItems.length, bBoxes: bB, isSupply: tp === '总仓缺货'
     };
   }).sort(function(a, b) { return b.bBoxes - a.bBoxes || b.cutBoxes - a.cutBoxes; });
   const typeBTotal = typeAgg.reduce(function(s, o) { return s + o.bBoxes; }, 0);
   // v495: 「缺货量占比」分母 = 本表各调整类型缺货量(箱)之和。typeAgg 基于 computed.list 全量，
   //   不随页面筛选变化 → 各行占比合计恒为 100%（分母为 0 时显示「—」）。
-  const typeShortTotal = typeAgg.reduce(function(s, o) { return s + o.shortBoxes; }, 0);
+  // v520: 归因表「缺货量(箱)」列改为逐笔 min(扣减, 窗口缺货) 的可归因损失，占比分母同步换成它；
+  //   「缺货条数/率」仍按原窗口缺货事实口径（条数不受本口径影响）。
+  const typeLossTotal = typeAgg.reduce(function(s, o) { return s + o.lossBoxes; }, 0);
 
   // ---- 汇总统计（口径：扣减 = 应补量 > 调整后补货量）----
   const cuts = computed.list.filter(function(r) { return r.cut > 0; });
@@ -26124,22 +26139,22 @@ function renderAdjustTrack() {
 
   // ---- v317（方案A）：按调整类型归因表：扣减量 → 窗口内缺货 ----
   html += '<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">按调整类型归因：扣减量 → 窗口内缺货</span><span style="font-size:11px;color:var(--text-secondary)">按「B 象限·无谓损失」降序 · <b>点击行下钻到下方「调整明细」</b>（自动筛选该类型，且只列走完后有缺货的记录）</span></div>';
-  html += '<div style="padding:0 14px 4px;font-size:11px;color:var(--text-secondary);line-height:1.8">缺货率(条) = 窗口内缺货条数 ÷ 窗口已走完条数，只统计「扣减且窗口已走完」的记录。<b>供给类（总仓缺货）的缺货率存在定义循环</b>——四象限判定"大仓紧张"用的就是该类型，不可与规则/人工类横向比大小。<br>缺货量占比 = 该类型「缺货量(箱)」÷ 表内各类型缺货量合计 <b>' + _adjFmtNum(typeShortTotal) + ' 箱</b>（各行合计 100%）。</div>';
-  html += '<div class="table-wrap" style="margin:0 14px 12px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' + ['调整类型', '性质', '扣减条数', '扣减量(箱)', '已走完', '缺货条数', '缺货率(条)', '缺货量占比', '缺货量(箱)', 'B象限(条/箱)', '结论'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
+  html += '<div style="padding:0 14px 4px;font-size:11px;color:var(--text-secondary);line-height:1.8">缺货率(条) = 窗口内缺货条数 ÷ 窗口已走完条数，只统计「扣减且窗口已走完」的记录。<b>供给类（总仓缺货）的缺货率存在定义循环</b>——四象限判定"大仓紧张"用的就是该类型，不可与规则/人工类横向比大小。<br>v520：<b>归因损失(箱) = 逐笔取小值 min(本笔扣减箱数, 到货后4天窗口缺货箱数)</b> —— 本笔没扣的部分不可能减少缺货，窗口里超出扣减量的缺货也不能算到这笔头上（例：扣6箱/缺125箱只记6箱；扣135箱/缺45箱只记45箱）。这是<b>最多可避免的上限</b>，不是严格因果；相邻批次窗口重叠时仍可能重复计。损失占比 = 该类型归因损失 ÷ 全表合计 <b>' + _adjFmtNum(typeLossTotal) + ' 箱</b>（各行合计 100%）。下方明细表的「窗口缺货量(箱)」是事实值，口径不同，未改动。</div>';
+  html += '<div class="table-wrap" style="margin:0 14px 12px"><table class="data-table" style="width:100%;text-align:left"><thead><tr>' + ['调整类型', '性质', '扣减条数', '扣减量(箱)', '已走完', '缺货条数', '缺货率(条)', '损失占比', '归因损失(箱)', 'B象限(条/箱)', '结论'].map(function(h) { return '<th style="text-align:left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
   typeAgg.forEach(function(o) {
     const kind = _adjTypeKind(o.type);
     const active = st.type === o.type;
     const rate = o.done > 0 ? o.shortCnt / o.done : null;
     const rateTxt = rate != null ? Math.round(rate * 100) + '%' : '—';
-    // v495: 缺货量占比 = 该类型缺货量(箱) ÷ 全表缺货量合计；与「缺货量(箱)」列同步显示「—」
-    const share = typeShortTotal > 0 ? o.shortBoxes / typeShortTotal : null;
+    // v520: 损失占比 = 该类型归因损失(箱) ÷ 全表归因损失合计；与「归因损失(箱)」列同步显示「—」
+    const share = typeLossTotal > 0 ? o.lossBoxes / typeLossTotal : null;
     const shareTxt = share != null ? (share * 100).toFixed(1) + '%' : '—';
     const rateColor = o.isSupply ? 'var(--text-secondary)' : (rate != null && o.done >= 10 && rate >= 0.1 ? '#A32D2D' : (rate != null && rate > 0 ? '#854F0B' : '#15803D'));
     let verdict;
     if (o.done === 0) verdict = '<span style="color:var(--text-secondary)">待进入观察窗口</span>';
     else if (o.done < 10) verdict = '<span style="color:var(--text-secondary)">样本不足（走完 ' + o.done + ' 条）</span>';
     else if (o.isSupply) verdict = '<span style="color:#6B7280">供给不足所致，非规则代价</span>';
-    else if (o.shortBoxes > 0) verdict = '<span style="color:#B91C1C;font-weight:600">无谓损失 ' + _adjFmtNum(o.shortBoxes) + ' 箱</span>';   // v362: 用户 9/18 裁定——无谓损失=实际缺货量(箱)，不是 B 象限扣减箱数
+    else if (o.lossBoxes > 0) verdict = '<span style="color:#B91C1C;font-weight:600">无谓损失 ' + _adjFmtNum(o.lossBoxes) + ' 箱</span>';   // v520: 用户 11/18 裁定——逐笔 min(扣减, 窗口缺货) 求和，替代原「窗口缺货全额」
     else verdict = '<span style="color:#15803D">未见代价</span>';
     // v347: 点击行 → 筛选该调整类型 + 渲染后滚动到「调整明细」（下钻到具体 SKU 行）；
     //   再次点击同一行 = 取消筛选，此时不跳转（避免"取消筛选却把页面甩到最下面"）
@@ -26154,7 +26169,7 @@ function renderAdjustTrack() {
       '<td style="text-align:left">' + (o.done ? o.shortCnt : '—') + '</td>' +
       '<td style="text-align:left;color:' + rateColor + '">' + rateTxt + '</td>' +
       '<td style="text-align:left">' + (o.done ? shareTxt : '—') + '</td>' +
-      '<td style="text-align:left">' + (o.done ? _adjFmtNum(o.shortBoxes) : '—') + '</td>' +
+      '<td style="text-align:left" title="逐笔 min(扣减量, 窗口缺货量) 求和；事实口径窗口缺货合计 ' + _adjFmtNum(o.shortBoxes) + ' 箱">' + (o.done ? _adjFmtNum(o.lossBoxes) : '—') + '</td>' +
       '<td style="text-align:left;color:' + (o.bBoxes > 0 ? '#B91C1C' : 'inherit') + '">' + o.bCnt + ' / ' + _adjFmtNum(o.bBoxes) + '</td>' +
       '<td style="text-align:left">' + verdict + '</td>' +
       '</tr>';
