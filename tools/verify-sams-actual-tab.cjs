@@ -89,7 +89,14 @@ function startServer() {
     return { view: window._samsSimState.view, err: window._samsSimState.actualErr || '',
       svgCount: box.querySelectorAll('svg').length,
       hasTJOpening: /期初 16,876 箱|期初库存 16,876 箱/.test(h), hasWuhan: /山姆-武汉FDC/.test(h),
-      hasSMWHNote: /SMWH/.test(h), hasLeadCorrect: /11\/12 补货 → 11\/16 到仓/.test(h), h: h.length };
+      hasShipMove: /出货日期重排/.test(h) && /10-22 的 5,916 箱 → 计入 10-23/.test(h),
+      hasSMWHNote: /SMWH/.test(h), hasLeadCorrect: /11\/12 补货 → 11\/16 到仓/.test(h), h: h.length,
+      hzMove: (() => {
+        const D = window._samsSimState.actualData, rows = D && D.daily['惠州'] || [];
+        const g = dt => rows.find(x => x.date === dt);
+        const a = g('2026-10-22'), b = g('2026-10-23');
+        return a && b && a.ship === 0 && b.ship === 5916 && b.onHand === 21924;
+      })() };
   });
   console.log('实际库存视图:', JSON.stringify(actInfo));
   const outDir = path.join(ROOT, '.cache', '_v513');
@@ -102,7 +109,7 @@ function startServer() {
   console.log('页面错误:', errs.length ? errs.slice(0, 5) : '无');
   const ok = simInfo.view === 'sim' && simInfo.tabs === 2 && simInfo.svgCount >= 4 && simInfo.hasWuhan && simInfo.hasTransitLine
     && actInfo.view === 'actual' && !actInfo.err && actInfo.svgCount === 5 && actInfo.hasTJOpening && actInfo.hasWuhan
-    && simInfo.transitSameAxis && simInfo.transitBelowInv.ok
+    && actInfo.hasShipMove && actInfo.hzMove && simInfo.transitSameAxis && simInfo.transitBelowInv.ok
     && actInfo.hasSMWHNote && actInfo.hasLeadCorrect && errs.length === 0;
   console.log(ok ? '✅ v513 TAB 与武汉模拟渲染验证通过' : '❌ v513 验证失败');
   await browser.close(); server.close();

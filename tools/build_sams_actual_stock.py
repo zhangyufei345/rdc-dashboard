@@ -35,6 +35,9 @@ SKU = '69001'
 START = '2026-10-18'
 LEAD = {'天津': 4, '惠州': 4, '嘉兴': 2, '武汉': 4, '成都': 5, '常州': 0}   # v514：用户裁定取「提货运输」天数（1+4→4），T 当日不额外加
 TJ_OPENING = 16876                      # 天津 2026-10-18 期初库存（用户 2026-11-18 16:29 修正）
+# v518（用户 2026-11-18 17:02 裁定）：出货日期重排 —— 惠州 10-22 的 5,916 箱改计入 10-23。
+#   只挪日期、总量不变（不是追加）。用 (仓, 原日, 目标日, 数量) 表留痕，便于追溯/复核。
+SHIP_MOVE = [('惠州', '2026-10-22', '2026-10-23', 5916)]
 # 读取层修正：Sheet2 把 SMWH 写成山姆惠州（与 SMHZ 撞仓），按用户裁定改为武汉
 WH_MAP = {'SMTJ': '天津', 'SMHZ': '惠州', 'SMJX': '嘉兴',
           'SMWH': '武汉', 'SMCD': '成都', 'SMCZ': '常州'}
@@ -115,6 +118,15 @@ def build():
     ship_known = {x['date']: True for x in daily_src}
     ship_by_wh = {x['date']: {w: num(x['ship'].get(w)) for w in LEAD} for x in daily_src}
 
+    # v518：应用出货日期重排（只挪日期、总量不变）
+    for w, fd, td, q in SHIP_MOVE:
+        got = ship_by_wh.get(fd, {}).get(w, 0)
+        assert abs(got - q) < 0.01, '出货重排源不符：%s %s 期望 %s 实得 %s' % (w, fd, q, got)
+        ship_by_wh[fd][w] = 0
+        ship_by_wh.setdefault(td, {}).setdefault(w, 0)
+        ship_by_wh[td][w] += q
+        print('出货重排：%s %s 的 %s 箱 → %s' % (w, fd, q, td))
+
     prefer = ['天津', '惠州', '嘉兴', '武汉', '成都', '常州']
     present = set([t['wh'] for t in transfers] + sim['activeWarehouses'])
     active = [w for w in prefer if w in present] + sorted(present - set(prefer))
@@ -151,11 +163,13 @@ def build():
             ship = ship_by_wh.get(dt, {}).get(w) if ship_known.get(dt) else None
 
             if dt == opening_date:
-                on_hand = opening_qty
+                # v518：期初日也扣当天出货（惠州 10-23 到仓即期初、当天出货含从 10-22 移入的 5,916）。
+                #   其余仓期初日出货均为 0/未知，此改动对它们无影响。
+                on_hand = opening_qty - (ship or 0)
             elif on_hand is not None:
                 on_hand += ar - (ship or 0)
-                if on_hand < 0:
-                    on_hand = 0
+            if on_hand is not None and on_hand < 0:
+                on_hand = 0
 
             rows.append({
                 'date': dt,
@@ -179,6 +193,8 @@ def build():
             'transferCount': len(wh_trans),
             'firstTransferDate': wh_trans[0]['date'] if wh_trans else None,
             'firstArrivalDate': first_arr,
+            'shipMovedIn': sum(q for ww, fd, td, q in SHIP_MOVE if ww == w and td in ship_known),
+            'shipMovedNotes': ['%s %s %s箱→%s' % (ww, fd, q, td) for ww, fd, td, q in SHIP_MOVE if ww == w],
         }
 
     ver = {
@@ -189,7 +205,13 @@ def build():
         'shipKnownThrough': ship_last,
         'dateRange': [START, end],
         'smwhCorrected': True,
+        'shipMoves': [{'wh': w, 'from': fd, 'to': td, 'qty': q} for w, fd, td, q in SHIP_MOVE],
     }
+    # 出货重排只挪日期、总量必须守恒
+    for w, fd, td, q in SHIP_MOVE:
+        before = sum(num(x['ship'].get(w)) for x in daily_src)
+        after = sum(ship_by_wh.get(dt, {}).get(w, 0) for dt in ship_known)
+        assert abs(before - after) < 0.01, '出货重排破坏总量守恒 %s: %s vs %s' % (w, before, after)
     assert ver['transferTotalByWh'].get('武汉') == 5568, '武汉首车应为 5,568 箱'
     assert all(ver['transferTotalByWh'].get(w, 0) > 0 for w in ['天津', '惠州', '嘉兴', '武汉'])
 
