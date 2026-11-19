@@ -1400,7 +1400,12 @@ const DB_NAME = 'RDC_Dashboard';
 //   本版在归因表把两列**并排**：「缺货量(箱)」=取小前全额(o.shortBoxes)、「归因损失(箱)」=取小后(o.lossBoxes)，
 //   结论写明「缺货 X 箱 → 逐笔取小降至 Y 箱（少 Z 箱）」。11 列 → 12 列；其余原设置位置不动。
 //   DB_VERSION 不动。
-const BUILD_VERSION = 521;
+// v522（2026-11-19 用户要求）：纯 KA 清单卡片新增「⬇ 导出SKU清单」按钮（只新增，原表格/文案/顺序不动）。
+//   导出与卡片同源 ka-only-demand.json 的 11 列全量清单，SKU 编码+品名、全部左对齐、前导零保文本，
+//   并在表尾写入口径说明与"实际出货含 KA+经销商、20/92 条有经销商出货"提示，避免脱离页面被误读。
+//   顺带回答用户疑问：当月实际出货 29,678 = KA出货 23,008 + 经销商出货 6,670（需求侧纯 KA ≠ 出货侧只有 KA）。
+//   DB_VERSION 不动。
+const BUILD_VERSION = 522;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -18002,6 +18007,50 @@ function renderReplenishment() {
     + '⚠ <b>实际出货数据尚未就绪</b>（demand.json 未并入）：下方「下调预警」的<b>出货量会显示为 0</b>，请勿据此判断，也不要导出。'
     + '已自动触发重新加载，几秒后本页会自动刷新；若长时间不变，请按 <b>Ctrl+Shift+R</b> 强制刷新。</div>';
   // ===== v519: 纯 KA 需求 SKU 清单（独立卡片，只追加在原页面末尾；原卡片位置/顺序/默认状态不动）=====
+  // v522: 纯 KA SKU 清单导出（与卡片表格同源 ka-only-demand.json，11 列全量，SKU 编码+品名、全部左对齐）
+  window.exportKaOnlyExcel = function () {
+    var K = window._kaOnly || {};
+    if (!K.loaded || !K.data || !Array.isArray(K.data.kaOnly)) {
+      alert('纯 KA 清单数据尚未加载完成，请稍候重试（或按 Ctrl+Shift+R 强刷）');
+      return;
+    }
+    var J = K.data;
+    var head = ['SKU编码', 'SKU名称', 'RDC', 'KA需求(支)', '经销商需求(支)', '分仓需求合计(支)',
+      'KA出货(支)', '经销商出货(支)', '实际出货合计(支)', '品类', '生命周期'];
+    var aoa = [head].concat(J.kaOnly.map(function (r) {
+      return [String(r.sku), r.name || '', r.rdc,
+        Number(r.ka) || 0, Number(r.dealer) || 0, Number(r.planTotal) || 0,
+        Number(r.shipKa) || 0, Number(r.shipDealer) || 0, Number(r.shipTotal) || 0,
+        r.cat || '', r.life || ''];
+    }));
+    // 口径说明一并写入，避免导出后脱离页面语境被误读
+    aoa.push([]);
+    aoa.push(['口径说明', '数据源：' + (J.source || '分仓需求') + ' 分仓需求 D 列（经销商 / KA_其他）']);
+    aoa.push(['判定', '当月 KA需求>0 且 经销商需求=0，粒度 SKU×单仓；实际出货保留全部渠道，仅展示不参与判定']);
+    aoa.push(['守恒', '分仓需求=KA需求+经销商需求；实际出货=KA出货+经销商出货（导出时 4,842 组全过）']);
+    aoa.push(['注意', '「实际出货」含 KA 与经销商两渠道：20/92 条虽需求侧无经销商，出货侧仍有经销商出货']);
+    var wb = XLSX.utils.book_new();
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    // SKU 编码强制文本（保留前导零），全部列左对齐
+    var range = XLSX.utils.decode_range(ws['!ref']);
+    for (var r = 1; r <= range.e.r; r++) {
+      var c0 = XLSX.utils.encode_cell({ r: r, c: 0 });
+      if (ws[c0] && typeof ws[c0].v === 'number') { ws[c0].t = 's'; ws[c0].v = String(ws[c0].v); }
+    }
+    for (var rr = 0; rr <= range.e.r; rr++) {
+      for (var cc = 0; cc < head.length; cc++) {
+        var addr = XLSX.utils.encode_cell({ r: rr, c: cc });
+        if (ws[addr]) ws[addr].s = { alignment: { horizontal: 'left' } };
+      }
+    }
+    ws['!cols'] = [{ wch: 10 }, { wch: 36 }, { wch: 11 }].concat(
+      [12, 14, 16, 12, 16, 16, 10, 12].map(function (w) { return { wch: w }; }));
+    XLSX.utils.book_append_sheet(wb, ws, '纯KA清单');
+    var d = new Date();
+    var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    XLSX.writeFile(wb, '纯KA需求SKU清单_' + (J.month || '') + '_' + J.kaOnly.length + '条_' + stamp + '.xlsx');
+  };
+
   var kaOnlyHtml = '';
   (function _buildKaOnlyCard() {
     function _kaEsc(s) {
@@ -18014,6 +18063,8 @@ function renderReplenishment() {
     var K = window._kaOnly || {};
     var cardOpen = '<div class="card" style="margin-bottom:16px;border-top:4px solid #7C3AED">' +
       '<div class="card-header"><span class="card-title">🟣 纯 KA 需求 SKU 清单</span>' +
+      // v522: 只新增导出按钮，原「当月分仓需求口径 · SKU×单仓」文案与位置不动
+      '<button class="btn-export" style="font-size:11px;padding:4px 10px;margin-left:12px" onclick="exportKaOnlyExcel()">⬇ 导出SKU清单</button>' +
       '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当月分仓需求口径 · SKU×单仓</span></div>';
     if (!K.loaded) {
       kaOnlyHtml = cardOpen + '<div style="padding:14px;font-size:12px;line-height:1.8;color:' + (K.err ? '#92400E' : 'var(--text-secondary)') + '">' +
