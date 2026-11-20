@@ -1405,7 +1405,11 @@ const DB_NAME = 'RDC_Dashboard';
 //   并在表尾写入口径说明与"实际出货含 KA+经销商、20/92 条有经销商出货"提示，避免脱离页面被误读。
 //   顺带回答用户疑问：当月实际出货 29,678 = KA出货 23,008 + 经销商出货 6,670（需求侧纯 KA ≠ 出货侧只有 KA）。
 //   DB_VERSION 不动。
-const BUILD_VERSION = 522;
+// v523（2026-11-20 用户截图核实）：修「日订单满足率趋势」hover「未清箱数 TOP3」在途串仓。
+//   09855/西南 11-19 该 RDC 在途=0，旧代码 fallback 到「在途总箱 525」（实为华南 525）→ 西南弹窗错显 525。
+//   改为指定 RDC 时严格取 RDC_TRANSIT_KEY[rdc]（0 即 0），仅 rdc='all' 才用 rdcTransitTotal，与 L789/L8576 口径一致。
+//   DB_VERSION 不动。
+const BUILD_VERSION = 523;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -8640,19 +8644,21 @@ function getTopShortageSKUsByDay(rdc, dateStr, limit, channel) {
   //   所以『按 SKU 维度的在途』= d.rdcTransitTotal（缺货报告 col11，该 SKU 在所有 RDC 在途总和）
   // - 大仓供应：d.dcSupply（缺货报告 col9，大仓级状态）
   const rdcKey = (rdc && rdc !== 'all') ? getRDCShortageKey(rdc) : null;
-  const transitKeyForRdc = rdc ? (RDC_TRANSIT_KEY[rdc] || null) : null;
+  // v523(2026-11-20): 指定 RDC 时只取该 RDC 在途，取不到就是 0 —— 绝不回退到 rdcTransitTotal。
+  //   事故：09855/西南 11-19 该 RDC 在途=0，旧逻辑 fallback 到「在途总箱 525」（实为华南 525）→ 西南弹窗错显 525。
+  //   与 L789 / L8576 两处口径对齐（指定 RDC 用 RDC_TRANSIT_KEY，未指定才用 total）。
+  const transitKeyForRdc = (rdc && rdc !== 'all') ? (RDC_TRANSIT_KEY[rdc] || null) : null;
   const shortageRows = (dataStore.shortage || []).filter(s => s.dateStr === dateStr);
   const transitBySku = {};   // materialCode -> 该 SKU 在所有 RDC 在途总箱数（rdc='all'）或 在该 RDC 的在途箱（rdc 指定）
   const supplyBySku = {};    // materialCode -> 大仓供应状态文本
   shortageRows.forEach(s => {
     if (!s.materialCode) return;
-    let transit;
-    if (transitKeyForRdc && (s[transitKeyForRdc] || 0) > 0) {
-      transit = s[transitKeyForRdc];
-    } else if ((s.rdcTransitTotal || 0) > 0) {
-      transit = s.rdcTransitTotal;
-    }
-    if (transit && transitBySku[s.materialCode] === undefined) {
+    // 指定 RDC 且映射存在 → 严格取该 RDC 字段（值为 0 也必须写 0，不能被后续逻辑补成 total）
+    // 未指定 RDC（all）或 RDC 无映射 → 才用全部 RDC 在途合计
+    const transit = transitKeyForRdc
+      ? (s[transitKeyForRdc] || 0)
+      : (s.rdcTransitTotal || 0);
+    if (transitBySku[s.materialCode] === undefined) {
       transitBySku[s.materialCode] = transit;
     }
     if (s.dcSupply && !supplyBySku[s.materialCode]) {
