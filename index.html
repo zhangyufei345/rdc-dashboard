@@ -1409,7 +1409,14 @@ const DB_NAME = 'RDC_Dashboard';
 //   09855/西南 11-19 该 RDC 在途=0，旧代码 fallback 到「在途总箱 525」（实为华南 525）→ 西南弹窗错显 525。
 //   改为指定 RDC 时严格取 RDC_TRANSIT_KEY[rdc]（0 即 0），仅 rdc='all' 才用 rdcTransitTotal，与 L789/L8576 口径一致。
 //   DB_VERSION 不动。
-const BUILD_VERSION = 523;
+// v524（2026-11-20 用户裁定）：修「覆盖天数算法」① 今天起 D 天需求不扣本周订单。
+//   旧 v500 口径 ded=min(当日订单, 当周剩余DP=weekDp−weekActual)；集中大单把 weekActual 顶到≥weekDp 时
+//   weekRemain=0 → ded 恒 0 → ① 一点不扣（11-19 惠州8004>7122、天津16182>8180，用户截图连续两天不变）。
+//   新口径（用户明确裁定「只扣本周需求，超出作废」）：ded=min(本周已发生订单+人工补填, 本周DP共识)，
+//   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
+//   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
+//   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
+const BUILD_VERSION = 524;
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -3781,11 +3788,19 @@ function samsRopAt(wh, coverW, st) {
   var weekActual  = (_wkIdx >= 0 && a[_wkIdx] != null && isFinite(a[_wkIdx])) ? a[_wkIdx] : 0;
   var weekRemain  = (weekDp != null) ? Math.max(0, weekDp - weekActual) : 0;
   var weekLabel   = (_wkIdx >= 0 && mw[_wkIdx]) ? (mw[_wkIdx].short || '') : '';
-  var dedCap      = Math.min(weekRemain, Math.max(0, coverDemandRaw));
+  // v524（2026-11-20 用户裁定）：扣减口径改为「本周已发生订单 → 只扣本周需求，超出作废」。
+  //   旧 v500 口径 ded = min(当日订单, 当周剩余 DP=DP−已发生)，当集中大单把 weekActual 顶到 ≥ weekDp 时
+  //   weekRemain=0 → ded 恒 0 → ①今天起 D 天需求一点不扣（用户截图惠州8004>7122、天津16182>8180 两仓卡死）。
+  //   新口径：扣减基数 = 本周已发生订单（自动，随 sams-demand.xlsx 每次订单部署刷新）＋人工补填的当日订单；
+  //           上限 = 当周 DP 共识（不是 weekRemain）——超出当周 DP 的部分作废（不结转到下周、不扣穿整窗）；
+  //           下周需求与安全库存仍完整保留。这样大单不再被卡死为 0，①会真实变小。
   var _doRaw      = (st.dayOrder && st.dayOrder[_leadKey] != null) ? Number(st.dayOrder[_leadKey]) : null;
   var dayOrder    = (_doRaw != null && isFinite(_doRaw) && _doRaw > 0) ? _doRaw : 0;
-  var ded         = Math.min(dayOrder, dedCap);
-  var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求（ded=0 时与改前逐字相等）
+  var dedBase     = weekActual + dayOrder;                          // 本周已发生 + 人工补填（叠加）
+  var dedCap      = Math.min(weekDp != null ? weekDp : 0, Math.max(0, coverDemandRaw));  // 上限=当周DP，超出作废
+  var ded         = Math.min(dedBase, dedCap);
+  var dedOverflow = Math.max(0, dedBase - dedCap);                  // 超出当周DP被作废的量（展示用）
+  var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
@@ -3941,9 +3956,9 @@ function samsRopAt(wh, coverW, st) {
     // v434: 补货车数（唯一算法 = 覆盖天数；原 target 字段已删）
     nCar: nCar, batchBoxes: batchBoxes,
     coverDays: coverDays, coverDemandRaw: coverDemandRaw, coverDemandArr: coverDemandArr, coverTarget: coverTarget,
-    // v500：当日订单实绩 → 当周剩余 DP 扣减的完整拆解（展示层据此如实标出扣了什么、扣了多少、为什么封顶）
+    // v500/v524：当日订单 + 本周已发生 → 本周DP内扣减的完整拆解（展示层据此如实标出扣了什么、扣了多少、超出作废多少）
     dayOrder: dayOrder, weekIdx: _wkIdx, weekLabel: weekLabel, weekDp: weekDp,
-    weekActual: weekActual, weekRemain: weekRemain, dedCap: dedCap, ded: ded,
+    weekActual: weekActual, weekRemain: weekRemain, dedBase: dedBase, dedCap: dedCap, ded: ded, dedOverflow: dedOverflow,
     ss1c: ss1c, ss2c: ss2c, ssc: ssc, ssPickC: ssPickC, ssFinalC: ssFinalC,   // 覆盖目标用的安全库存（按覆盖天数定）
     coverNeed: coverNeed, coverByTarget: coverByTarget,
     byTargetEff: byTargetEff, needEff: needEff, targetDaysEff: targetDaysEff,
@@ -4293,26 +4308,19 @@ function renderSamsFc() {
        + ' <span onclick="samsClearStock()" style="cursor:pointer;color:#185FA5;text-decoration:underline">清空全部</span>'
        + '</div>';
   }
-  // ---- v500 说明带：只在有仓填了当日订单时出现（不填 = 与原行为完全一致，不多一段话）----
-  if (nOrderFilled) {
+  // ---- v524 说明带：自动扣本周已发生订单，恒显示（大单不再因「当周剩余=0」卡死为不扣）----
+  {
+    var _dedRows = rows.filter(function (r) { return r.ded > 0; });
     h += '<div style="font-size:11px;color:var(--text-secondary);background:var(--bg-card);border-left:3px solid #E0A44A;'
        + 'padding:7px 11px;border-radius:0 6px 6px 0;margin-bottom:10px;line-height:1.7">'
-       + '<b style="color:var(--text-primary)">已实填 ' + nOrderFilled + '/' + rows.length + ' 仓当日订单实绩</b>'
-       + ' → 下单后的库存已把这笔货扣掉，而 DP 共识在周内不会自动递减，系统把它从需求侧同步扣一次，避免同一笔需求算两遍。'
-       + '<br>扣减只限 <b>当周剩余 DP = 当周 DP 共识 − 本周实际已发生订单</b>（'
-       + rows.filter(function (r) { return r.dayOrder > 0; }).map(function (r) {
-           return r.short + ' ' + F(r.ded) + ' 箱';
-         }).join('、') + '），'
-       + '<b style="color:#0F7B4F">下周需求与安全库存完整保留</b>；集中下单按实绩全额扣、不按天摊分。'
-       + (nOrderFilled < rows.length ? '未填的 ' + (rows.length - nOrderFilled) + ' 仓按「当天无订单」处理，不扣减。' : '')
-       + (function () {
-           var zero = rows.filter(function (r) { return r.dayOrder > 0 && r.ded <= 0; });
-           return zero.length
-             ? '<br><b style="color:var(--color-orange)">⚠ ' + zero.map(function (r) { return r.short; }).join('、')
-               + ' 本周实际已发生订单已达/超当周 DP 共识，当周剩余为 0 → 本次未扣减</b>'
-               + '（按指定口径不倒扣下周需求；这是数据结论，不是输入失效）。'
-             : '';
-         })()
+       + '<b style="color:var(--text-primary)">本周已发生订单已自动从需求侧扣减（v524 口径）</b>'
+       + ' → 订单出货已把货发出，而 DP 共识在周内不会自动递减，系统把本周已发生订单从需求侧同步扣一次，避免同一笔需求算两遍。'
+       + '<br>扣减 = min(<b>本周已发生 ＋ 补填</b>, <b>本周 DP 共识</b>)，超出本周 DP 的部分作废（'
+       + (_dedRows.length ? _dedRows.map(function (r) {
+           return r.short + ' ' + F(r.ded) + ' 箱' + (r.dedOverflow > 0 ? '(作废' + F(r.dedOverflow) + ')' : '');
+         }).join('、') : '本周各仓暂无已发生订单')
+       + '），<b style="color:#0F7B4F">下周需求与安全库存完整保留</b>；集中下单按实绩全额扣、不按天摊分。'
+       + (nOrderFilled ? '另有 ' + nOrderFilled + ' 仓补填了额外订单（已叠加进扣减）。' : '')
        + '</div>';
   }
   // ---- 提示带：覆盖天数 < 运输时效 ⇒ 物理上无法不间断供应（只要有一仓命中就显示）----
@@ -4354,26 +4362,23 @@ function renderSamsFc() {
        +   '<span style="font-size:11px;color:var(--text-secondary)">箱</span>'
        + '</div>'
        + '<div style="font-size:10px;line-height:1.5;margin:3px 0 0">' + stockHint(r) + '</div>'
-       // ---- v500：当日订单实绩输入栏（留空 = 无订单不扣）----
+       // ---- v500 输入栏保留（位置不动）；v524 起自动扣本周已发生订单，此栏只作人工补填叠加 ----
        + '<div style="display:flex;align-items:center;gap:5px;margin:5px 0 0">'
-       +   '<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap">当日订单实绩</span>'
+       +   '<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap">额外订单(补填)</span>'
        +   '<input type="number" min="0" step="1" class="sams-dayorder-in" data-wh="' + r.short + '"'
-       +     ' value="' + (r.dayOrder > 0 ? r.dayOrder : '') + '" placeholder="留空＝无订单不扣"'
-       +     ' title="填补货当天已下单/已出货的订单箱数。系统只从「当周剩余 DP = 当周 DP 共识 − 本周实际已发生订单」里扣，下周需求与安全库存不扣。留空视为当天无订单。"'
+       +     ' value="' + (r.dayOrder > 0 ? r.dayOrder : '') + '" placeholder="本周已自动扣，此处补填额外订单"'
+       +     ' title="本周已发生订单已自动从需求扣减；此处只在有额外订单（尚未计入本周已发生）时补填。扣减上限=本周 DP 共识，超出作废，下周需求与安全库存不扣。"'
        +     ' onchange="samsSetDayOrder(this.getAttribute(\'data-wh\'), this.value)"'
        +     ' style="flex:1;min-width:0;padding:3px 6px;border:1px solid ' + (r.dayOrder > 0 ? '#F0C98A' : 'var(--border-card)') + ';'
        +     'border-radius:6px;font-size:12px;background:' + (r.dayOrder > 0 ? '#FFF8E8' : 'var(--bg-card)') + ';color:var(--text-primary)">'
        +   '<span style="font-size:11px;color:var(--text-secondary)">箱</span>'
        + '</div>'
-       + ((r.dayOrder > 0)
+       + ((r.ded > 0 || r.dayOrder > 0)
            ? '<div style="font-size:10px;line-height:1.55;margin:3px 0 0;color:#8A5A12">'
-             + '当周 DP ' + (r.weekDp == null ? '—' : F(r.weekDp)) + ' − 本周已发生 ' + F(r.weekActual)
-             + ' ＝ 当周剩余 ' + F(r.weekRemain) + ' 箱 → 实扣 <b>' + F(r.ded) + '</b> 箱'
-             + (r.ded < r.dayOrder
-                 ? (r.weekRemain <= 0
-                     ? '（本周出货已达/超当周 DP，剩余为 0，无可扣需求）'
-                     : '（封顶，填的 ' + F(r.dayOrder) + ' 箱未全扣）')
-                 : '')
+             + '本周已发生 ' + F(r.weekActual) + (r.dayOrder > 0 ? ' ＋ 补填 ' + F(r.dayOrder) : '')
+             + ' ＝ ' + F(r.dedBase) + '，上限本周 DP ' + (r.weekDp == null ? '—' : F(r.weekDp))
+             + ' → 实扣 <b>' + F(r.ded) + '</b> 箱'
+             + (r.dedOverflow > 0 ? '（超出本周 DP 的 ' + F(r.dedOverflow) + ' 箱作废）' : '')
              + (r.weekDp == null ? '<br>⚠ 本周无 DP 共识数据，未扣减' : '')
              + '</div>'
            : '')
@@ -4660,7 +4665,7 @@ function renderSamsFc() {
            return '<tr>'
              + '<td style="font-weight:600">' + r.short + '</td>'
              + '<td>' + F(r.coverDemandArr)
-             + (r.ded > 0 ? '<div style="font-size:10px;color:#8A5A12;font-weight:400">已扣当日订单 ' + F(r.ded) + '</div>' : '')
+             + (r.ded > 0 ? '<div style="font-size:10px;color:#8A5A12;font-weight:400">已扣本周订单 ' + F(r.ded) + (r.dedOverflow > 0 ? '（超DP作废 ' + F(r.dedOverflow) + '）' : '') + '</div>' : '')
              + '</td>'
              + '<td' + (r.ssPickC === '统计法' ? ' style="font-weight:600"' : '') + '>' + F(r.ss1c * r.k) + '</td>'
              + '<td' + (r.ssPickC === '峰值法' ? ' style="font-weight:600"' : '') + '>' + F(r.ss2c * r.k) + '</td>'
@@ -4676,9 +4681,10 @@ function renderSamsFc() {
            + '<div class="card-subtitle">目标水位 = ①今天起 D 天需求 ＋ ④安全库存；④ = max(②统计法, ③峰值法) × 需求倍率 k；'
            + '⑦需补 = max(0, ⑤目标 − ⑥当前库存)；⑧车数 = ⌈⑦ ÷ 整车 ' + st.car + '⌉，'
            + '但 ⑦ 不足最小起补量 ' + F(st.car * st.minCarRatio) + ' 箱（' + st.minCarRatio + ' 车）时本批不补（0 车）。'
-           + '安全库存口径自 v431 起跟随「覆盖天数」（覆盖天数 = 覆盖周数×7 时与预警线安全库存相等）。</div></div>'
+           + '安全库存口径自 v431 起跟随「覆盖天数」（覆盖天数 = 覆盖周数×7 时与预警线安全库存相等）。'
+           + '<br>① 已按 <b>v524 口径</b>扣本周订单：扣减 = min(本周已发生订单 + 人工补填, 本周 DP 共识)，超出本周 DP 的部分作废；下周需求与安全库存完整保留。</div></div>'
            + '<div style="overflow:auto"><table class="data-table" style="white-space:nowrap;font-size:12px"><thead><tr>'
-           + '<th>仓</th><th>① 今天起 ' + st.coverDays + ' 天需求' + (nOrderFilled ? '<br>（已扣当日订单）' : '') + '</th>'
+           + '<th>仓</th><th>① 今天起 ' + st.coverDays + ' 天需求' + (rows.some(function(r){return r.ded>0;}) ? '<br>（已扣本周订单）' : '') + '</th>'
            + '<th>② 安全库存<br>统计法(×k)</th><th>③ 安全库存<br>峰值法(×k)</th>'
            + '<th>④ 安全库存<br>取大·采用</th><th>⑤ 目标水位<br>=①+④</th>'
            + '<th>⑥ 当前库存</th><th>⑦ 需补<br>=max(0,⑤−⑥)</th><th>⑧ 车数</th>'

@@ -37,12 +37,14 @@ for key in (
     # v494 起默认值已从 14 改成 10，这里只校验前缀，避免默认值再调就误判「抽取块结构已变」。
     'var coverDays = (st.coverDays > 0) ? st.coverDays : ',
     'var _carFrac = _carQ - _carWhole;',
-    # v501 同源断言：补货卡片「当日订单实绩 → 只扣当周剩余 DP」公式必须真的被抽进引擎。
+    # v501/v524 同源断言：补货卡片「本周已发生订单 → 只扣本周 DP」公式必须真的被抽进引擎。
     #   sha16 只比 sams-sim-data.json 与引擎文件，**不比 HTML**；若抽取边界漂移导致公式没进去，
     #   页面不会报任何错，只会静默跑旧公式 —— 必须在这里硬拦。
+    #   v524：扣减公式从 Math.min(dayOrder, dedCap) 改为 dedBase=weekActual+dayOrder、ded=min(dedBase,dedCap)。
     'dayOrder: {},',
     'var coverDemandRaw = samsCumAt(axToday, coverDays);',
-    'Math.min(dayOrder, dedCap)',
+    'var dedBase     = weekActual + dayOrder;',
+    'var ded         = Math.min(dedBase, dedCap);',
     # v502 同源断言：0 车「库存可售天数」改走 axToday + curStock，也必须真的被抽进引擎。
     #   该字段模拟页虽不消费，但抽取块变了引擎就必须重建，否则 sha16 仍是旧值、静默跑旧公式。
     'var _qShow = noCar ? curStock : _qArr;',

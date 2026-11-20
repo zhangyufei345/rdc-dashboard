@@ -1,7 +1,7 @@
 /* ==========================================================================
  * 山姆前置仓「补货量 → 库存演化」沙箱引擎 —— 自动生成，请勿手改
  * 生成脚本 : tools/build_sams_sim_bundle.py
- * 来源     : rdc-dashboard.html 逐字抽取 L3004~L3988（985 行，sha16=a96b836afb858b2b）
+ * 来源     : rdc-dashboard.html 逐字抽取 L3011~L4003（993 行，sha16=78d34b49b08da00b）
  * 用法     : 页面按需 fetch 本文件文本，用 new Function('window', code) 编译，
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *
@@ -14,7 +14,7 @@
  * ========================================================================== */
 (function (global) {
   var RealDate = global.Date;
-  var SHA16 = 'a96b836afb858b2b';
+  var SHA16 = '78d34b49b08da00b';
 
   // 形参 window / Date 遮蔽全局：SRC 里的 window._samsState 落在沙箱对象上，
   // new Date() 走 FakeDate，绝不污染看板主页面的 Date / _samsState。
@@ -801,11 +801,19 @@ function samsRopAt(wh, coverW, st) {
   var weekActual  = (_wkIdx >= 0 && a[_wkIdx] != null && isFinite(a[_wkIdx])) ? a[_wkIdx] : 0;
   var weekRemain  = (weekDp != null) ? Math.max(0, weekDp - weekActual) : 0;
   var weekLabel   = (_wkIdx >= 0 && mw[_wkIdx]) ? (mw[_wkIdx].short || '') : '';
-  var dedCap      = Math.min(weekRemain, Math.max(0, coverDemandRaw));
+  // v524（2026-11-20 用户裁定）：扣减口径改为「本周已发生订单 → 只扣本周需求，超出作废」。
+  //   旧 v500 口径 ded = min(当日订单, 当周剩余 DP=DP−已发生)，当集中大单把 weekActual 顶到 ≥ weekDp 时
+  //   weekRemain=0 → ded 恒 0 → ①今天起 D 天需求一点不扣（用户截图惠州8004>7122、天津16182>8180 两仓卡死）。
+  //   新口径：扣减基数 = 本周已发生订单（自动，随 sams-demand.xlsx 每次订单部署刷新）＋人工补填的当日订单；
+  //           上限 = 当周 DP 共识（不是 weekRemain）——超出当周 DP 的部分作废（不结转到下周、不扣穿整窗）；
+  //           下周需求与安全库存仍完整保留。这样大单不再被卡死为 0，①会真实变小。
   var _doRaw      = (st.dayOrder && st.dayOrder[_leadKey] != null) ? Number(st.dayOrder[_leadKey]) : null;
   var dayOrder    = (_doRaw != null && isFinite(_doRaw) && _doRaw > 0) ? _doRaw : 0;
-  var ded         = Math.min(dayOrder, dedCap);
-  var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求（ded=0 时与改前逐字相等）
+  var dedBase     = weekActual + dayOrder;                          // 本周已发生 + 人工补填（叠加）
+  var dedCap      = Math.min(weekDp != null ? weekDp : 0, Math.max(0, coverDemandRaw));  // 上限=当周DP，超出作废
+  var ded         = Math.min(dedBase, dedCap);
+  var dedOverflow = Math.max(0, dedBase - dedCap);                  // 超出当周DP被作废的量（展示用）
+  var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
@@ -961,9 +969,9 @@ function samsRopAt(wh, coverW, st) {
     // v434: 补货车数（唯一算法 = 覆盖天数；原 target 字段已删）
     nCar: nCar, batchBoxes: batchBoxes,
     coverDays: coverDays, coverDemandRaw: coverDemandRaw, coverDemandArr: coverDemandArr, coverTarget: coverTarget,
-    // v500：当日订单实绩 → 当周剩余 DP 扣减的完整拆解（展示层据此如实标出扣了什么、扣了多少、为什么封顶）
+    // v500/v524：当日订单 + 本周已发生 → 本周DP内扣减的完整拆解（展示层据此如实标出扣了什么、扣了多少、超出作废多少）
     dayOrder: dayOrder, weekIdx: _wkIdx, weekLabel: weekLabel, weekDp: weekDp,
-    weekActual: weekActual, weekRemain: weekRemain, dedCap: dedCap, ded: ded,
+    weekActual: weekActual, weekRemain: weekRemain, dedBase: dedBase, dedCap: dedCap, ded: ded, dedOverflow: dedOverflow,
     ss1c: ss1c, ss2c: ss2c, ssc: ssc, ssPickC: ssPickC, ssFinalC: ssFinalC,   // 覆盖目标用的安全库存（按覆盖天数定）
     coverNeed: coverNeed, coverByTarget: coverByTarget,
     byTargetEff: byTargetEff, needEff: needEff, targetDaysEff: targetDaysEff,
