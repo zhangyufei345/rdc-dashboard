@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 527; // v527: 补货调整跟踪加顶部TAB(减量/增量),加量避缺从页面末尾移入增量TAB; 增/减量共用月度筛选(按补货日,观察期订单全量不受限)
+const BUILD_VERSION = 528; // v528: 增量分析新增长窗口补充分析(观察至下一批补货到货日,双窗口并行不改固定4天主口径),折叠面板默认收起; 短窗数字不变
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -26091,6 +26091,14 @@ function buildUpAdjAvoid() {
     demMap[k] = (demMap[k] || 0) + q;
   }
   const dem = function(ds, full, sku) { return demMap[ds + '|' + full + '|' + sku] || 0; };
+  // v528: 建「SKU×RDC → 补货日升序列表」索引，用于长窗口（观察至下一批补货到货日）
+  const byKey = Object.create(null);
+  for (let i = 0; i < rows.length; i++) {
+    const rr = rows[i]; const k = String(rr.sku || '').trim() + '|' + String(rr.rdc || '').trim();
+    if (!byKey[k]) byKey[k] = [];
+    byKey[k].push(String(rr.date || '').slice(0, 10));
+  }
+  Object.keys(byKey).forEach(function(k) { byKey[k].sort(); });
   const out = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -26111,34 +26119,65 @@ function buildUpAdjAvoid() {
     let transitUse = 0, d0 = date;
     while (d0 < arrival) { transitUse += dem(d0, full, sku); d0 = _adjDateAdd(d0, 1); }
     const openStock = Number(r.openStock || 0), inTransit = Number(r.inTransit || 0);
-    let stock = Math.max(0, openStock + inTransit - transitUse);
     const incBox = (adj - plan);
-    let gapPcs = 0, covered = 0; const daily = [];
-    if (arrival <= maxOrd) {
-      for (let k = 0; k < ADJ_WINDOW_DAYS; k++) {
-        const day = _adjDateAdd(arrival, k);
-        if (day > maxOrd) break;
-        covered++;
-        if (k === 0) stock += plan * spec;          // 不增量：只到应补量
-        const demPcs = dem(day, full, sku);
-        stock -= demPcs;
-        let gap = 0;
-        if (stock < 0) { gap = -stock; gapPcs += gap; stock = 0; }
-        daily.push({ day: day, dem: Math.round(demPcs), gap: Math.round(gap) });
-      }
+
+    // —— v528 长窗口：终点 = 下一笔补货的到货日 ——
+    const key = sku + '|' + rdcRaw;
+    const dates = byKey[key] || [];
+    let nextDate = null;
+    for (let j = 0; j < dates.length; j++) { if (dates[j] > date) { nextDate = dates[j]; break; } }
+    const hasNext = !!nextDate;
+    const nextArrival = nextDate ? _adjDateAdd(nextDate, lead) : null;
+    // 长窗口只在「下批到货日晚于本次到货日」时成立
+    const longEnd = (nextArrival && nextArrival > arrival) ? nextArrival : null;
+
+    let stock = Math.max(0, openStock + inTransit - transitUse);
+    let gapPcs = 0, shortCovered = 0; const daily = [];
+    // 长窗口累计（从本次到货日起，一路推演到 longEnd）；两窗口共用同一条库存轨迹
+    let longGapPcs = 0, longCovered = 0;
+    const maxEnd = longEnd || _adjDateAdd(arrival, ADJ_WINDOW_DAYS - 1);
+    let day = arrival;
+    while (day <= maxEnd) {
+      if (day > maxOrd) break;
+      if (day === arrival) stock += plan * spec;    // 不增量：只到应补量（两窗口共用同一起点供给）
+      const demPcs = dem(day, full, sku);
+      stock -= demPcs;
+      let gap = 0;
+      if (stock < 0) { gap = -stock; stock = 0; }
+      // 短窗：只统计前 4 天的缺口与明细（口径与 v525 完全一致）
+      if (shortCovered < ADJ_WINDOW_DAYS) { shortCovered++; gapPcs += gap; daily.push({ day: day, dem: Math.round(demPcs), gap: Math.round(gap) }); }
+      // 长窗：累计至 longEnd
+      if (longEnd) { longGapPcs += gap; longCovered++; }
+      day = _adjDateAdd(day, 1);
     }
+    const covered = shortCovered; // 供下游字段使用（短窗天数）
     const status = arrival > maxOrd ? '未到货' : (covered < ADJ_WINDOW_DAYS ? '观察中' : '已完成');
     const gapBox = gapPcs / spec;
     const avoidBox = (status === '已完成' && gapBox > 0) ? Math.min(incBox, gapBox) : 0;
+    // 长窗口结论：需 longEnd 存在 + 推演走满到 longEnd（下批到货日 ≤ maxOrd）才算完成
+    let longStatus = '无后续补货', longGapBox = null, longAvoidBox = null, longDone = false;
+    if (longEnd) {
+      longDone = (longCovered >= (function(a, b) { // 到货日到 longEnd 的天数
+        var n = 0, d = a; while (d <= b) { n++; d = _adjDateAdd(d, 1); } return n;
+      })(arrival, longEnd));
+      longStatus = longDone ? '已完成' : '观察中';
+      longGapBox = Math.round(longGapPcs / spec * 10) / 10;
+      longAvoidBox = (longDone && longGapBox > 0) ? Math.round(Math.min(incBox, longGapBox) * 10) / 10 : 0;
+    }
     out.push(Object.assign({}, r, {
       sku: sku, full: full, spec: spec, arrival: arrival, incBox: incBox,
       transitUse: transitUse, status: status, covered: covered,
       gapBox: Math.round(gapBox * 10) / 10,
-      avoidBox: Math.round(avoidBox * 10) / 10, daily: daily
+      avoidBox: Math.round(avoidBox * 10) / 10, daily: daily,
+      hasNext: hasNext, nextDate: nextDate, nextArrival: nextArrival,
+      longEnd: longEnd, longStatus: longStatus, longDone: longDone,
+      longCovered: longCovered, longGapBox: longGapBox, longAvoidBox: longAvoidBox
     }));
   }
   const valid = out.filter(function(x) { return x.avoidBox > 0; }).sort(function(a, b) { return b.avoidBox - a.avoidBox || b.gapBox - a.gapBox; });
-  const cache = { sig: sig, list: out, valid: valid, maxOrd: maxOrd };
+  // v528: 长窗口有效避缺清单（补充参考）
+  const longValid = out.filter(function(x) { return x.longAvoidBox > 0; }).sort(function(a, b) { return b.longAvoidBox - a.longAvoidBox; });
+  const cache = { sig: sig, list: out, valid: valid, longValid: longValid, maxOrd: maxOrd };
   window._upAdjCache = cache;
   return cache;
 }
@@ -26187,6 +26226,41 @@ function renderUpAdjTab(page, tabBar) {
   kpi('避免缺货合计', Math.round(totalAvoid * 10) / 10, '箱', '#FEF3C7', '#92400E');
   h += '</div>';
   h += '<div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">观察中 ' + obsCnt + ' 笔、未到货 ' + notArrCnt + ' 笔（订单数据只到 ' + (c.maxOrd || '-') + '，窗口尚未走完，随日更自动点亮）；已走完 ' + doneCnt + ' 笔加量 ' + Math.round(totalInc * 10) / 10 + ' 箱。</div>';
+
+  // v528: 长窗口补充分析（折叠面板，默认收起）—— 观察期延长至「下一批补货到货日」，仅作补充参考，不改变上方固定4天主口径
+  const longValid = c.longValid || [];
+  const hasNextCnt = c.list.filter(function(x) { return x.hasNext; }).length;
+  const longDoneCnt = c.list.filter(function(x) { return x.longDone; }).length;
+  // 「4天漏判」= 固定窗口没抓到、长窗口抓到的案例
+  const newly = longValid.filter(function(x) { return !(x.avoidBox > 0); });
+  h += '<details style="border:1px solid var(--border-card);border-radius:10px;background:var(--bg-card);margin-bottom:12px"><summary style="cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600">🔭 长窗口补充分析：观察至下一批补货到货日 <span style="font-weight:400;color:var(--text-secondary);font-size:11px">—— 补充参考，主口径仍是上方固定 4 天</span></summary><div style="padding:4px 16px 14px">';
+  h += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9;margin-bottom:8px">口径：观察期从本次到货日延长到<b>同 SKU×RDC 下一笔补货的到货日</b>（下单日 + 运输周期）为止 —— 一批货本应撑到下一批到货。仅对有后续补货的记录计算；下一批到货日超过 ' + (c.maxOrd || '-') + ' 则标「观察中」不下结论。<b>绿色为主口径已抓到，橙色为固定 4 天漏判、延长后才抓到</b>。</div>';
+  h += '<div style="font-size:12px;margin-bottom:8px">有后续补货 <b>' + hasNextCnt + '</b> 笔（其中长窗口走完 ' + longDoneCnt + ' 笔）；长窗口有效避缺 <b style="color:#92400E">' + longValid.length + '</b> 笔，合计 <b style="color:#92400E">' + Math.round(longValid.reduce(function(s, x) { return s + x.longAvoidBox; }, 0) * 10) / 10 + '</b> 箱；其中<b style="color:#B45309">固定 4 天漏判 ' + newly.length + ' 笔</b>。</div>';
+  if (!longValid.length) {
+    h += '<div style="font-size:12px;color:var(--text-secondary);background:var(--bg-page,#F8FAFC);border-radius:8px;padding:10px 12px">当前筛选下，延长观察期没有新增可归因的避缺案例。</div>';
+  } else {
+    h += '<div style="overflow:auto;max-height:300px;border:1px solid var(--border-card);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr style="position:sticky;top:0;background:var(--bg-card);z-index:1">';
+    ['补货日','RDC','SKU','商品','加量(箱)','长窗缺口(箱)','长窗避缺(箱)','下批到货日','窗口天数','固定4天','说明'].forEach(function(t) { h += '<th style="text-align:left;padding:7px 9px;border-bottom:1px solid var(--border-card);white-space:nowrap;color:var(--text-secondary)">' + t + '</th>'; });
+    h += '</tr></thead><tbody>';
+    longValid.forEach(function(x) {
+      const isNew = !(x.avoidBox > 0);
+      h += '<tr style="border-bottom:1px solid var(--border-card);background:' + (isNew ? '#FFFBEB' : 'transparent') + '">';
+      h += '<td style="padding:6px 9px;white-space:nowrap">' + x.date + '</td>';
+      h += '<td style="padding:6px 9px;white-space:nowrap">' + x.rdc + '</td>';
+      h += '<td style="padding:6px 9px;font-family:monospace">' + x.sku + '</td>';
+      h += '<td style="padding:6px 9px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (x.skuName || '') + '">' + (x.skuName || '-') + '</td>';
+      h += '<td style="padding:6px 9px;text-align:right">' + (Math.round(x.incBox * 10) / 10) + '</td>';
+      h += '<td style="padding:6px 9px;text-align:right;color:#B91C1C">' + x.longGapBox + '</td>';
+      h += '<td style="padding:6px 9px;text-align:right;color:#92400E;font-weight:600">' + x.longAvoidBox + '</td>';
+      h += '<td style="padding:6px 9px;white-space:nowrap">' + (x.nextArrival || '-') + '</td>';
+      h += '<td style="padding:6px 9px;text-align:right">' + x.longCovered + ' 天</td>';
+      h += '<td style="padding:6px 9px;text-align:right">' + (x.avoidBox > 0 ? x.avoidBox : '0') + '</td>';
+      h += '<td style="padding:6px 9px;white-space:nowrap;color:' + (isNew ? '#B45309' : '#15803D') + '">' + (isNew ? '⚠ 4天漏判' : '主口径已抓到') + '</td>';
+      h += '</tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div></details>';
 
   if (!valid.length) {
     h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前筛选下已走完的加量记录中，没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
