@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 526; // v526: ①移除「大仓20%判定分母有问题」折叠面板 ②加量避缺弹框红框位置增加「本次补货明细」表(图3全字段样式,16列,横向滚动),弹框加宽至920px；纯展示层，不动判定逻辑
+const BUILD_VERSION = 527; // v527: 补货调整跟踪加顶部TAB(减量/增量),加量避缺从页面末尾移入增量TAB; 增/减量共用月度筛选(按补货日,观察期订单全量不受限)
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -25950,7 +25950,7 @@ const ADJ_QUADRANTS = {
 // v393: 新增 batchShort —— 「按补货批次」图点击红色「窗口缺货(箱)」柱后，只看该批次**已进窗口且真的缺了**的记录。
 //   与归因表的 _adjState.short 是两套（short 要求 status==='已完成'，本项含「进行中」），
 //   因为红柱的口径就是 status !== '未开始'，两者必须逐字同源，不能复用。
-window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all', short: 'all', batchShort: false };
+window._adjState = { batch: 'all', rdc: 'all', type: 'all', hainan: 'all', quadrant: 'all', short: 'all', batchShort: false, month: 'all' }; // v527: month=补货日 YYYY-MM，增/减量 TAB 共用
 // v347: 归因表点击行 → 置位本标志；renderAdjustTrack 渲染完成后滚动到「调整明细」并高亮（一次性消费）
 window._adjJumpDetail = false;
 // v442 性能：明细表「渐进展开」—— 记录数已达 3,646 条，全量拼 HTML + innerHTML 实测占单次渲染约 2.1 秒
@@ -25981,9 +25981,11 @@ function _adjIsH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHai
 function buildAdjComputed() {
   const recs = dataStore.adjustRecords || [];
   if (!recs.length) return null;
+  // v527: 月度筛选（按补货日）—— 只筛「进入分析的补货记录」，观察期订单明细 shortMap 仍用全量构建（不受筛选限制）。
+  const adjMonth = (window._adjState && window._adjState.month) || 'all';
   // v443: 签名去掉 '|pb'+planBySkuRdc 规模 —— 该数据源已不再参与本页任何计算，纳入签名只会让
   //   分仓计划异步加载完成时白算一遍（约 300ms）。
-  const sig = (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '|' + recs.length + '|' + (window._boxSpec ? Object.keys(window._boxSpec).length : 0);
+  const sig = (dataStore.orderDetail ? dataStore.orderDetail.length : 0) + '|' + recs.length + '|' + (window._boxSpec ? Object.keys(window._boxSpec).length : 0) + '|m' + adjMonth;
   if (window._adjCache && window._adjCache.sig === sig) return window._adjCache;
   const shortMap = {};
   let maxOrd = '';
@@ -26011,7 +26013,9 @@ function buildAdjComputed() {
     const k = d.dateStr + '|' + d.skuCode + '|' + d.warehouse;
     shortMap[k] = (shortMap[k] || 0) + d.firstDayShort;
   });
-  const list = recs.map(function(r, idx) {
+  // v527: 月度筛选只作用于「进入分析的补货记录」（按补货日 YYYY-MM）；观察期订单明细 shortMap 全量构建不变。
+  const recsInMonth = (adjMonth === 'all') ? recs : recs.filter(function(r) { return String(r.date || '').slice(0, 7) === adjMonth; });
+  const list = recsInMonth.map(function(r, idx) {
     const full = ADJ_RDC_FULL[r.rdc] || ((r.rdc || '') + 'RDC');
     const t = ADJ_TRANSPORT[r.rdc];
     const arrival = (t != null && r.date) ? _adjDateAdd(r.date, t) : null;
@@ -26069,7 +26073,9 @@ function buildAdjComputed() {
 function buildUpAdjAvoid() {
   const rows = window._replDetail || [];
   if (!rows.length || !dataStore.orderDetail || !dataStore.orderDetail.length) return null;
-  const sig = rows.length + '|' + dataStore.orderDetail.length;
+  // v527: 月度筛选（按补货日）—— 只筛「进入分析的加量记录」，观察期订单明细 demMap 仍用全量构建（不受筛选限制）。
+  const upMonth = (window._adjState && window._adjState.month) || 'all';
+  const sig = rows.length + '|' + dataStore.orderDetail.length + '|m' + upMonth;
   if (window._upAdjCache && window._upAdjCache.sig === sig) return window._upAdjCache;
   // 逐日(日期|仓|SKU)订单需求，单位支；maxOrd 用全部日期(含周末)覆盖边界
   const demMap = Object.create(null);
@@ -26092,6 +26098,7 @@ function buildUpAdjAvoid() {
     if (!(adj > plan + 1e-9)) continue;             // 只取加量
     const date = String(r.date || '').slice(0, 10);
     if (!date) continue;
+    if (upMonth !== 'all' && date.slice(0, 7) !== upMonth) continue;  // v527: 按补货日筛月份（观察期 demMap 全量不变）
     const rdcRaw = String(r.rdc || '').trim();
     const rdcShort = rdcRaw.replace(/RDC$/, '');   // replenish-detail 的 rdc 是完整名(华中RDC)，运输周期表用短名
     const full = rdcShort !== rdcRaw ? rdcRaw : (ADJ_RDC_FULL[rdcRaw] || (rdcRaw + 'RDC'));
@@ -26136,13 +26143,22 @@ function buildUpAdjAvoid() {
   return cache;
 }
 
-// 把「加量避缺」卡片渲染进占位容器；数据(replenish-detail.json)异步加载完成后由 _revLoad 回调触发
-function renderUpAdjCard() {
-  const slot = document.getElementById('upadj-card-slot');
-  if (!slot) return;
+// v527: 增量分析改为「补货调整跟踪」页的 TAB（不再放页面末尾）。数据(replenish-detail.json)异步加载，_revLoad 回调重渲。
+function _adjMonthOptions() {
+  // 月份下拉项：从补货记录(adjustRecords)+补货明细(_replDetail)的补货日并集派生，倒序（新的在前）
+  const set = {};
+  (dataStore.adjustRecords || []).forEach(function(r) { if (r.date) set[String(r.date).slice(0, 7)] = 1; });
+  (window._replDetail || []).forEach(function(r) { if (r.date) set[String(r.date).slice(0, 7)] = 1; });
+  return Object.keys(set).sort().reverse();
+}
+function renderUpAdjTab(page, tabBar) {
+  const selStyle = 'padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card)';
+  const months = _adjMonthOptions();
+  const curMonth = (window._adjState && window._adjState.month) || 'all';
+  const monthSel = '<select onchange="window._adjState.month=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all"' + (curMonth === 'all' ? ' selected' : '') + '>全部月份</option>' + months.map(function(m) { return '<option value="' + m + '"' + (curMonth === m ? ' selected' : '') + '>' + m.replace('-', ' 年 ') + ' 月</option>'; }).join('') + '</select>';
   const c = buildUpAdjAvoid();
   if (!c) {
-    slot.innerHTML = '<div class="card" style="margin-bottom:12px;padding:12px 16px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…</div>';
+    page.innerHTML = tabBar + '<div style="padding:14px 16px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…（' + monthSel + '）</div>';
     return;
   }
   const valid = c.valid;
@@ -26153,7 +26169,9 @@ function renderUpAdjCard() {
   const totalAvoid = valid.reduce(function(s, x) { return s + x.avoidBox; }, 0);
   const totalInc = c.list.filter(function(x) { return x.status === '已完成'; }).reduce(function(s, x) { return s + x.incBox; }, 0);
 
-  let h = '<div class="card" style="margin-bottom:12px;padding:14px 16px">';
+  let h = tabBar;
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' + monthSel + '<span style="font-size:12px;color:var(--text-secondary)">按<b>补货日</b>筛选；观察窗内订单数据始终全量（不受筛选限制）</span></div>';
+  h += '<div class="card" style="margin-bottom:12px;padding:14px 16px">';
   h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">📈 加量避缺分析 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 加量补货是否真的避免了缺货？反事实推演：如果不加量，观察窗内会不会缺</span></div>';
   h += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9;margin-bottom:10px">';
   h += '口径：对每笔<b>加量</b>补货，按「期初 + 在途 − 运输期已消耗 + 应补量到货」推演不增量情形下的库存；观察窗 = 到货日起 4 天，逐日扣订单需求。<b>避免缺货箱 = min(加量箱, 不增量缺口箱)</b>，仅窗口走完(4/4)且确实会缺才计。缺货数据覆盖至 <b>' + (c.maxOrd || '-') + '</b>。';
@@ -26171,7 +26189,7 @@ function renderUpAdjCard() {
   h += '<div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">观察中 ' + obsCnt + ' 笔、未到货 ' + notArrCnt + ' 笔（订单数据只到 ' + (c.maxOrd || '-') + '，窗口尚未走完，随日更自动点亮）；已走完 ' + doneCnt + ' 笔加量 ' + Math.round(totalInc * 10) / 10 + ' 箱。</div>';
 
   if (!valid.length) {
-    h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前已走完的加量记录中，没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
+    h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前筛选下已走完的加量记录中，没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
   } else {
     const cols = [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['不增量缺口(箱)','gapBox'],['避免缺货(箱)','avoidBox'],['到货日','arrival'],['状态','status']];
     h += '<div style="overflow:auto;max-height:360px;border:1px solid var(--border-card);border-radius:8px">';
@@ -26195,9 +26213,9 @@ function renderUpAdjCard() {
     h += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">「不增量缺口」可能远大于加量 —— 说明加量只缓解、未完全填平缺口；「避免缺货」按加量上限取值。点行可看逐日推演。</div>';
   }
   h += '</div>';
-  slot.innerHTML = h;
+  page.innerHTML = h;
   // 绑定行点击 → 逐日推演弹框
-  const tb = slot.querySelector('tbody');
+  const tb = page.querySelector('tbody');
   if (tb) tb.onclick = function(ev) {
     const tr = ev.target.closest('tr'); if (!tr) return;
     const idx = Array.prototype.indexOf.call(tb.rows, tr);
@@ -26272,6 +26290,24 @@ function _adjFiltered(computed) {
 function renderAdjustTrack() {
   setTitle('补货调整跟踪');
   const page = document.getElementById('page-adjust-track');
+  // v527: 顶部 TAB —— 减量分析(扣减→缺货) / 增量分析(加量避缺)，复用 _simTab 模式
+  if (typeof window._adjView === 'undefined') window._adjView = 'down';
+  const _av = window._adjView;
+  const _tabStyle = function(k) { return k === _av ? 'background:var(--color-blue);color:#fff;' : ''; };
+  const _tabBar = '<div style="display:flex;gap:8px;margin-bottom:14px">' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + _tabStyle('down') + '" onclick="window._adjView=\'down\';renderAdjustTrack()">📉 减量分析（扣减→缺货）</button>' +
+    '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + _tabStyle('up') + '" onclick="window._adjView=\'up\';renderAdjustTrack()">📈 增量分析（加量避缺）</button>' +
+    '</div>';
+  if (_av === 'up') {
+    // 增量数据(replenish-detail.json)异步：未就绪先显示加载态，_revLoad 回调就绪后重渲本页
+    if (!(window._replDetail && window._replDetail.length) && typeof _revLoad === 'function') {
+      page.innerHTML = _tabBar + '<div style="padding:20px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…</div>';
+      _revLoad(function() { if (currentPage === 'adjust-track' && window._adjView === 'up') renderAdjustTrack(); });
+      return;
+    }
+    renderUpAdjTab(page, _tabBar);
+    return;
+  }
   // v443: 本页已**不再依赖分仓计划**（原唯一用途是砍量冗余折算的分母，该模块已删）→
   //   ① 进页不再拉起 ensureInventoryPlan（inventory-plan.json 1MB+，省掉首屏后台加载与主线程争用；
   //       plan-monitor / transfer-opp / replenishment / 年末预测 等页各自会触发，不会漏）；
@@ -26348,7 +26384,7 @@ function renderAdjustTrack() {
   const rdcList = ['华中', '华南', '华北', '东北', '西北', '西南'];
 
   const selStyle = 'padding:6px 10px;border:1px solid var(--border-card);border-radius:6px;font-size:12px;background:var(--bg-card)';
-  let html = '';
+  let html = _tabBar;
 
   // 顶部说明 + 数据覆盖提示
   html += '<div class="card" style="margin-bottom:12px;padding:12px 16px">';
@@ -26361,6 +26397,10 @@ function renderAdjustTrack() {
 
   // 筛选条
   html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
+  // v527: 月度筛选（按补货日）—— 只筛进入分析的补货记录，观察期订单数据全量不受限
+  const adjMonths = _adjMonthOptions();
+  const adjCurMonth = (window._adjState && window._adjState.month) || 'all';
+  html += '<select onchange="window._adjState.month=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all"' + (adjCurMonth === 'all' ? ' selected' : '') + '>全部月份</option>' + adjMonths.map(function(m) { return '<option value="' + m + '"' + (adjCurMonth === m ? ' selected' : '') + '>' + m.replace('-', ' 年 ') + ' 月</option>'; }).join('') + '</select>';
   // v393: 换批次时一并复位 batchShort —— 红柱下钻是「针对某一根柱」的临时视图，
   //   若不复位，用户在已下钻状态下选「全部批次」会看到「全部批次的缺货行」而非全部记录，与预期不符。
   html += '<select onchange="window._adjState.batch=this.value;window._adjState.batchShort=false;renderAdjustTrack()" style="' + selStyle + '"><option value="all">全部批次</option>' + batches.map(function(b) { return '<option value="' + b + '"' + (st.batch === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select>';
@@ -26535,11 +26575,7 @@ function renderAdjustTrack() {
   }
   html += '</div>';
 
-  // v526: 按用户要求移除「为什么『补货后≤大仓20%』判定分母有问题」折叠说明面板（纯展示层，判定逻辑零改动）。
-
-  // v525: 新增「加量避缺分析」卡片占位 —— 追加在所有原卡片之后，不动原卡片顺序/内容/默认状态。
-  //   数据(replenish-detail.json)异步加载，渲染完成后由下方 _revLoad 回调填充。
-  html += '<div id="upadj-card-slot"></div>';
+  // v526: 已移除「大仓20%判定分母」折叠面板；v527: 加量避缺已移入顶部「增量分析」TAB，此处不再放末尾占位。
 
   // v442 性能：图表容器跨渲染复用。
   //   本页 4 张图的数据全部只依赖 buildAdjComputed 的结果（不随筛选/下钻变化），但每次 render 都要
@@ -26722,13 +26758,7 @@ function renderAdjustTrack() {
     }, 80);
   }
 
-  // v525: 加量避缺卡片 —— replenish-detail.json 就绪后立即渲染，否则注册 _revLoad 回调等待
-  //   _replDetail 就绪后 console 里若本页仍在，则填充占位；不在则下次进页 renderAdjustTrack 会再触发。
-  if (typeof _revLoad === 'function') {
-    _revLoad(function() {
-      if (document.getElementById('upadj-card-slot')) renderUpAdjCard();
-    });
-  }
+  // v527: 加量避缺已移入「增量分析」TAB，减量视图不再注册末尾卡片渲染回调。
 }
 
 // 明细弹窗：单条记录的 扣减 vs 窗口缺货 因果图（对齐设计稿：时间轴 + 每日缺货柱 + 扣减/缺口对比）
