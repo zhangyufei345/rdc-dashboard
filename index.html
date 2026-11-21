@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 525; // v525: 补货调整跟踪新增「加量避缺分析」卡片 —— 逐日库存推演反事实「不增量是否会缺」，168加量中14笔有效避缺/合计169.9箱；纯展示层新增，不动原卡片/筛选/明细/默认状态
+const BUILD_VERSION = 526; // v526: ①移除「大仓20%判定分母有问题」折叠面板 ②加量避缺弹框红框位置增加「本次补货明细」表(图3全字段样式,16列,横向滚动),弹框加宽至920px；纯展示层，不动判定逻辑
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -26211,7 +26211,7 @@ window._showUpAdjDetail = function(x) {
   ov.id = 'upadj-modal';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10001;display:flex;align-items:center;justify-content:center';
   ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
-  let s = '<div style="background:var(--bg-card,#fff);border-radius:12px;max-width:620px;width:100%;padding:20px 22px;max-height:88vh;overflow:auto">';
+  let s = '<div style="background:var(--bg-card,#fff);border-radius:12px;max-width:920px;width:100%;padding:20px 22px;max-height:88vh;overflow:auto">';
   s += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:15px;font-weight:700">' + x.date + ' · ' + x.rdc + ' · ' + x.sku + '</div><div style="font-size:12px;color:var(--text-secondary);margin-top:3px">' + (x.skuName || '') + ' · 箱规 ' + x.spec + '</div></div><button onclick="document.getElementById(\'upadj-modal\').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary)">✕</button></div>';
   s += '<div style="display:flex;gap:10px;margin-bottom:14px">';
   s += '<div style="flex:1;background:#EFF6FF;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">加量(箱)</div><div style="font-size:18px;font-weight:700;color:#1D4ED8">' + (Math.round(x.incBox * 10) / 10) + '</div></div>';
@@ -26219,6 +26219,27 @@ window._showUpAdjDetail = function(x) {
   s += '<div style="flex:1;background:#FEF3C7;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">避免缺货(箱)</div><div style="font-size:18px;font-weight:700;color:#92400E">' + x.avoidBox + '</div></div>';
   s += '</div>';
   s += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">运输期消耗 ' + Math.round(x.transitUse) + ' 支 · 到货日 ' + x.arrival + ' · 窗口 ' + x.covered + '/4 天</div>';
+  // v526: 在红框位置增加「本次补货明细」表，字段与「补货决策复盘」全字段明细表一致（图3样式：表头+数据行，横向可滚动）
+  const _uFmt = function(v, isPct) {
+    if (v === null || v === undefined || v === '') return '—';
+    if (isPct) return (Number(v) * 100).toFixed(1) + '%';
+    return (typeof v === 'number' && !Number.isInteger(v)) ? (Math.round(v * 10) / 10) : v;
+  };
+  const _uCols = [
+    ['补货日', x.date, false], ['RDC', x.rdc, false], ['SKU编码', x.sku, false], ['SKU名称', x.skuName, false],
+    ['供应链品类', x.category, false], ['生命周期', x.lifecycle, false], ['箱规', x.boxSpec, false],
+    ['海南花露水', x.hainan, false], ['SPU缺失&不补货产品', x.spuMissing, false],
+    ['应补量(箱)', x.planBox, false], ['调整后补货量(箱)', x.adjBox, false],
+    ['补货后覆盖天数(天)', x.coverDays, false], ['调整类型', x.adjType, false],
+    ['大仓库存箱数(箱)', x.dcStockBox, false], ['大仓占比', x.dcRatio, true], ['补货后大仓占比', x.dcRatioAfter, true]
+  ];
+  s += '<div style="font-size:13px;font-weight:600;margin:10px 0 6px">本次补货明细</div>';
+  s += '<div style="overflow-x:auto;border:1px solid var(--border-card);border-radius:8px;margin-bottom:14px">';
+  s += '<table style="border-collapse:collapse;font-size:11.5px;white-space:nowrap;min-width:100%"><thead><tr style="background:var(--bg-page,#F8FAFC)">';
+  _uCols.forEach(function(c) { s += '<th style="padding:7px 10px;border-bottom:1px solid var(--border-card);text-align:left;color:var(--text-secondary);font-weight:600">' + c[0] + '</th>'; });
+  s += '</tr></thead><tbody><tr>';
+  _uCols.forEach(function(c) { const v = _uFmt(c[1], c[2]); s += '<td style="padding:7px 10px;border-bottom:1px solid var(--border-card)">' + v + '</td>'; });
+  s += '</tr></tbody></table></div>';
   s += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">观察窗逐日推演（不增量情形）</div>';
   s += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-card)"><th style="text-align:left;padding:7px 10px;border-bottom:1px solid var(--border-card)">日期</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">订单需求(支)</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">当日缺口(支)</th></tr></thead><tbody>';
   x.daily.forEach(function(dd) { s += '<tr><td style="padding:6px 10px;border-bottom:1px solid var(--border-card)">' + dd.day + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card)">' + dd.dem + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card);color:' + (dd.gap > 0 ? '#B91C1C' : '#15803D') + '">' + dd.gap + '</td></tr>'; });
@@ -26514,18 +26535,7 @@ function renderAdjustTrack() {
   }
   html += '</div>';
 
-
-  // 偏仓口径说明（图3 样式，折叠面板）
-  html += '<details style="margin-bottom:12px;border:1px solid var(--border-card);border-radius:10px;background:var(--bg-card)"><summary style="cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600">📐 为什么「补货后 ≤ 大仓 20%」的判定分母有问题？</summary><div style="padding:4px 16px 16px">';
-  html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">全网库存分布示意（共 4,000 箱）：大仓会被 RDC 逐步分掉，RDC 越补越多、大仓越来越少 → 分母持续变小、比值被动升高 → <b>规则恰好在大仓最吃紧的时候收得最紧</b>。</div>';
-  html += '<div style="display:flex;gap:6px;margin-bottom:10px">';
-  html += '<div style="flex:1.6;background:#DBEAFE;border:1px solid #BFDBFE;border-radius:8px;padding:10px;text-align:center"><div style="font-size:15px;font-weight:700">大仓 1,000</div><div style="font-size:11px;color:var(--text-secondary)">随补货递减 ↓</div></div>';
-  for (let i = 1; i <= 6; i++) html += '<div style="flex:1;background:' + (i === 1 ? '#FEE2E2;border-color:#FECACA' : '#F3F4F6') + ';border:1px solid var(--border-card);border-radius:8px;padding:10px;text-align:center"><div style="font-size:13px;font-weight:600">RDC' + i + ' 500</div><div style="font-size:11px;color:var(--text-secondary)">随补货递增 ↑</div></div>';
-  html += '</div>';
-  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
-  html += '<div style="border:1px solid #FECACA;background:#FEF2F2;border-radius:8px;padding:10px 12px;font-size:12px"><b style="color:#B91C1C">现行口径：RDC1 ÷ 大仓库存</b><br>500 ÷ 1,000 = <b>50%</b><br>判定严重偏仓 → 触发扣减</div>';
-  html += '<div style="border:1px solid #BBF7D0;background:#F0FDF4;border-radius:8px;padding:10px 12px;font-size:12px"><b style="color:#15803D">建议口径：RDC1 ÷ 全网总库存</b><br>500 ÷ 4,000 = <b>12.5%</b><br>六仓均分 → 完全正常</div>';
-  html += '</div></div></details>';
+  // v526: 按用户要求移除「为什么『补货后≤大仓20%』判定分母有问题」折叠说明面板（纯展示层，判定逻辑零改动）。
 
   // v525: 新增「加量避缺分析」卡片占位 —— 追加在所有原卡片之后，不动原卡片顺序/内容/默认状态。
   //   数据(replenish-detail.json)异步加载，渲染完成后由下方 _revLoad 回调填充。
