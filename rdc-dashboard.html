@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 524;
+const BUILD_VERSION = 525; // v525: 补货调整跟踪新增「加量避缺分析」卡片 —— 逐日库存推演反事实「不增量是否会缺」，168加量中14笔有效避缺/合计169.9箱；纯展示层新增，不动原卡片/筛选/明细/默认状态
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -26054,6 +26054,179 @@ function buildAdjComputed() {
   return window._adjCache;
 }
 
+// ============ v525: 向上调整（加量）避免缺货 —— 逐日库存推演 ============
+// 模块边界：本函数只服务「补货调整跟踪」页底部新增的「加量避缺分析」卡片，
+//   与下方 renderAdjustTrack 原「扣减→缺货」归因完全独立；不改任何原有卡片/筛选/明细/默认状态。
+// 数据源：replenish-detail.json（window._replDetail，含 openStock/inTransit/planBox/adjBox/boxSpec），
+//   订单明细 dataStore.orderDetail 的 orderQty（订单支数）。
+// 口径（用户 2026-11-21 选择「逐日库存推演」+ 与现有归因对称）：
+//   ① 只取加量记录 adjBox > planBox；到货日 = 补货日 + 运输周期；观察窗 = 到货日起 4 个自然日；
+//   ② 反事实「不增量」供给 = 期初(openStock) + 在途(inTransit) − 运输在途期(补货日~到货日前)订单消耗，
+//      + 应补量(planBox × 箱规) 于到货日一次性到仓（下限 clamp 0，欠货不跨日）；
+//   ③ 窗口内逐日扣订单需求(orderQty)，库存<0 记当日缺口并 clamp 0；缺口箱 = 累计缺口支 ÷ 箱规；
+//   ④ 避免缺货箱 = min(加量箱, 不增量缺口箱)；仅「窗口走完(4/4) 且 缺口>0」计为有效避缺。
+//   ⑤ 剔非工作日订单（与现有归因 isWorkday 同口径）；观察窗超订单末日则截断，covered<4 不计结论。
+function buildUpAdjAvoid() {
+  const rows = window._replDetail || [];
+  if (!rows.length || !dataStore.orderDetail || !dataStore.orderDetail.length) return null;
+  const sig = rows.length + '|' + dataStore.orderDetail.length;
+  if (window._upAdjCache && window._upAdjCache.sig === sig) return window._upAdjCache;
+  // 逐日(日期|仓|SKU)订单需求，单位支；maxOrd 用全部日期(含周末)覆盖边界
+  const demMap = Object.create(null);
+  let maxOrd = '';
+  for (let i = 0; i < dataStore.orderDetail.length; i++) {
+    const d = dataStore.orderDetail[i];
+    if (!d.dateStr) continue;
+    if (d.dateStr > maxOrd) maxOrd = d.dateStr;
+    const q = Number(d.orderQty || 0);
+    if (q <= 0) continue;
+    if (typeof isWorkday === 'function' && !isWorkday(d.dateStr)) continue;
+    const k = d.dateStr + '|' + d.warehouse + '|' + d.skuCode;
+    demMap[k] = (demMap[k] || 0) + q;
+  }
+  const dem = function(ds, full, sku) { return demMap[ds + '|' + full + '|' + sku] || 0; };
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const plan = Number(r.planBox || 0), adj = Number(r.adjBox || 0);
+    if (!(adj > plan + 1e-9)) continue;             // 只取加量
+    const date = String(r.date || '').slice(0, 10);
+    if (!date) continue;
+    const rdcRaw = String(r.rdc || '').trim();
+    const rdcShort = rdcRaw.replace(/RDC$/, '');   // replenish-detail 的 rdc 是完整名(华中RDC)，运输周期表用短名
+    const full = rdcShort !== rdcRaw ? rdcRaw : (ADJ_RDC_FULL[rdcRaw] || (rdcRaw + 'RDC'));
+    const lead = ADJ_TRANSPORT[rdcShort] != null ? ADJ_TRANSPORT[rdcShort] : ADJ_TRANSPORT[rdcRaw];
+    if (lead == null) continue;
+    const spec = Number(r.boxSpec || 0) || _adjBoxSpec(String(r.sku)) || 1;
+    const sku = String(r.sku || '').trim();
+    const arrival = _adjDateAdd(date, lead);
+    // 运输在途期消耗：补货日(含) ~ 到货日前(不含)
+    let transitUse = 0, d0 = date;
+    while (d0 < arrival) { transitUse += dem(d0, full, sku); d0 = _adjDateAdd(d0, 1); }
+    const openStock = Number(r.openStock || 0), inTransit = Number(r.inTransit || 0);
+    let stock = Math.max(0, openStock + inTransit - transitUse);
+    const incBox = (adj - plan);
+    let gapPcs = 0, covered = 0; const daily = [];
+    if (arrival <= maxOrd) {
+      for (let k = 0; k < ADJ_WINDOW_DAYS; k++) {
+        const day = _adjDateAdd(arrival, k);
+        if (day > maxOrd) break;
+        covered++;
+        if (k === 0) stock += plan * spec;          // 不增量：只到应补量
+        const demPcs = dem(day, full, sku);
+        stock -= demPcs;
+        let gap = 0;
+        if (stock < 0) { gap = -stock; gapPcs += gap; stock = 0; }
+        daily.push({ day: day, dem: Math.round(demPcs), gap: Math.round(gap) });
+      }
+    }
+    const status = arrival > maxOrd ? '未到货' : (covered < ADJ_WINDOW_DAYS ? '观察中' : '已完成');
+    const gapBox = gapPcs / spec;
+    const avoidBox = (status === '已完成' && gapBox > 0) ? Math.min(incBox, gapBox) : 0;
+    out.push(Object.assign({}, r, {
+      sku: sku, full: full, spec: spec, arrival: arrival, incBox: incBox,
+      transitUse: transitUse, status: status, covered: covered,
+      gapBox: Math.round(gapBox * 10) / 10,
+      avoidBox: Math.round(avoidBox * 10) / 10, daily: daily
+    }));
+  }
+  const valid = out.filter(function(x) { return x.avoidBox > 0; }).sort(function(a, b) { return b.avoidBox - a.avoidBox || b.gapBox - a.gapBox; });
+  const cache = { sig: sig, list: out, valid: valid, maxOrd: maxOrd };
+  window._upAdjCache = cache;
+  return cache;
+}
+
+// 把「加量避缺」卡片渲染进占位容器；数据(replenish-detail.json)异步加载完成后由 _revLoad 回调触发
+function renderUpAdjCard() {
+  const slot = document.getElementById('upadj-card-slot');
+  if (!slot) return;
+  const c = buildUpAdjAvoid();
+  if (!c) {
+    slot.innerHTML = '<div class="card" style="margin-bottom:12px;padding:12px 16px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…</div>';
+    return;
+  }
+  const valid = c.valid;
+  const addCnt = c.list.length;
+  const doneCnt = c.list.filter(function(x) { return x.status === '已完成'; }).length;
+  const obsCnt = c.list.filter(function(x) { return x.status === '观察中'; }).length;
+  const notArrCnt = c.list.filter(function(x) { return x.status === '未到货'; }).length;
+  const totalAvoid = valid.reduce(function(s, x) { return s + x.avoidBox; }, 0);
+  const totalInc = c.list.filter(function(x) { return x.status === '已完成'; }).reduce(function(s, x) { return s + x.incBox; }, 0);
+
+  let h = '<div class="card" style="margin-bottom:12px;padding:14px 16px">';
+  h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">📈 加量避缺分析 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 加量补货是否真的避免了缺货？反事实推演：如果不加量，观察窗内会不会缺</span></div>';
+  h += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9;margin-bottom:10px">';
+  h += '口径：对每笔<b>加量</b>补货，按「期初 + 在途 − 运输期已消耗 + 应补量到货」推演不增量情形下的库存；观察窗 = 到货日起 4 天，逐日扣订单需求。<b>避免缺货箱 = min(加量箱, 不增量缺口箱)</b>，仅窗口走完(4/4)且确实会缺才计。缺货数据覆盖至 <b>' + (c.maxOrd || '-') + '</b>。';
+  h += '</div>';
+  // KPI 条
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">';
+  const kpi = function(label, val, unit, bg, fg) {
+    h += '<div style="flex:1;min-width:120px;background:' + bg + ';border-radius:8px;padding:10px 12px"><div style="font-size:11px;color:var(--text-secondary)">' + label + '</div><div style="font-size:20px;font-weight:700;color:' + fg + '">' + val + '<span style="font-size:11px;font-weight:400;margin-left:3px">' + unit + '</span></div></div>';
+  };
+  kpi('加量记录', addCnt, '笔', '#EFF6FF', '#1D4ED8');
+  kpi('窗口走完', doneCnt, '笔', '#F0FDF4', '#15803D');
+  kpi('有效避缺', valid.length, '笔', '#FEF2F2', '#B91C1C');
+  kpi('避免缺货合计', Math.round(totalAvoid * 10) / 10, '箱', '#FEF3C7', '#92400E');
+  h += '</div>';
+  h += '<div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">观察中 ' + obsCnt + ' 笔、未到货 ' + notArrCnt + ' 笔（订单数据只到 ' + (c.maxOrd || '-') + '，窗口尚未走完，随日更自动点亮）；已走完 ' + doneCnt + ' 笔加量 ' + Math.round(totalInc * 10) / 10 + ' 箱。</div>';
+
+  if (!valid.length) {
+    h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前已走完的加量记录中，没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
+  } else {
+    const cols = [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['不增量缺口(箱)','gapBox'],['避免缺货(箱)','avoidBox'],['到货日','arrival'],['状态','status']];
+    h += '<div style="overflow:auto;max-height:360px;border:1px solid var(--border-card);border-radius:8px">';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="position:sticky;top:0;background:var(--bg-card);z-index:1">';
+    cols.forEach(function(col) { h += '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border-card);white-space:nowrap;font-weight:600;color:var(--text-secondary)">' + col[0] + '</th>'; });
+    h += '</tr></thead><tbody>';
+    valid.forEach(function(x) {
+      h += '<tr style="border-bottom:1px solid var(--border-card)">';
+      h += '<td style="padding:7px 10px;white-space:nowrap">' + x.date + '</td>';
+      h += '<td style="padding:7px 10px;white-space:nowrap">' + x.rdc + '</td>';
+      h += '<td style="padding:7px 10px;white-space:nowrap;font-family:monospace">' + x.sku + '</td>';
+      h += '<td style="padding:7px 10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (x.skuName || '') + '">' + (x.skuName || '-') + '</td>';
+      h += '<td style="padding:7px 10px;text-align:right">' + (Math.round(x.incBox * 10) / 10) + '</td>';
+      h += '<td style="padding:7px 10px;text-align:right;color:#B91C1C">' + x.gapBox + '</td>';
+      h += '<td style="padding:7px 10px;text-align:right;color:#92400E;font-weight:600">' + x.avoidBox + '</td>';
+      h += '<td style="padding:7px 10px;white-space:nowrap">' + x.arrival + '</td>';
+      h += '<td style="padding:7px 10px"><span style="background:#DCFCE7;color:#166534;padding:2px 7px;border-radius:10px;font-size:11px">' + x.status + '</span></td>';
+      h += '</tr>';
+    });
+    h += '</tbody></table></div>';
+    h += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">「不增量缺口」可能远大于加量 —— 说明加量只缓解、未完全填平缺口；「避免缺货」按加量上限取值。点行可看逐日推演。</div>';
+  }
+  h += '</div>';
+  slot.innerHTML = h;
+  // 绑定行点击 → 逐日推演弹框
+  const tb = slot.querySelector('tbody');
+  if (tb) tb.onclick = function(ev) {
+    const tr = ev.target.closest('tr'); if (!tr) return;
+    const idx = Array.prototype.indexOf.call(tb.rows, tr);
+    const x = valid[idx]; if (x) window._showUpAdjDetail(x);
+  };
+}
+
+window._showUpAdjDetail = function(x) {
+  const old = document.getElementById('upadj-modal'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'upadj-modal';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10001;display:flex;align-items:center;justify-content:center';
+  ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+  let s = '<div style="background:var(--bg-card,#fff);border-radius:12px;max-width:620px;width:100%;padding:20px 22px;max-height:88vh;overflow:auto">';
+  s += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px"><div><div style="font-size:15px;font-weight:700">' + x.date + ' · ' + x.rdc + ' · ' + x.sku + '</div><div style="font-size:12px;color:var(--text-secondary);margin-top:3px">' + (x.skuName || '') + ' · 箱规 ' + x.spec + '</div></div><button onclick="document.getElementById(\'upadj-modal\').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary)">✕</button></div>';
+  s += '<div style="display:flex;gap:10px;margin-bottom:14px">';
+  s += '<div style="flex:1;background:#EFF6FF;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">加量(箱)</div><div style="font-size:18px;font-weight:700;color:#1D4ED8">' + (Math.round(x.incBox * 10) / 10) + '</div></div>';
+  s += '<div style="flex:1;background:#FEF2F2;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">不增量缺口(箱)</div><div style="font-size:18px;font-weight:700;color:#B91C1C">' + x.gapBox + '</div></div>';
+  s += '<div style="flex:1;background:#FEF3C7;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">避免缺货(箱)</div><div style="font-size:18px;font-weight:700;color:#92400E">' + x.avoidBox + '</div></div>';
+  s += '</div>';
+  s += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">运输期消耗 ' + Math.round(x.transitUse) + ' 支 · 到货日 ' + x.arrival + ' · 窗口 ' + x.covered + '/4 天</div>';
+  s += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">观察窗逐日推演（不增量情形）</div>';
+  s += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-card)"><th style="text-align:left;padding:7px 10px;border-bottom:1px solid var(--border-card)">日期</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">订单需求(支)</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">当日缺口(支)</th></tr></thead><tbody>';
+  x.daily.forEach(function(dd) { s += '<tr><td style="padding:6px 10px;border-bottom:1px solid var(--border-card)">' + dd.day + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card)">' + dd.dem + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card);color:' + (dd.gap > 0 ? '#B91C1C' : '#15803D') + '">' + dd.gap + '</td></tr>'; });
+  s += '</tbody></table></div>';
+  ov.innerHTML = s;
+  document.body.appendChild(ov);
+};
+
 function _adjFiltered(computed) {
   const st = window._adjState;
   return computed.list.filter(function(r) {
@@ -26354,6 +26527,10 @@ function renderAdjustTrack() {
   html += '<div style="border:1px solid #BBF7D0;background:#F0FDF4;border-radius:8px;padding:10px 12px;font-size:12px"><b style="color:#15803D">建议口径：RDC1 ÷ 全网总库存</b><br>500 ÷ 4,000 = <b>12.5%</b><br>六仓均分 → 完全正常</div>';
   html += '</div></div></details>';
 
+  // v525: 新增「加量避缺分析」卡片占位 —— 追加在所有原卡片之后，不动原卡片顺序/内容/默认状态。
+  //   数据(replenish-detail.json)异步加载，渲染完成后由下方 _revLoad 回调填充。
+  html += '<div id="upadj-card-slot"></div>';
+
   // v442 性能：图表容器跨渲染复用。
   //   本页 4 张图的数据全部只依赖 buildAdjComputed 的结果（不随筛选/下钻变化），但每次 render 都要
   //   page.innerHTML 全量替换 → 容器被销毁 → echarts 必须 dispose+init，4 张实测固定花掉约 650ms，
@@ -26533,6 +26710,14 @@ function renderAdjustTrack() {
       el.style.boxShadow = '0 0 0 3px #FCA5A5';
       setTimeout(function() { el.style.boxShadow = ''; }, 1600);
     }, 80);
+  }
+
+  // v525: 加量避缺卡片 —— replenish-detail.json 就绪后立即渲染，否则注册 _revLoad 回调等待
+  //   _replDetail 就绪后 console 里若本页仍在，则填充占位；不在则下次进页 renderAdjustTrack 会再触发。
+  if (typeof _revLoad === 'function') {
+    _revLoad(function() {
+      if (document.getElementById('upadj-card-slot')) renderUpAdjCard();
+    });
   }
 }
 
