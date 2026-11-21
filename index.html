@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 529; // v529: 长窗口改为实时统计(有缺就计入,不等周期关闭),无后续补货延伸到数据末日; 长窗为短窗真超集,新增长窗终点/状态列; 短窗主口径不变
+const BUILD_VERSION = 530; // v530: 长/短窗口改为radio单选互斥切换(不可复选),选中后口径/KPI/说明/明细整体切换对应统计; 默认短窗主口径不变; 移除长窗details折叠面板
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -26201,20 +26201,34 @@ function renderUpAdjTab(page, tabBar) {
     page.innerHTML = tabBar + '<div style="padding:14px 16px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…（' + monthSel + '）</div>';
     return;
   }
-  const valid = c.valid;
+  // v530: 长短窗口单选切换（radio 互斥，不可复选）；默认短窗口 = 主口径，保持原有展示不变
+  if (typeof window._adjWin === 'undefined') window._adjWin = 'short';
+  const isLong = window._adjWin === 'long';
+  const valid = isLong ? (c.longValid || []) : c.valid;
   const addCnt = c.list.length;
-  const doneCnt = c.list.filter(function(x) { return x.status === '已完成'; }).length;
+  const doneCnt = isLong ? c.list.filter(function(x) { return x.hasNext && x.longDone; }).length : c.list.filter(function(x) { return x.status === '已完成'; }).length;
   const obsCnt = c.list.filter(function(x) { return x.status === '观察中'; }).length;
   const notArrCnt = c.list.filter(function(x) { return x.status === '未到货'; }).length;
-  const totalAvoid = valid.reduce(function(s, x) { return s + x.avoidBox; }, 0);
+  const totalAvoid = valid.reduce(function(s, x) { return s + (isLong ? x.longAvoidBox : x.avoidBox); }, 0);
   const totalInc = c.list.filter(function(x) { return x.status === '已完成'; }).reduce(function(s, x) { return s + x.incBox; }, 0);
+  // 单选控件（radio，互斥）：选中后重渲本页，口径/KPI/说明/明细整体切换
+  const winSel = '<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px">' +
+    '<span style="color:var(--text-secondary);font-weight:600">窗口期：</span>' +
+    '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;' + (!isLong ? 'color:#1D4ED8;font-weight:600' : '') + '"><input type="radio" name="adjWin" value="short"' + (!isLong ? ' checked' : '') + ' onchange="window._adjWin=\'short\';renderAdjustTrack()">短窗口期（到货日起 4 天 · 主口径）</label>' +
+    '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;' + (isLong ? 'color:#B45309;font-weight:600' : '') + '"><input type="radio" name="adjWin" value="long"' + (isLong ? ' checked' : '') + ' onchange="window._adjWin=\'long\';renderAdjustTrack()">长窗口期（到下一批到货 / 数据末日 · 实时统计）</label>' +
+    '</div>';
 
   let h = tabBar;
   h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' + monthSel + '<span style="font-size:12px;color:var(--text-secondary)">按<b>补货日</b>筛选；观察窗内订单数据始终全量（不受筛选限制）</span></div>';
   h += '<div class="card" style="margin-bottom:12px;padding:14px 16px">';
-  h += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">📈 加量避缺分析 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 加量补货是否真的避免了缺货？反事实推演：如果不加量，观察窗内会不会缺</span></div>';
+  h += '<div style="font-size:13px;font-weight:600;margin-bottom:8px">📈 加量避缺分析 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 加量补货是否真的避免了缺货？反事实推演：如果不加量，观察窗内会不会缺</span></div>';
+  h += winSel;
   h += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9;margin-bottom:10px">';
-  h += '口径：对每笔<b>加量</b>补货，按「期初 + 在途 − 运输期已消耗 + 应补量到货」推演不增量情形下的库存；观察窗 = 到货日起 4 天，逐日扣订单需求。<b>避免缺货箱 = min(加量箱, 不增量缺口箱)</b>，仅窗口走完(4/4)且确实会缺才计。缺货数据覆盖至 <b>' + (c.maxOrd || '-') + '</b>。';
+  if (isLong) {
+    h += '口径：观察期从本次到货日延长到<b>同 SKU×RDC 下一笔补货的到货日</b>（下单日 + 运输周期）；<b>无后续补货则延伸到数据末日 ' + (c.maxOrd || '-') + '</b>，是固定 4 天的真超集。<b>实时统计：只要有缺口就计入，不等观察周期关闭</b>。<b>避免缺货箱 = min(加量箱, 长窗缺口箱)</b>；橙色行为固定 4 天漏判、延长后才抓到。';
+  } else {
+    h += '口径：对每笔<b>加量</b>补货，按「期初 + 在途 − 运输期已消耗 + 应补量到货」推演不增量情形下的库存；观察窗 = 到货日起 4 天，逐日扣订单需求。<b>避免缺货箱 = min(加量箱, 不增量缺口箱)</b>，仅窗口走完(4/4)且确实会缺才计。缺货数据覆盖至 <b>' + (c.maxOrd || '-') + '</b>。';
+  }
   h += '</div>';
   // KPI 条
   h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">';
@@ -26222,72 +26236,56 @@ function renderUpAdjTab(page, tabBar) {
     h += '<div style="flex:1;min-width:120px;background:' + bg + ';border-radius:8px;padding:10px 12px"><div style="font-size:11px;color:var(--text-secondary)">' + label + '</div><div style="font-size:20px;font-weight:700;color:' + fg + '">' + val + '<span style="font-size:11px;font-weight:400;margin-left:3px">' + unit + '</span></div></div>';
   };
   kpi('加量记录', addCnt, '笔', '#EFF6FF', '#1D4ED8');
-  kpi('窗口走完', doneCnt, '笔', '#F0FDF4', '#15803D');
-  kpi('有效避缺', valid.length, '笔', '#FEF2F2', '#B91C1C');
-  kpi('避免缺货合计', Math.round(totalAvoid * 10) / 10, '箱', '#FEF3C7', '#92400E');
+  kpi(isLong ? '已闭环' : '窗口走完', doneCnt, '笔', '#F0FDF4', '#15803D');
+  kpi(isLong ? '实时避缺' : '有效避缺', valid.length, '笔', '#FEF2F2', '#B91C1C');
+  kpi(isLong ? '长窗避缺合计' : '避免缺货合计', Math.round(totalAvoid * 10) / 10, '箱', '#FEF3C7', '#92400E');
   h += '</div>';
-  h += '<div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">观察中 ' + obsCnt + ' 笔、未到货 ' + notArrCnt + ' 笔（订单数据只到 ' + (c.maxOrd || '-') + '，窗口尚未走完，随日更自动点亮）；已走完 ' + doneCnt + ' 笔加量 ' + Math.round(totalInc * 10) / 10 + ' 箱。</div>';
-
-  // v529: 长窗口补充分析 —— 改为实时统计（有缺就计入，不等周期关闭）；无后续补货记录观察期延伸到数据末日
-  const longValid = c.longValid || [];
-  const hasNextCnt = c.list.filter(function(x) { return x.hasNext; }).length;
-  const longDoneCnt = c.list.filter(function(x) { return x.longDone; }).length;
-  // 「4天漏判」= 固定窗口没抓到、长窗口抓到的案例
-  const newly = longValid.filter(function(x) { return !(x.avoidBox > 0); });
-  h += '<details style="border:1px solid var(--border-card);border-radius:10px;background:var(--bg-card);margin-bottom:12px"><summary style="cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600">🔭 长窗口补充分析：观察至下一批补货到货日（或数据末日）<span style="font-weight:400;color:var(--text-secondary);font-size:11px">—— 实时统计，补充参考，主口径仍是上方固定 4 天</span></summary><div style="padding:4px 16px 14px">';
-  h += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9;margin-bottom:8px">口径：观察期从本次到货日延长到<b>同 SKU×RDC 下一笔补货的到货日</b>（下单日 + 运输周期）；<b>无后续补货则延伸到数据末日 ' + (c.maxOrd || '-') + '</b>，故长窗口是固定 4 天的真超集。<b>实时统计：只要有缺口就计入，不等观察周期关闭</b>（未闭环记录随日更数字还会涨）。<b>绿色为主口径已抓到，橙色为固定 4 天漏判、延长后才抓到</b>。</div>';
-  h += '<div style="font-size:12px;margin-bottom:8px">有后续补货 <b>' + hasNextCnt + '</b> 笔（其中已闭环 ' + longDoneCnt + ' 笔）；长窗口有效避缺 <b style="color:#92400E">' + longValid.length + '</b> 笔，合计 <b style="color:#92400E">' + Math.round(longValid.reduce(function(s, x) { return s + x.longAvoidBox; }, 0) * 10) / 10 + '</b> 箱；其中<b style="color:#B45309">固定 4 天漏判 ' + newly.length + ' 笔</b>。</div>';
-  if (!longValid.length) {
-    h += '<div style="font-size:12px;color:var(--text-secondary);background:var(--bg-page,#F8FAFC);border-radius:8px;padding:10px 12px">当前筛选下，延长观察期没有新增可归因的避缺案例。</div>';
+  if (isLong) {
+    const hasNextCnt = c.list.filter(function(x) { return x.hasNext; }).length;
+    const newlyCnt = valid.filter(function(x) { return !(x.avoidBox > 0); }).length;
+    h += '<div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">有后续补货 <b>' + hasNextCnt + '</b> 笔（已闭环 ' + doneCnt + ' 笔）；实时避缺 <b>' + valid.length + '</b> 笔，其中固定 4 天漏判 <b>' + newlyCnt + '</b> 笔。无后续补货记录观察期已延伸到数据末日，未闭环记录随日更数字还会涨。</div>';
   } else {
-    h += '<div style="overflow:auto;max-height:300px;border:1px solid var(--border-card);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr style="position:sticky;top:0;background:var(--bg-card);z-index:1">';
-    ['补货日','RDC','SKU','商品','加量(箱)','长窗缺口(箱)','长窗避缺(箱)','长窗终点','窗口天数','长窗状态','固定4天','说明'].forEach(function(t) { h += '<th style="text-align:left;padding:7px 9px;border-bottom:1px solid var(--border-card);white-space:nowrap;color:var(--text-secondary)">' + t + '</th>'; });
-    h += '</tr></thead><tbody>';
-    longValid.forEach(function(x) {
-      const isNew = !(x.avoidBox > 0);
-      h += '<tr style="border-bottom:1px solid var(--border-card);background:' + (isNew ? '#FFFBEB' : 'transparent') + '">';
-      h += '<td style="padding:6px 9px;white-space:nowrap">' + x.date + '</td>';
-      h += '<td style="padding:6px 9px;white-space:nowrap">' + x.rdc + '</td>';
-      h += '<td style="padding:6px 9px;font-family:monospace">' + x.sku + '</td>';
-      h += '<td style="padding:6px 9px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (x.skuName || '') + '">' + (x.skuName || '-') + '</td>';
-      h += '<td style="padding:6px 9px;text-align:right">' + (Math.round(x.incBox * 10) / 10) + '</td>';
-      h += '<td style="padding:6px 9px;text-align:right;color:#B91C1C">' + x.longGapBox + '</td>';
-      h += '<td style="padding:6px 9px;text-align:right;color:#92400E;font-weight:600">' + x.longAvoidBox + '</td>';
-      h += '<td style="padding:6px 9px;white-space:nowrap">' + (x.hasNext ? (x.longEnd || '-') : ('数据末日 ' + (x.longEnd || '-'))) + '</td>';
-      h += '<td style="padding:6px 9px;text-align:right">' + x.longCovered + ' 天</td>';
-      const _stBg = x.longStatus === '已闭环' ? 'background:#DCFCE7;color:#166534' : (x.longStatus === '实时·未闭环' ? 'background:#FEF3C7;color:#92400E' : 'background:#EFF6FF;color:#1D4ED8');
-      h += '<td style="padding:6px 9px;white-space:nowrap"><span style="' + _stBg + ';padding:2px 7px;border-radius:10px;font-size:10.5px">' + x.longStatus + '</span></td>';
-      h += '<td style="padding:6px 9px;text-align:right">' + (x.avoidBox > 0 ? x.avoidBox : '0') + '</td>';
-      h += '<td style="padding:6px 9px;white-space:nowrap;color:' + (isNew ? '#B45309' : '#15803D') + '">' + (isNew ? '⚠ 4天漏判' : '主口径已抓到') + '</td>';
-      h += '</tr>';
-    });
-    h += '</tbody></table></div>';
+    h += '<div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:10px">观察中 ' + obsCnt + ' 笔、未到货 ' + notArrCnt + ' 笔（订单数据只到 ' + (c.maxOrd || '-') + '，窗口尚未走完，随日更自动点亮）；已走完 ' + doneCnt + ' 笔加量 ' + Math.round(totalInc * 10) / 10 + ' 箱。</div>';
   }
-  h += '</div></details>';
 
+  // v530: 原长窗 details 折叠面板已移除，改为上方 radio 单选切换；明细表格按选中窗口渲染对应列
   if (!valid.length) {
-    h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前筛选下已走完的加量记录中，没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
+    h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前筛选下该窗口期没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
   } else {
-    const cols = [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['不增量缺口(箱)','gapBox'],['避免缺货(箱)','avoidBox'],['到货日','arrival'],['状态','status']];
+    const cols = isLong
+      ? [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['长窗缺口(箱)','longGapBox'],['长窗避缺(箱)','longAvoidBox'],['长窗终点','longEnd'],['窗口天数','longCovered'],['长窗状态','longStatus'],['固定4天','avoidBox'],['说明','isNew']]
+      : [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['不增量缺口(箱)','gapBox'],['避免缺货(箱)','avoidBox'],['到货日','arrival'],['状态','status']];
     h += '<div style="overflow:auto;max-height:360px;border:1px solid var(--border-card);border-radius:8px">';
     h += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="position:sticky;top:0;background:var(--bg-card);z-index:1">';
     cols.forEach(function(col) { h += '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border-card);white-space:nowrap;font-weight:600;color:var(--text-secondary)">' + col[0] + '</th>'; });
     h += '</tr></thead><tbody>';
     valid.forEach(function(x) {
-      h += '<tr style="border-bottom:1px solid var(--border-card)">';
+      const isNew = !(x.avoidBox > 0);
+      h += '<tr style="border-bottom:1px solid var(--border-card)' + (isLong && isNew ? ';background:#FFFBEB' : '') + '">';
       h += '<td style="padding:7px 10px;white-space:nowrap">' + x.date + '</td>';
       h += '<td style="padding:7px 10px;white-space:nowrap">' + x.rdc + '</td>';
       h += '<td style="padding:7px 10px;white-space:nowrap;font-family:monospace">' + x.sku + '</td>';
       h += '<td style="padding:7px 10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (x.skuName || '') + '">' + (x.skuName || '-') + '</td>';
       h += '<td style="padding:7px 10px;text-align:right">' + (Math.round(x.incBox * 10) / 10) + '</td>';
-      h += '<td style="padding:7px 10px;text-align:right;color:#B91C1C">' + x.gapBox + '</td>';
-      h += '<td style="padding:7px 10px;text-align:right;color:#92400E;font-weight:600">' + x.avoidBox + '</td>';
-      h += '<td style="padding:7px 10px;white-space:nowrap">' + x.arrival + '</td>';
-      h += '<td style="padding:7px 10px"><span style="background:#DCFCE7;color:#166534;padding:2px 7px;border-radius:10px;font-size:11px">' + x.status + '</span></td>';
+      if (isLong) {
+        h += '<td style="padding:7px 10px;text-align:right;color:#B91C1C">' + x.longGapBox + '</td>';
+        h += '<td style="padding:7px 10px;text-align:right;color:#92400E;font-weight:600">' + x.longAvoidBox + '</td>';
+        h += '<td style="padding:7px 10px;white-space:nowrap">' + (x.hasNext ? (x.longEnd || '-') : ('数据末日 ' + (x.longEnd || '-'))) + '</td>';
+        h += '<td style="padding:7px 10px;text-align:right">' + x.longCovered + ' 天</td>';
+        const _stBg = x.longStatus === '已闭环' ? 'background:#DCFCE7;color:#166534' : (x.longStatus === '实时·未闭环' ? 'background:#FEF3C7;color:#92400E' : 'background:#EFF6FF;color:#1D4ED8');
+        h += '<td style="padding:7px 10px;white-space:nowrap"><span style="' + _stBg + ';padding:2px 7px;border-radius:10px;font-size:11px">' + x.longStatus + '</span></td>';
+        h += '<td style="padding:7px 10px;text-align:right">' + (x.avoidBox > 0 ? x.avoidBox : '0') + '</td>';
+        h += '<td style="padding:7px 10px;white-space:nowrap;color:' + (isNew ? '#B45309' : '#15803D') + '">' + (isNew ? '⚠ 4天漏判' : '主口径已抓到') + '</td>';
+      } else {
+        h += '<td style="padding:7px 10px;text-align:right;color:#B91C1C">' + x.gapBox + '</td>';
+        h += '<td style="padding:7px 10px;text-align:right;color:#92400E;font-weight:600">' + x.avoidBox + '</td>';
+        h += '<td style="padding:7px 10px;white-space:nowrap">' + x.arrival + '</td>';
+        h += '<td style="padding:7px 10px"><span style="background:#DCFCE7;color:#166534;padding:2px 7px;border-radius:10px;font-size:11px">' + x.status + '</span></td>';
+      }
       h += '</tr>';
     });
     h += '</tbody></table></div>';
-    h += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">「不增量缺口」可能远大于加量 —— 说明加量只缓解、未完全填平缺口；「避免缺货」按加量上限取值。点行可看逐日推演。</div>';
+    if (!isLong) h += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">「不增量缺口」可能远大于加量 —— 说明加量只缓解、未完全填平缺口；「避免缺货」按加量上限取值。点行可看逐日推演。</div>';
   }
   h += '</div>';
   page.innerHTML = h;
