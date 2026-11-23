@@ -1416,7 +1416,8 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 533; // v533: 补货决策复盘逐笔归因「遇下一笔补货截断」——观察窗末日=min(到货日+3, 下笔补货日−1),下笔补货日的缺口归下笔,消除11-12缺货误判11-05加量仍缺; 仅改复盘模块(_revBatchAttrib/_revBatchList),补货调整跟踪口径不动
+const BUILD_VERSION = 534; // v534: 拉回数据分析新增「月份」「收货仓」筛选，SKU明细增加「收货库位」列；原有统计口径/海南花露水/4月华东仓顺序与下钻结构不动
+// v533: 补货决策复盘逐笔归因「遇下一笔补货截断」——观察窗末日=min(到货日+3, 下笔补货日−1),下笔补货日的缺口归下笔,消除11-12缺货误判11-05加量仍缺; 仅改复盘模块(_revBatchAttrib/_revBatchList),补货调整跟踪口径不动
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -16239,6 +16240,17 @@ function setPullViewMode(val) {
   var p = document.getElementById('page-transship');
   if (p) renderPullbackAnalysis(p);
 }
+// v534: 拉回分析新增「月份」「收货仓」筛选（只新增，不改原有筛选项顺序/默认状态）
+function setPullMonthFilter(val) {
+  window._pullMonth = String(val || 'all').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
+function setPullRecFilter(val) {
+  window._pullRecFilter = String(val || 'all').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
 // v122: 「按收货仓」两级下钻 —— 收货仓 → 实际收货库位 → 该库位 SKU 汇总明细。
 // window._pullRecDrill : 当前展开的收货仓名（'' = 全部收起）
 // window._pullLocDrill : 当前展开的库位号；null/undefined = 尚未设置(渲染时自动展开数量TOP1库位)，'' = 显式全部收起
@@ -16320,6 +16332,34 @@ function renderPullbackAnalysis(page) {
   var ldRaw = window._pullLocDrill;                             // null/undefined = 未设置
   var ldOpen = (ldRaw == null) ? null : String(ldRaw).trim();   // null = 自动展开TOP1库位
 
+  // v534: 月份 / 收货仓筛选状态与可选项（只新增筛选，原有 hf/mf/vm 及下钻状态不动）
+  if (typeof window._pullMonth === 'undefined') window._pullMonth = 'all';
+  if (typeof window._pullRecFilter === 'undefined') window._pullRecFilter = 'all';
+  var pm = String(window._pullMonth || 'all').trim();
+  var pr = String(window._pullRecFilter || 'all').trim();
+  var monthOptions = [], recOptions = [];
+  (function() {
+    var mSet = {}, rSet = {};
+    invRaw.forEach(function(r) {
+      if (!r || !r.date || !r.ym) return;
+      mSet[r.ym] = 1;
+    });
+    monthOptions = Object.keys(mSet).sort();
+    if (pm !== 'all' && monthOptions.indexOf(pm) < 0) { pm = 'all'; window._pullMonth = 'all'; }
+    invRaw.forEach(function(r) {
+      if (!r || !r.date || !r.ym) return;
+      var dt = r.date;
+      if (hf === 'yes' && !isHN(r.sku, r.name)) return;
+      if (hf === 'no' && isHN(r.sku, r.name)) return;
+      if (mf === 'exclude' && r.rdc === '华东RDC' && dt.getUTCMonth() === 3 && dt.getUTCFullYear() === 2026) return;
+      if (pm !== 'all' && r.ym !== pm) return;
+      if ((r.boxQty || 0) <= 0) return;
+      rSet[String(r.rec || '未知')] = 1;
+    });
+    recOptions = Object.keys(rSet).sort();
+    if (pr !== 'all' && recOptions.indexOf(pr) < 0) { pr = 'all'; window._pullRecFilter = 'all'; }
+  })();
+
   // 4. 金额已在 parse 阶段按实际箱规/成本价算好，这里直接用结构化字段
   // 聚合项 key -> {box, amt}
   var agg = { month: {}, monthRdc: {}, monthBrand: {}, monthRdcBrand: {}, monthRdcRec: {}, brand: {}, rdc: {}, rec: {} };
@@ -16343,6 +16383,9 @@ function renderPullbackAnalysis(page) {
     if (hf === 'no' && isHN(sk, nm)) continue;
     // 筛选：4月华东仓返回数据
     if (mf === 'exclude' && rd === '华东RDC' && dt.getUTCMonth() === 3 && dt.getUTCFullYear() === 2026) continue;
+    // v534: 筛选：月份 / 收货仓（只过滤聚合与下钻，不改变原有下钻结构）
+    if (pm !== 'all' && ym !== pm) continue;
+    if (pr !== 'all' && rw !== pr) continue;
 
     var bx = r.boxQty || 0; if (bx <= 0) continue;
     var am = r.amount || 0;
@@ -16374,6 +16417,15 @@ function renderPullbackAnalysis(page) {
     }
   }
 
+  // v534: 若筛选后当前展开的收货仓已不在结果中，自动收起下钻，避免展示空壳（原有展开状态本身不变）
+  if (rdOpen && !agg.rec[rdOpen]) {
+    rdOpen = '';
+    window._pullRecDrill = '';
+    ldOpen = null;
+    window._pullLocDrill = null;
+    for (var _dk in drill) delete drill[_dk];
+  }
+
   // 6. 排序/汇总（按当前 view 取对应维度）
   function valOf(o) { return vm === 'amt' ? o.amt : o.box; }
   var allMths = Object.keys(agg.month).sort();
@@ -16402,6 +16454,7 @@ function renderPullbackAnalysis(page) {
     return '<button class="btn-export" style="font-size:13px;padding:7px 18px;' + (active ? 'background:var(--color-blue);color:#fff;' : '') + '" onclick="window._transTab=\'' + t + '\';renderTransship()">' + icon + ' ' + label + '</button>';
   };
   var opt = function(cur, val) { return cur === val ? ' selected' : ''; };
+  var escHtml = function(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
   page.innerHTML =
     '<div style="display:flex;gap:8px;margin-bottom:16px">' + tabBtn('transship', '转储数据', '📦') + tabBtn('pullback', '拉回分析', '🔙') + '</div>' +
     '<div class="card" style="margin-bottom:16px">' +
@@ -16409,7 +16462,18 @@ function renderPullbackAnalysis(page) {
         '<span style="font-size:var(--font-size-xl);font-weight:600">🔙 拉回数据分析</span>' +
         '<span style="font-size:12px;color:var(--text-secondary)">' + (vm === 'amt' ? '金额（万元）' : '箱（向上取整）') + '</span>' +
         '<span style="flex:1"></span>' +
-        '<label style="font-size:12px;color:var(--text-secondary)">统计口径：</label>' +
+        // v534: 新增月份、收货仓筛选（放在红框位置，原统计口径/海南花露水/4月华东仓顺序不变）
+        '<label style="font-size:12px;color:var(--text-secondary)">月份：</label>' +
+        '<select onchange="setPullMonthFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="all"' + opt(pm, 'all') + '>全部月份</option>' +
+          monthOptions.map(function(m) { return '<option value="' + escHtml(m) + '"' + opt(pm, m) + '>' + escHtml(m) + '</option>'; }).join('') +
+        '</select>' +
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">收货仓：</label>' +
+        '<select onchange="setPullRecFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="all"' + opt(pr, 'all') + '>全部收货仓</option>' +
+          recOptions.map(function(rw) { return '<option value="' + escHtml(rw) + '"' + opt(pr, rw) + '>' + escHtml(rw) + '</option>'; }).join('') +
+        '</select>' +
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">统计口径：</label>' +
         '<select onchange="setPullViewMode(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
           '<option value="box"' + opt(vm, 'box') + '>箱数</option>' +
           '<option value="amt"' + opt(vm, 'amt') + '>金额</option>' +
@@ -16498,12 +16562,13 @@ function renderPullbackAnalysis(page) {
           var skuSorted = cur.skus.slice().sort(function(a, b) { return b.box - a.box; });
           h += '<div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border-card)">' +
             '<div style="font-size:12px;font-weight:600;margin-bottom:2px">📦 库位 ' + cur.loc + ' — SKU 汇总明细（' + skuSorted.length + ' 个 SKU，按接收箱数从大到小）</div>' +
-            '<div style="font-size:11px;color:var(--text-secondary);padding:0 0 6px">数量 = 该库位下该 SKU 的汇总接收箱数（同一 SKU 多次收货已合并）</div>' +
-            '<div class="table-wrap"><table class="data-table"><thead><tr><th>SKU代码</th><th>SKU名称</th><th>接收箱数（汇总）</th></tr></thead><tbody>';
+            '<div style="font-size:11px;color:var(--text-secondary);padding:0 0 6px">数量 = 该库位下该 SKU 的汇总接收箱数（同一 SKU 多次收货已合并）；收货库位 = 拉回数据「收货库位」列（B列）</div>' +
+            '<div class="table-wrap"><table class="data-table"><thead><tr><th>SKU代码</th><th>SKU名称</th><th>接收箱数（汇总）</th><th>收货库位</th></tr></thead><tbody>';
           skuSorted.forEach(function(s) {
             h += '<tr><td style="text-align:left;font-family:monospace">' + s.sku + '</td>' +
               '<td style="text-align:left">' + (s.name || '—') + '</td>' +
-              '<td style="text-align:left">' + Math.round(s.box).toLocaleString() + '</td></tr>';
+              '<td style="text-align:left">' + Math.round(s.box).toLocaleString() + '</td>' +
+              '<td style="text-align:left;font-family:monospace">' + escHtml(cur.loc) + '</td></tr>';
           });
           h += '</tbody></table></div></div>';
         }
