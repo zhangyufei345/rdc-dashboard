@@ -1416,7 +1416,8 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 539; // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
+const BUILD_VERSION = 540; // v540: 拉回分析新增「非卖品」开关(默认不包含)与「品牌」筛选；原有控件/口径/下钻不变
+// v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
 // v536: 拉回数据 10A* 库位统一归「大仓共享库」（用户裁定，优先级高于C列与基础数据误登记）；原筛选/下钻结构不动
@@ -16240,6 +16241,17 @@ function setPullMarFilter(val) {
   var p = document.getElementById('page-transship');
   if (p) renderPullbackAnalysis(p);
 }
+// v540: 非卖品开关（默认不包含）+ 品牌筛选
+function setPullNonSaleFilter(val) {
+  window._pullNonSale = String(val || 'exclude').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
+function setPullBrandFilter(val) {
+  window._pullBrandFilter = String(val || 'all').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
 function setPullViewMode(val) {
   window._pullView = String(val || 'box').trim();
   var p = document.getElementById('page-transship');
@@ -16388,10 +16400,14 @@ function renderPullbackAnalysis(page) {
   if (typeof window._pullMonth === 'undefined') window._pullMonth = 'all';
   if (typeof window._pullRecFilter === 'undefined') window._pullRecFilter = 'all';
   if (typeof window._pullRdcFilter === 'undefined') window._pullRdcFilter = 'all';
+  if (typeof window._pullNonSale === 'undefined') window._pullNonSale = 'exclude'; // v540: 默认不包含非卖品
+  if (typeof window._pullBrandFilter === 'undefined') window._pullBrandFilter = 'all';
   var pm = String(window._pullMonth || 'all').trim();
   var pr = String(window._pullRecFilter || 'all').trim();
   var pf = String(window._pullRdcFilter || 'all').trim();
-  var monthOptions = [], recOptions = [], rdcOptions = [];
+  var ns = String(window._pullNonSale || 'exclude').trim();   // include / exclude
+  var bf = String(window._pullBrandFilter || 'all').trim();
+  var monthOptions = [], recOptions = [], rdcOptions = [], brandOptions = [];
   (function() {
     var mSet = {}, rSet = {};
     invRaw.forEach(function(r) {
@@ -16408,6 +16424,7 @@ function renderPullbackAnalysis(page) {
       if (mf === 'exclude' && r.rdc === '华东RDC' && dt.getUTCMonth() === 3 && dt.getUTCFullYear() === 2026) return;
       if (pm !== 'all' && r.ym !== pm) return;
       if ((r.boxQty || 0) <= 0) return;
+      if (ns === 'exclude' && pullbackEffectiveBrand(r, inv) === '非卖品') return;
       rSet[pullbackEffectiveRec(r, inv)] = 1;
     });
     recOptions = Object.keys(rSet).sort();
@@ -16423,10 +16440,30 @@ function renderPullbackAnalysis(page) {
       if (pm !== 'all' && r.ym !== pm) return;
       if ((r.boxQty || 0) <= 0) return;
       if (pr !== 'all' && pullbackEffectiveRec(r, inv) !== pr) return;
+      if (ns === 'exclude' && pullbackEffectiveBrand(r, inv) === '非卖品') return;
+      if (bf !== 'all' && pullbackEffectiveBrand(r, inv) !== bf) return;
       fSet[String(r.rdc || '未知RDC')] = 1;
     });
     rdcOptions = Object.keys(fSet).sort();
     if (pf !== 'all' && rdcOptions.indexOf(pf) < 0) { pf = 'all'; window._pullRdcFilter = 'all'; }
+    // v540: 品牌选项跟着其它筛选走；默认排除非卖品时下拉里不出现「非卖品」
+    var bSet = {};
+    invRaw.forEach(function(r) {
+      if (!r || !r.date || !r.ym) return;
+      var dt = r.date;
+      if (hf === 'yes' && !isHN(r.sku, r.name)) return;
+      if (hf === 'no' && isHN(r.sku, r.name)) return;
+      if (mf === 'exclude' && r.rdc === '华东RDC' && dt.getUTCMonth() === 3 && dt.getUTCFullYear() === 2026) return;
+      if (pm !== 'all' && r.ym !== pm) return;
+      if ((r.boxQty || 0) <= 0) return;
+      if (pr !== 'all' && pullbackEffectiveRec(r, inv) !== pr) return;
+      if (pf !== 'all' && String(r.rdc || '未知RDC') !== pf) return;
+      var b = pullbackEffectiveBrand(r, inv);
+      if (ns === 'exclude' && b === '非卖品') return;
+      bSet[b] = 1;
+    });
+    brandOptions = Object.keys(bSet).sort();
+    if (bf !== 'all' && brandOptions.indexOf(bf) < 0) { bf = 'all'; window._pullBrandFilter = 'all'; }
   })();
 
   // 4. 金额已在 parse 阶段按实际箱规/成本价算好，这里直接用结构化字段
@@ -16456,6 +16493,9 @@ function renderPullbackAnalysis(page) {
     if (pm !== 'all' && ym !== pm) continue;
     if (pr !== 'all' && rw !== pr) continue;
     if (pf !== 'all' && rd !== pf) continue; // v537: 发货 RDC 筛选（来自「发货工厂」列）
+    // v540: 非卖品开关（默认排除）+ 品牌筛选
+    if (ns === 'exclude' && br === '非卖品') continue;
+    if (bf !== 'all' && br !== bf) continue;
 
     var bx = r.boxQty || 0; if (bx <= 0) continue;
     var am = r.amount || 0;
@@ -16576,6 +16616,21 @@ function renderPullbackAnalysis(page) {
         '<select onchange="setPullMarFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
           '<option value="include"' + opt(mf, 'include') + '>包含</option>' +
           '<option value="exclude"' + opt(mf, 'exclude') + '>剔除</option>' +
+        '</select>' +
+        '</span>' +
+        // v540: 新增非卖品开关（默认不包含）与品牌筛选，放在现有控件之后
+        '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">非卖品：</label>' +
+        '<select onchange="setPullNonSaleFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="exclude"' + opt(ns, 'exclude') + '>不包含</option>' +
+          '<option value="include"' + opt(ns, 'include') + '>包含</option>' +
+        '</select>' +
+        '</span>' +
+        '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">品牌：</label>' +
+        '<select onchange="setPullBrandFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="all"' + opt(bf, 'all') + '>全部品牌</option>' +
+          brandOptions.map(function(b) { return '<option value="' + escHtml(b) + '"' + opt(bf, b) + '>' + escHtml(b) + '</option>'; }).join('') +
         '</select>' +
         '</span>' +
         '</span>' +
