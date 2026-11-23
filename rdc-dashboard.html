@@ -1416,7 +1416,8 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 536; // v536: 拉回数据 10A* 库位统一归「大仓共享库」（用户裁定，优先级高于C列与基础数据误登记）；原筛选/下钻结构不动
+const BUILD_VERSION = 537; // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
+// v536: 拉回数据 10A* 库位统一归「大仓共享库」（用户裁定，优先级高于C列与基础数据误登记）；原筛选/下钻结构不动
 // v535: 拉回数据「未知收货仓」按库位回查修正——9个库位用基础数据映射，用户确认5个库位归入大仓专有库；原筛选/下钻结构不动
 // v534: 拉回数据分析新增「月份」「收货仓」筛选，SKU明细增加「收货库位」列；原有统计口径/海南花露水/4月华东仓顺序与下钻结构不动
 // v533: 补货决策复盘逐笔归因「遇下一笔补货截断」——观察窗末日=min(到货日+3, 下笔补货日−1),下笔补货日的缺口归下笔,消除11-12缺货误判11-05加量仍缺; 仅改复盘模块(_revBatchAttrib/_revBatchList),补货调整跟踪口径不动
@@ -16253,6 +16254,12 @@ function setPullRecFilter(val) {
   var p = document.getElementById('page-transship');
   if (p) renderPullbackAnalysis(p);
 }
+// v537: 按发货 RDC 筛选拉回数据（RDC 由「发货工厂」列归一，与当前「各RDC拉回」饼图同源）
+function setPullRdcFilter(val) {
+  window._pullRdcFilter = String(val || 'all').trim();
+  var p = document.getElementById('page-transship');
+  if (p) renderPullbackAnalysis(p);
+}
 // v535: 用户确认这 5 个拉回库位归入「大仓专有库」（基础数据缺登记，且源表 C 列部分为空）。
 //   拉回数据先于基础数据解析时 recWhMap 为空，导致 C 列空行被固化成「未知」；这里在渲染时按库位回查修正，
 //   不改源数据、不改已解析行，避免异步加载顺序造成的假「未知」。
@@ -16354,9 +16361,11 @@ function renderPullbackAnalysis(page) {
   // v534: 月份 / 收货仓筛选状态与可选项（只新增筛选，原有 hf/mf/vm 及下钻状态不动）
   if (typeof window._pullMonth === 'undefined') window._pullMonth = 'all';
   if (typeof window._pullRecFilter === 'undefined') window._pullRecFilter = 'all';
+  if (typeof window._pullRdcFilter === 'undefined') window._pullRdcFilter = 'all';
   var pm = String(window._pullMonth || 'all').trim();
   var pr = String(window._pullRecFilter || 'all').trim();
-  var monthOptions = [], recOptions = [];
+  var pf = String(window._pullRdcFilter || 'all').trim();
+  var monthOptions = [], recOptions = [], rdcOptions = [];
   (function() {
     var mSet = {}, rSet = {};
     invRaw.forEach(function(r) {
@@ -16377,6 +16386,21 @@ function renderPullbackAnalysis(page) {
     });
     recOptions = Object.keys(rSet).sort();
     if (pr !== 'all' && recOptions.indexOf(pr) < 0) { pr = 'all'; window._pullRecFilter = 'all'; }
+    // v537: 发货 RDC 选项跟着月份/收货仓/海南/4月华东筛选走，避免选到空值
+    var fSet = {};
+    invRaw.forEach(function(r) {
+      if (!r || !r.date || !r.ym) return;
+      var dt = r.date;
+      if (hf === 'yes' && !isHN(r.sku, r.name)) return;
+      if (hf === 'no' && isHN(r.sku, r.name)) return;
+      if (mf === 'exclude' && r.rdc === '华东RDC' && dt.getUTCMonth() === 3 && dt.getUTCFullYear() === 2026) return;
+      if (pm !== 'all' && r.ym !== pm) return;
+      if ((r.boxQty || 0) <= 0) return;
+      if (pr !== 'all' && pullbackEffectiveRec(r, inv) !== pr) return;
+      fSet[String(r.rdc || '未知RDC')] = 1;
+    });
+    rdcOptions = Object.keys(fSet).sort();
+    if (pf !== 'all' && rdcOptions.indexOf(pf) < 0) { pf = 'all'; window._pullRdcFilter = 'all'; }
   })();
 
   // 4. 金额已在 parse 阶段按实际箱规/成本价算好，这里直接用结构化字段
@@ -16405,6 +16429,7 @@ function renderPullbackAnalysis(page) {
     // v534: 筛选：月份 / 收货仓（只过滤聚合与下钻，不改变原有下钻结构）
     if (pm !== 'all' && ym !== pm) continue;
     if (pr !== 'all' && rw !== pr) continue;
+    if (pf !== 'all' && rd !== pf) continue; // v537: 发货 RDC 筛选（来自「发货工厂」列）
 
     var bx = r.boxQty || 0; if (bx <= 0) continue;
     var am = r.amount || 0;
@@ -16491,6 +16516,12 @@ function renderPullbackAnalysis(page) {
         '<select onchange="setPullRecFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
           '<option value="all"' + opt(pr, 'all') + '>全部收货仓</option>' +
           recOptions.map(function(rw) { return '<option value="' + escHtml(rw) + '"' + opt(pr, rw) + '>' + escHtml(rw) + '</option>'; }).join('') +
+        '</select>' +
+        // v537: 新增发货 RDC 筛选（放在收货仓后、统计口径前，原控件顺序不变）
+        '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">发货RDC：</label>' +
+        '<select onchange="setPullRdcFilter(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
+          '<option value="all"' + opt(pf, 'all') + '>全部RDC</option>' +
+          rdcOptions.map(function(f) { return '<option value="' + escHtml(f) + '"' + opt(pf, f) + '>' + escHtml(f) + '</option>'; }).join('') +
         '</select>' +
         '<label style="font-size:12px;color:var(--text-secondary);margin-left:6px">统计口径：</label>' +
         '<select onchange="setPullViewMode(this.value)" style="font-size:12px;padding:3px;border:1px solid #D1D5DB;border-radius:4px">' +
