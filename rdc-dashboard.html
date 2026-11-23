@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 532; // v532: 全看板 18 张 SKU 明细表统一新增 SKU 代码/品名查询框(window._skuQ 按表隔离 + 防抖 + 组字保护 + 焦点保持); 通用工具 skuQHtml/onSkuQInput/skuQHit; 原列/排序/分页/展开/默认状态零改动
+const BUILD_VERSION = 533; // v533: 补货决策复盘逐笔归因「遇下一笔补货截断」——观察窗末日=min(到货日+3, 下笔补货日−1),下笔补货日的缺口归下笔,消除11-12缺货误判11-05加量仍缺; 仅改复盘模块(_revBatchAttrib/_revBatchList),补货调整跟踪口径不动
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -18514,7 +18514,7 @@ function _revShortDailyAll() {
 function _revRecKey(rec) {
   return normalizeRdcName(String((rec && rec.rdc) || '')) + '|' + String((rec && rec.sku) || '');
 }
-function _revBatchAttrib(rec, sd) {
+function _revBatchAttrib(rec, sd, nextDate) {
   sd = sd || _revShortDailyAll();
   var date = String((rec && rec.date) || '').slice(0, 10);
   var rdc = normalizeRdcName(String((rec && rec.rdc) || ''));
@@ -18523,6 +18523,12 @@ function _revBatchAttrib(rec, sd) {
   var arrival = date ? _revDateAdd(date, lead) : null;
   var winStart = arrival;
   var winEnd = arrival ? _revDateAdd(arrival, _REV_WINDOW_DAYS - 1) : null;
+  // v533: 遇下一笔补货截断——同一 SKU×RDC 的下一笔补货日之前的日子才归本笔。
+  //   用户 2026-11-23 裁定：11-12 的缺口已由 11-12 的新补货响应，不能再算到 11-05 那笔的窗口末日。
+  //   截断只收窄窗口(winEnd 前移)，不改动到货日/运输周期/箱规/diff 判定。
+  var cutByNext = !!(nextDate && winEnd && nextDate <= winEnd && nextDate > winStart);
+  var effectiveEnd = cutByNext ? _revDateAdd(nextDate, -1) : winEnd;
+  if (cutByNext) winEnd = effectiveEnd;   // 展示口径也用截断后的真实末日
   var plan = Number((rec && rec.planBox) || 0);
   var adj = Number((rec && rec.adjBox) || 0);
   var diff = Math.round((plan - adj) * 100) / 100;
@@ -18534,6 +18540,7 @@ function _revBatchAttrib(rec, sd) {
     for (var i = 0; i < _REV_WINDOW_DAYS; i++) {
       var day = _revDateAdd(winStart, i);
       if (maxOrd && day > maxOrd) break;
+      if (cutByNext && day >= nextDate) break;   // v533: 下笔补货日及之后归下一笔，不再计入本笔
       coveredDays++;
       var pcs = Number(sd.map[day + '|' + rdc + '|' + sku] || 0);
       var boxes = pcs / sp;
@@ -18541,7 +18548,8 @@ function _revBatchAttrib(rec, sd) {
       dailyShort.push({ day: day, pcs: pcs, boxes: Math.round(boxes * 10) / 10 });
     }
     shortBoxes = Math.round(shortBoxes * 10) / 10;
-    status = coveredDays >= _REV_WINDOW_DAYS ? '已完成' : '进行中 ' + coveredDays + '/' + _REV_WINDOW_DAYS;
+    // v533: 被下一笔截断视为本笔责任窗已走完（责任已移交），不再标「观察中」
+    status = (coveredDays >= _REV_WINDOW_DAYS || cutByNext) ? '已完成' : '进行中 ' + coveredDays + '/' + _REV_WINDOW_DAYS;
   }
   var verdict;
   if (status === '未开始') verdict = { text: '未到货', color: '#94A3B8', bg: '#F8FAFC' };
@@ -18555,12 +18563,35 @@ function _revBatchAttrib(rec, sd) {
     arrival: arrival, winStart: winStart, winEnd: winEnd,
     status: status, coveredDays: coveredDays, shortBoxes: shortBoxes, dailyShort: dailyShort,
     plan: plan, adj: adj, diff: diff, direction: diff > 1e-9 ? '砍量' : (diff < -1e-9 ? '加量' : '足额'),
-    spec: spec, verdict: verdict, maxOrd: maxOrd
+    spec: spec, verdict: verdict, maxOrd: maxOrd,
+    cutByNext: cutByNext, nextDate: nextDate || null   // v533: 截断留痕
   };
 }
 function _revBatchList(recs, sd) {
   sd = sd || _revShortDailyAll();
-  return (recs || []).map(function(r) { return _revBatchAttrib(r, sd); });
+  // v533: 预先按 SKU×RDC 分组收集所有补货日（升序），传给逐笔归因做窗口截断。
+  //   🔴 必须按 key 分组收集，不能只比较排序后的相邻两条——全量 allRecs 里同一 SKU×RDC 的记录
+  //   会被其他 SKU 隔开，相邻比较会漏判（v533 实测 allBatches 漏截断，已修）。
+  var datesByKey = {};
+  (recs || []).forEach(function(r) {
+    var k = normalizeRdcName(String(r.rdc || '')) + '|' + String(r.sku || '');
+    var d = String(r.date || '').slice(0, 10);
+    if (!d) return;
+    if (!datesByKey[k]) datesByKey[k] = {};
+    datesByKey[k][d] = 1;   // 去重：同一天多笔只算一个补货日
+  });
+  var nextByDate = {};
+  Object.keys(datesByKey).forEach(function(k) {
+    nextByDate[k] = Object.keys(datesByKey[k]).sort();   // 升序的当天日期列表
+  });
+  return (recs || []).map(function(r) {
+    var rk = normalizeRdcName(String(r.rdc || '')) + '|' + String(r.sku || '');
+    var rd = String(r.date || '').slice(0, 10);
+    var nd = null;
+    var list = nextByDate[rk] || [];
+    for (var j = 0; j < list.length; j++) { if (list[j] > rd) { nd = list[j]; break; } }
+    return _revBatchAttrib(r, sd, nd);
+  });
 }
 function _revTopVerdict(recs) {
   var bs = _revBatchList(recs);
@@ -18671,7 +18702,7 @@ function _revCardInner() {
   s += '本期补货明细覆盖 <b>' + rdcs.map(function(r) { return r.replace('RDC', ''); }).join(' / ') + '</b>；其余 RDC 无补货明细，相关组合不做判定。';
   s += '<br>口径：TOP10 的缺货量 = 当月首日缺货<b>累计</b>（已剔双休日/节假日，被拒绝订单仍计入），只用于排序；补货量按「应补量 / 调整后补货量」箱数统计。';
   s += '<br><b>已满足</b> = 首日未满足量里后来被满足的部分（首日缺货 − 最终仍未满足，负数按 0）。所以已满足不会超过缺货；全部补齐时两者相等。';
-  s += '<br><b>归因口径</b>：与「补货调整跟踪」逐笔同源——每笔补货单独算到货日（补货日 + 运输周期：华中/华南 4 天，华北/东北/西北 5 天，西南 7 天），观察窗 = 到货日起 4 天；只统计该窗口内的首日缺货（支 ÷ 箱规 = 箱，剔非工作日）。到货前、窗口外的缺口不挂到这笔补货上；窗口没走完只标「观察中」，不下砍量/足额/加量结论。';
+  s += '<br><b>归因口径</b>：每笔补货单独算到货日（补货日 + 运输周期：华中/华南 4 天，华北/东北/西北 5 天，西南 7 天），观察窗 = 到货日起 4 天；只统计该窗口内的首日缺货（支 ÷ 箱规 = 箱，剔非工作日）。到货前、窗口外的缺口不挂到这笔补货上；窗口没走完只标「观察中」，不下砍量/足额/加量结论。<b>v533</b>：若窗口内该 SKU×RDC 又有新补货，窗口截到新补货日前一天（新补货日的缺口归新补货那笔，避免重复归因）。';
   s += '</div>';
 
   s += '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px">';
@@ -18797,7 +18828,7 @@ function _revCardInner() {
             s += '<tr style="border-top:1px solid #F1F5F9">';
             s += '<td style="padding:5px 8px;white-space:nowrap">' + (b.date || '—').slice(5) + '</td>';
             s += '<td style="padding:5px 8px;white-space:nowrap">' + (b.arrival ? b.arrival.slice(5) : '—') + '<span style="color:var(--text-secondary);font-size:9.5px"> · 运输' + b.lead + '天</span></td>';
-            s += '<td style="padding:5px 8px;white-space:nowrap">' + (b.winStart ? b.winStart.slice(5) + ' ~ ' + b.winEnd.slice(5) : '—') + '</td>';
+            s += '<td style="padding:5px 8px;white-space:nowrap">' + (b.winStart ? b.winStart.slice(5) + ' ~ ' + b.winEnd.slice(5) : '—') + (b.cutByNext ? '<span style="color:#92400E;font-size:9.5px" title="窗口遇下一笔补货日(' + b.nextDate + ')截断，该日及之后的缺口归下一笔"> · 截于下笔前</span>' : '') + '</td>';
             s += '<td style="padding:5px 8px;white-space:nowrap;color:' + (b.status === '已完成' ? '#3B6D11' : (b.status === '未开始' ? '#94A3B8' : '#1D4ED8')) + '">' + b.status + '</td>';
             s += '<td style="padding:5px 8px;text-align:right;white-space:nowrap">' + formatNum(Math.round(b.plan)) + ' → ' + formatNum(Math.round(b.adj)) + '</td>';
             s += '<td style="padding:5px 8px;text-align:right;white-space:nowrap;font-weight:600;color:' + (b.shortBoxes > 0 ? '#A32D2D' : '#3B6D11') + '"' + (b.spec ? '' : ' title="箱规缺失，按1支/箱折算"') + '>' + formatNum(b.shortBoxes) + '</td>';
@@ -18806,7 +18837,7 @@ function _revCardInner() {
             s += '</tr>';
           });
           s += '</tbody></table></div>';
-          s += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.6">说明：这里的「窗口内逐日缺货」只取每笔补货到货后的 4 天责任窗，和上方「缺货合计（当月累计）」范围不同，两者不要求相等；窗口没走完的补货不参与结论判定。</div>';
+          s += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.6">说明：这里的「窗口内逐日缺货」只取每笔补货到货后的 4 天责任窗，和上方「缺货合计（当月累计）」范围不同，两者不要求相等；窗口没走完的补货不参与结论判定。v533：若同一 SKU×RDC 在窗口内又有新补货，窗口截到新补货日前一天——新补货日的缺口归新补货那笔，不再算到本笔。</div>';
           s += '</div>';
         }
         s += '</td></tr>';
