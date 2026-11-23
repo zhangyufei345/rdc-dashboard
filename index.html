@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 531; // v531: 补货决策复盘「缺货 TOP10 复盘」扩为「缺货 TOP20 复盘」(slice 10→20 + 标题文案); 其余口径/排序/RDC筛选/展开明细均不变
+const BUILD_VERSION = 532; // v532: 全看板 18 张 SKU 明细表统一新增 SKU 代码/品名查询框(window._skuQ 按表隔离 + 防抖 + 组字保护 + 焦点保持); 通用工具 skuQHtml/onSkuQInput/skuQHit; 原列/排序/分页/展开/默认状态零改动
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
 //   截图「山姆前置仓补货跟踪」参数栏实际高亮：近12周 / 1周·7天 / 未来计划优先 / 剔除异常周 /
 //   整车 5568 / 最小起补 0.5 车 / 覆盖天数 10 / 免租 30 天 / 服务水平 95%。
@@ -11414,6 +11414,48 @@ function onSearchInput(el, ev, selector, renderFn) {
   }, 220);
 }
 
+// v532: 通用 SKU 代码查询框（跨表复用，用户 2026-11-23 要求「所有显示 SKU 明细的表都加 SKU 查询框」）
+//   设计要点：① 状态按 key 隔离（window._skuQ[key]），各表互不影响；② 完全复用 onSearchInput 的三件套
+//   —— 组字中不渲染 + 220ms 防抖 + 渲染后还原焦点/光标；③ skuQHit 同时匹配 SKU 代码与品名，模糊、忽略大小写。
+//   🔴 只做「追加输入框 + 数据过滤」，不改动任何表原有的列、排序、分页、展开、默认状态。
+window._skuQ = window._skuQ || {};
+var _skuQTimer = null;
+function skuQHtml(key, renderFnName, placeholder) {
+  var v = String(window._skuQ[key] || '');
+  var safe = v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  return '<input type="text" class="sku-q" data-qkey="' + key + '" placeholder="' + (placeholder || 'SKU代码查询') + '" value="' + safe + '" oninput="onSkuQInput(this,event,\'' + renderFnName + '\')" title="输入 SKU 代码或品名筛选（模糊匹配，不区分大小写）" style="font-size:11px;padding:3px 6px;border:1px solid var(--border-card);border-radius:5px;width:110px">';
+}
+function onSkuQInput(el, ev, renderFnName) {
+  if (ev && ev.isComposing) {
+    if (!el._imeHooked) {
+      el._imeHooked = true;
+      el.addEventListener('compositionend', function () { if (el.isConnected) onSkuQInput(el, null, renderFnName); });
+    }
+    return;
+  }
+  window._skuQ[el.getAttribute('data-qkey')] = el.value;
+  clearTimeout(_skuQTimer);
+  _skuQTimer = setTimeout(function () {
+    if (!el.isConnected) return;
+    var stillMine = document.activeElement === el;
+    var fn = window[renderFnName];
+    if (typeof fn === 'function') { try { fn(); } catch (e) { console.warn('[skuQ] render failed', renderFnName, e); } }
+    if (!stillMine) return;
+    var next = document.querySelector('input.sku-q[data-qkey="' + el.getAttribute('data-qkey') + '"]');
+    if (next) {
+      next.focus();
+      var n = next.value.length;
+      try { next.setSelectionRange(n, n); } catch (e) {}
+    }
+  }, 220);
+}
+function skuQHit(key, sku, name) {
+  var q = String(window._skuQ[key] || '').trim().toLowerCase();
+  if (!q) return true;
+  return String(sku == null ? '' : sku).toLowerCase().indexOf(q) >= 0 ||
+         String(name == null ? '' : name).toLowerCase().indexOf(q) >= 0;
+}
+
 function renderShortage() {
   setTitle('缺货分析');
   const page = document.getElementById('page-shortage');
@@ -11896,6 +11938,7 @@ function renderShortageMonthly() {
   else if (window._msSort === 'qty') sorted.sort((a, b) => b.shortQty - a.shortQty);
   else if (window._msSort === 'mr') sorted.sort((a, b) => b.mr - a.mr || b.shortQty - a.shortQty);
   else if (window._msSort === 'sf') sorted.sort((a, b) => b.sf - a.sf || b.shortDayCnt - a.shortDayCnt);
+  sorted = sorted.filter(function(p) { return skuQHit('sh-month', p.sku, p.skuName); }); // v532: 月度严重度高清单 SKU 查询框
 
   // v170: 导出快照——与表体同源、避免 export 时重复 filter+sort+dcs 计算
   window._msFocusList = (function(){
@@ -12161,6 +12204,7 @@ function renderShortageMonthly() {
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn-export" style="font-size:11px;padding:4px 12px;background:var(--color-green);color:#fff" onclick="exportShortageFocusListCSV()">⬇ 导出CSV</button>
+          ${skuQHtml('sh-month', 'renderShortage', 'SKU代码/品名')}
           <span style="font-size:12px;color:var(--text-secondary)">排序：</span>
           ${sortBtn('sev', '严重度')}${sortBtn('qty', '缺货量')}${sortBtn('mr', '首日缺货率')}${sortBtn('sf', '缺货频率')}
         </div>
@@ -12457,6 +12501,7 @@ function renderShortageLongTerm() {
     rows.sort((a, b) => (order[a.tier] - order[b.tier]) || (b.lsi - a.lsi));
   }
 
+  rows = rows.filter(function(p) { return skuQHit('sh-long', p.sku, p.name); }); // v532: 长期高严重度清单 SKU 查询框
   // 导出快照（与表体同源，避免 export 时重复 filter+sort）
   window._ltExportList = rows;
   window._ltExportMonths = months;
@@ -12564,6 +12609,7 @@ function renderShortageLongTerm() {
           return '<span onclick="window._ltRdc=\'' + rd + '\';window._ltPage=1;renderShortage()" title="' + rd + ' · 共' + ((ltRdc.byRdc[rd]) || []).length + ' 个有缺货 SKU×RDC（顽固型 ' + (cb.stub || 0) + '）" style="font-size:12px;padding:3px 10px;cursor:pointer;border:1px solid ' + (active?'var(--color-blue)':'#D1D5DB') + ';border-radius:4px;background:' + (active?'var(--color-blue)':'#FFFFFF') + ';color:' + (active?'#fff':'#475569') + '">' + rd.replace('RDC','') + ' ' + ((ltRdc.byRdc[rd]) || []).length + '（顽固' + (cb.stub || 0) + '）</span>';
         }).join('') + '</span>' : ''}
         <span style="margin-left:auto;display:flex;gap:4px;align-items:center">
+          ${skuQHtml('sh-long', 'renderShortage', 'SKU代码/品名')}
           ${_useByRdc
             ? ('<button class="btn-export" style="font-size:11px;padding:3px 12px;background:var(--color-green);color:#fff" onclick="exportLongTermCSV()">⬇ 导出本仓CSV</button>' +
                '<button class="btn-export" style="font-size:11px;padding:3px 12px;background:#0EA5E9;color:#fff" onclick="exportLongTermAllRdcCSV()">⬇ 批量导出6仓</button>')
@@ -12805,6 +12851,7 @@ function renderMonthendAnalysis() {
   else if (sortKey === 'qty') rows.sort(function(a, b) { return b.shortQty - a.shortQty; });
   else if (sortKey === 'mon') rows.sort(function(a, b) { return b.nMonths - a.nMonths || (b.shortRate || 0) - (a.shortRate || 0); });
   else rows.sort(function(a, b) { return (b.shortRate || 0) - (a.shortRate || 0); });
+  rows = rows.filter(function(r) { return skuQHit('sh-monthend', r.sku, r.name); }); // v532: 月末四象限清单 SKU 查询框
 
   window._meExportList = rows;
 
@@ -13079,6 +13126,7 @@ function renderMonthendAnalysis() {
         </select>
       </label>
       <button class="btn-export" style="font-size:11px;padding:3px 10px;${window._meWhBadOnly?'background:#A32D2D;color:#fff;':''}" onclick="window._meWhBadOnly=${window._meWhBadOnly?'false':'true'};window._mePage=1;renderShortage()">只看总仓受限</button>
+      ${skuQHtml('sh-monthend', 'renderShortage', 'SKU代码/品名')}
       <span style="width:1px;height:18px;background:#E5E7EB"></span>
       <label style="font-size:12px;color:var(--text-secondary)">时间范围：
         <select onchange="window._meTimeN=parseInt(this.value,10);window._mePage=1;renderShortage()" style="padding:3px 6px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px;background:#FFFFFF;cursor:pointer">
@@ -13910,6 +13958,7 @@ function renderShortageOrderDetail() {
     else if (d.channel === '经销商') { s.dealerFirstShort += d.firstDayShort; s.dealerGap += d.totalGap; }
   });
   let skuList = Object.values(skuMap).sort((a,b) => b.gap - a.gap);
+  skuList = skuList.filter(function(s) { return skuQHit('sh-order-sku', s.skuCode, s.skuName); }); // v532: 订单明细SKU维度表 SKU 查询框
   // ---- 新增筛选：KA&经销商都缺货 ----
   window._odBothShort = typeof window._odBothShort === 'undefined' ? false : window._odBothShort;
   const showBothOnly = window._odBothShort;
@@ -14056,6 +14105,7 @@ function renderShortageOrderDetail() {
     <div class="card" style="margin-bottom:12px">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <span class="card-title">SKU维度明细（去重汇总 · ${skuList.length}个SKU）</span>
+        ${skuQHtml('sh-order-sku', 'renderShortage', 'SKU代码/品名')}
         <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--color-purple)">
           <input type="checkbox" ${showBothOnly?'checked':''} onchange="window._odBothShort=this.checked;window._shortageSkuPage=1;renderShortage()">
           KA&amp;经销商都缺货
@@ -16649,6 +16699,7 @@ function renderShortageCompare() {
   if (selRdc !== 'all') filtered = filtered.filter(d => d.rdc === selRdc);
   if (selBrand !== 'all') filtered = filtered.filter(d => d.brand === selBrand);
   if (selUnconfirmed) filtered = filtered.filter(d => !window._shortageReasons[`${d.dateStr}|${d.skuCode}|${d.rdc}`]);
+  filtered = filtered.filter(d => skuQHit('sc-diff', d.skuCode, d.skuName)); // v532: 缺货对比差异表 SKU 查询框
 
   // Pagination
   const perPage = 50;
@@ -16702,6 +16753,7 @@ function renderShortageCompare() {
         </label>
         <button class="btn-export" style="font-size:11px;padding:3px 10px" onclick="importShortageReasons()" title="从JSON文件导入缺货原因（可与同事共享）">📥 导入原因</button>
         <button class="btn-export" style="font-size:11px;padding:3px 10px" onclick="exportShortageReasons()" title="导出缺货原因分享给同事">📤 导出原因</button>
+        ${skuQHtml('sc-diff', 'renderShortageCompare', 'SKU代码/品名')}
         <span style="font-size:12px;color:var(--text-secondary);margin-left:auto">${filtered.length} 条记录 · 第 ${window._scPage}/${totalPages} 页</span>
       </div>
       <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px;padding:4px 0">
@@ -17204,6 +17256,7 @@ function renderReplenishment() {
   if (rdcFilter !== 'all') {
     displayList = top20.filter(function(d) { return d.rdc === rdcFilter; });
   }
+  displayList = displayList.filter(function(d) { return skuQHit('repl-up', d.sku || d.materialCode, d.skuName); }); // v532: 上调建议表 SKU 查询框
   // v328: 把实际展示列表（Top60 经 RDC 筛选后）暴露给导出，避免导出全部有缺货的候选
   window._replDisplayList = displayList;
 
@@ -17397,6 +17450,9 @@ function renderReplenishment() {
       return a.type === '多仓同时缺货' || a.rdc === rdcFilter;
     });
   }
+  // v532: 中期策略三表（分仓需求调整/安全库存调整/下调预警）共用 SKU 查询框
+  distAdjustments = distAdjustments.filter(function(d) { return skuQHit('repl-mid', d.skuCode, d.skuName); });
+  ssAdjustments = ssAdjustments.filter(function(d) { return skuQHit('repl-mid', d.skuCode, d.skuName); });
 
   // ====== RENDER ======
   var monthLabel = monthFilter ? filters.dataMonth : '全部月份';
@@ -17535,6 +17591,7 @@ function renderReplenishment() {
       });
       // v336: 取消 Top10 硬截断——展示全部符合条件的下调/预警 SKU×RDC（实测候选池 262 条）。
       //   用户 2026-09-11「下调怎么只有这点SKU」；导出 Sheet2 读同一份 window._dwList，故同步全量。
+      _dwList = _dwList.filter(function(r) { return skuQHit('repl-down', r.sku, r.skuName); }); // v532: 下调预警表 SKU 查询框（独立 key）
       window._dwList = _dwList;
     }
   } catch(e) { console.warn('[下调预警] 计算失败', e); }
@@ -17781,6 +17838,7 @@ function renderReplenishment() {
     rdcKeys.map(function(r) { return '<option value="'+r+'"'+(rdcFilter===r?' selected':'')+'>'+r+'</option>'; }).join('') +
     '</select>' +
     '<button class="btn-export" style="font-size:11px;padding:4px 10px" onclick="exportReplenishmentExcel()">导出Excel(双Sheet)</button>' +
+    skuQHtml('repl-up', 'renderReplenishment', 'SKU代码/品名') + // v532: 上调建议表 SKU 查询框（导出按钮后追加，原控件顺序不变）
     '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">共 ' + displayList.length + ' 条</span>' +
     '</div>';
 
@@ -17860,7 +17918,8 @@ function renderReplenishment() {
 
   // ==== MID-TERM STRATEGY HTML ====
   var midHtml = '<div class="card" style="margin-bottom:16px">' +
-    '<div class="card-header"><span class="card-title">🔵 中期补货策略调整</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">基于近60天数据分析（含上月） | ' + monthLabel + '</span></div>';
+    '<div class="card-header"><span class="card-title">🔵 中期补货策略调整</span>' + skuQHtml('repl-mid', 'renderReplenishment', 'SKU代码/品名(含下调预警)') + // v532: 中期三表共用 SKU 查询框
+    '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">基于近60天数据分析（含上月） | ' + monthLabel + '</span></div>';
 
   // 1. Distribution adjustments
   midHtml += '<div style="margin-bottom:12px"><div style="font-size:13px;font-weight:500;color:var(--text-primary);margin-bottom:8px">分仓需求调整</div>';
@@ -17938,7 +17997,8 @@ function renderReplenishment() {
   var downWarnHtml = '';
   if (_dwList.length) {
     downWarnHtml += '<div class="card" style="margin-bottom:16px;border-top:4px solid #2563EB">' +
-      '<div class="card-header"><span class="card-title">⚠ 下调预警（须含前瞻需求衰减 · 下调分 ≥ 0.50' + _dwDirectLabel + '）</span><span style="font-size:11px;color:var(--text-secondary);margin-left:auto">与「分仓计划优化建议」同源 · 共 ' + _dwList.length + ' 条 · 按下调需求量级降序 · 表内可滚动</span></div>' +
+      '<div class="card-header"><span class="card-title">⚠ 下调预警（须含前瞻需求衰减 · 下调分 ≥ 0.50' + _dwDirectLabel + '）</span>' + skuQHtml('repl-down', 'renderReplenishment', 'SKU代码/品名') + // v532: 下调预警表独立 SKU 查询框
+      '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">与「分仓计划优化建议」同源 · 共 ' + _dwList.length + ' 条 · 按下调需求量级降序 · 表内可滚动</span></div>' +
       '<div style="padding:4px 14px 12px;font-size:10.5px;color:var(--text-secondary);line-height:1.7">';
     downWarnHtml += '⭐ <b>用户新提需求</b>：之前模块 A 只有上调没有下调，本次借鉴模块 B 的 5+5 维打分制（含前瞻需求衰减，未来两月需求下降 ≥33% 加分），让补货建议页也能预警"下月要下调"的 SKU，引导计划员提前处理避免变成呆滞库存。';
     // v504: 互斥闸门留痕（另一半在上方「每日补货建议」卡）
@@ -18077,6 +18137,7 @@ function renderReplenishment() {
       '<div class="card-header"><span class="card-title">🟣 纯 KA 需求 SKU 清单</span>' +
       // v522: 只新增导出按钮，原「当月分仓需求口径 · SKU×单仓」文案与位置不动
       '<button class="btn-export" style="font-size:11px;padding:4px 10px;margin-left:12px" onclick="exportKaOnlyExcel()">⬇ 导出SKU清单</button>' +
+      skuQHtml('repl-ka', 'renderReplenishment', 'SKU代码/品名') + // v532: 纯 KA 清单 SKU 查询框（追加，原按钮/文案不动）
       '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">当月分仓需求口径 · SKU×单仓</span></div>';
     if (!K.loaded) {
       kaOnlyHtml = cardOpen + '<div style="padding:14px;font-size:12px;line-height:1.8;color:' + (K.err ? '#92400E' : 'var(--text-secondary)') + '">' +
@@ -18088,6 +18149,7 @@ function renderReplenishment() {
     }
     var J = K.data || {};
     var rows = Array.isArray(J.kaOnly) ? J.kaOnly.slice() : [];
+    rows = rows.filter(function (r) { return skuQHit('repl-ka', r.sku, r.name); }); // v532: 纯 KA 清单 SKU 查询框
     rows.sort(function (a, b) {
       return (Number(b.ka) || 0) - (Number(a.ka) || 0)
         || String(a.sku).localeCompare(String(b.sku))
@@ -18626,12 +18688,13 @@ function _revCardInner() {
     var on = window._replRev.rdc === r;
     s += '<button onclick="_revSetRdc(\'' + r + '\')" style="padding:4px 12px;border-radius:14px;border:1px solid ' + (on ? '#2563EB' : 'var(--border-card)') + ';background:' + (on ? '#DBEAFE' : 'transparent') + ';color:' + (on ? '#2563EB' : 'inherit') + ';font-size:11.5px;cursor:pointer">' + r.replace('RDC', '') + ' <span style="opacity:.7">' + rdcSet[r] + '</span></button>';
   });
-  s += '</div>';
+  s += skuQHtml('rev-top', '_revRefresh', 'SKU代码/品名') + '</div>'; // v532: SKU 查询框（RDC 按钮组末尾追加）
 
   // 缺货 TOP20（v531: 用户要求由 TOP10 扩到 TOP20；排序/筛选口径不变，仅取数条数放宽）
   var shorts = Object.keys(shortMap).map(function(k) { return shortMap[k]; });
   shorts.sort(function(a, b) { return b.short - a.short; });
   var filtered = (window._replRev.rdc === 'all') ? shorts : shorts.filter(function(x) { return x.rdc === window._replRev.rdc; });
+  filtered = filtered.filter(function(x) { return skuQHit('rev-top', x.sku, x.name); }); // v532: SKU 代码查询框（在 TOP20 截取前过滤）
   var top = filtered.slice(0, 20);
   s += '<div style="border:1px solid var(--border-card);border-radius:10px;overflow:hidden;margin-bottom:14px">';
   s += '<div style="padding:9px 12px;background:var(--bg-secondary,#F8FAFC);font-size:12.5px;font-weight:600">缺货 TOP20 复盘 <span style="font-weight:400;color:var(--text-secondary);font-size:11px">' + (window._replRev.rdc === 'all' ? '全部 RDC · 按首日缺货累计' : window._replRev.rdc + ' · 按首日缺货累计') + ' · 点击行展开完整明细（缺货侧 + 补货全字段）</span></div>';
@@ -18819,6 +18882,7 @@ function _revCardInner() {
   if (window._replRev.day && window._replRev.day !== 'all') detailRows = detailRows.filter(function(r) { return String(r.date).slice(0, 10) === window._replRev.day; });
   if (window._replRev.type !== 'all') detailRows = detailRows.filter(function(r) { return (r.adjType || '0') === window._replRev.type; });
   if (window._replRev.onlyShort) detailRows = detailRows.filter(function(r) { return !!shortMap[r.rdc + '|' + r.sku]; });
+  detailRows = detailRows.filter(function(r) { return skuQHit('rev-detail', r.sku, r.skuName); }); // v532: SKU 代码查询框
   detailRows.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)) || String(a.rdc).localeCompare(String(b.rdc)) || String(a.sku).localeCompare(String(b.sku)); });
   // v471: 全量展示，不再分页（用户 2026-11-08：只显示了一小部分）
   var pageRows = detailRows;
@@ -18841,6 +18905,7 @@ function _revCardInner() {
   });
   s += '</select>';
   s += '<label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" ' + (window._replRev.onlyShort ? 'checked' : '') + ' onchange="_revSetFilter(\'onlyShort\',this.checked)">只看当月缺货</label>';
+  s += skuQHtml('rev-detail', '_revRefresh', 'SKU代码/品名'); // v532: SKU 查询框（追加在导出按钮前，原控件顺序不变）
   s += '<button class="btn-import" style="padding:3px 10px;font-size:11px" onclick="_revExportCsv()">导出 CSV</button>';
   s += '</span></div>';
   if (!pageRows.length) {
@@ -24025,7 +24090,8 @@ function renderInventoryCoverageDetail() {
   // v396 分层下钻：① RDC 维度（全量 allData 聚合）→ ② SKU 明细（跟随 RDC 行筛选）
   //   _invCoverageDetailRdc = 'all' 时 SKU 明细看本次下钻的全部 RDC
   const rdcPick = window._invCoverageDetailRdc || 'all';
-  const data = rdcPick === 'all' ? allData : allData.filter(d => d.rdc === rdcPick);
+  const data = (rdcPick === 'all' ? allData : allData.filter(d => d.rdc === rdcPick))
+    .filter(d => skuQHit('inv-cover', d.sku, d.skuName)); // v532: 库存覆盖 SKU 明细 SKU 查询框
 
   const pageLen = 25;
   window._invCoverageDetailPage = window._invCoverageDetailPage || 1;
@@ -24104,7 +24170,7 @@ function renderInventoryCoverageDetail() {
     html += '</div>';
   }
 
-  html += '<div class="card"><div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="card-title">② SKU 明细</span><span style="font-size:11px;color:var(--text-secondary)">' + (rdcPick === 'all' ? '全部 RDC' : '仅 ' + rdcPick) + ' · 共 ' + data.length + ' 条 · 按金额降序</span></div><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">可用库存金额</th>' + cfg.labels.map(l => '<th class="num">' + l + '</th>').join('') + '<th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
+  html += '<div class="card"><div class="card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="card-title">② SKU 明细</span>' + skuQHtml('inv-cover', 'renderInventoryCoverageDetail', 'SKU代码/品名') + '<span style="font-size:11px;color:var(--text-secondary)">' + (rdcPick === 'all' ? '全部 RDC' : '仅 ' + rdcPick) + ' · 共 ' + data.length + ' 条 · 按金额降序</span></div><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th class="num">可用库存</th><th class="num">可用库存金额</th>' + cfg.labels.map(l => '<th class="num">' + l + '</th>').join('') + '<th>覆盖</th><th>海南花露水</th></tr></thead><tbody>' +
     pageData.map(d => '<tr><td>' + (d.rdc||'') + '</td><td>' + (d.sku||'') + '</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (d.skuName||'') + '">' + (d.skuName||'') + '</td><td>' + (d.brand||'') + '</td><td class="num">' + formatNum(d.availQtyPlan || 0) + '</td><td class="num">' + formatMoney(d.planAmt || 0) + '</td>' + cfg.fields.map(f => '<td class="num">' + formatNum(d[f]) + '</td>').join('') + '<td>' + (d.coverageLevel||'') + '</td><td>' + (d.isHainan ? '是' : '否') + '</td></tr>').join('') + '</tbody></table></div>';
 
   html += '<div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center">' +
@@ -24311,6 +24377,7 @@ function renderSlowMoving() {
     var rc = diag.rc, adv = diag.adv;
     return { rdc: d.rdc, sku: d.sku, skuName: d.skuName, brand: d.brand, availableQty: d.availQtyPlan || 0, inventoryAmt: d.planAmt || 0, coverageLevel: d.coverageLevel, prevCoverageLevel: prev ? prev.coverageLevel : '', isNew: isNew, cov06: d.cov06, cov07: d.cov07, cov08: d.cov08, cov09: d.cov09, cov10: d.cov10, cov11: d.cov11, cov12: d.cov12, cov13: d.cov13, cov14: d.cov14, cov15: d.cov15, rootCause: rc, advice: adv };
   }).sort(function(a, b) { return b.inventoryAmt - a.inventoryAmt; });
+  detailRows = detailRows.filter(function(d) { return skuQHit('slow-detail', d.sku, d.skuName); }); // v532: 当前慢动品明细 SKU 查询框
   window._slowMovingAll = detailRows;
   window._slowMovingNew = detailRows.filter(function(d) { return d.isNew; }).slice(0, 20);
 
@@ -24610,7 +24677,7 @@ function renderSlowMoving() {
   sortedBrands.forEach(function(b) { var rowTotal = allRdcs.reduce(function(s,r) { return s + (brandRdc[b][r]||0); }, 0) / 1000; html += '<tr><td><strong>'+b+'</strong></td>'+allRdcs.map(function(r){return '<td class="num">'+formatMoney((brandRdc[b][r]||0)/1000)+'</td>';}).join('')+'<td class="num"><strong>'+formatMoney(rowTotal)+'</strong></td></tr>'; });
   html += '</tbody></table></div></div>';
 
-  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">📊 当前慢动品明细（按金额降序）</span><button class="btn-export" onclick="exportSlowMovingAll()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">计划可用库存量</th><th class="num">计划可用金额</th><th>近2月出货</th><th>近2月补货净流入</th><th class="num">' + _slowFutTh + '</th><th>根因</th><th>建议</th></tr></thead><tbody>';
+  html += '<div class="card" style="margin-top:12px"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">📊 当前慢动品明细（按金额降序）</span>' + skuQHtml('slow-detail', 'renderSlowMoving', 'SKU代码/品名') + '<button class="btn-export" onclick="exportSlowMovingAll()">导出CSV</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>RDC</th><th>SKU</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">计划可用库存量</th><th class="num">计划可用金额</th><th>近2月出货</th><th>近2月补货净流入</th><th class="num">' + _slowFutTh + '</th><th>根因</th><th>建议</th></tr></thead><tbody>';
   if (pageData.length === 0) { html += '<tr><td colspan="12" style="text-align:center;padding:30px">无数据</td></tr>'; }
   else { pageData.forEach(function(r) { var key = r.rdc+'|'+r.sku; var tn = transNet[key]||{inn:0,out:0}; var net = tn.inn-tn.out; var ship = shipQty[key]||0; var fut = futureDemand[key]||0; const _isHi = (_diagSku && _diagRdc && r.sku === _diagSku && r.rdc === _diagRdc); html += '<tr' + (_isHi ? ' id="slow-diag-highlight" style="background:#FEF3C7"' : '') + '><td>'+r.rdc+'</td><td>'+r.sku+'</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(r.skuName||'')+'">'+(r.skuName||'')+'</td><td>'+r.brand+'</td><td>'+r.coverageLevel+'</td><td class="num">'+formatNum(r.availableQty)+'</td><td class="num">'+formatMoney(r.inventoryAmt)+'</td><td class="num">'+formatNum(ship)+'</td><td class="num">'+formatNum(net)+'</td><td class="num">'+formatNum(fut)+'</td><td>'+(r.rootCause.indexOf('疑似业务提报虚高')>=0?'<span class="badge" style="background:#FEE2E2;color:#B91C1C;font-weight:700;white-space:nowrap">'+r.rootCause+'</span>':'<span class="badge" style="background:#FEF3C7;color:#92400E;white-space:nowrap">'+r.rootCause+'</span>')+'</td><td style="font-size:11px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="'+(r.advice||'')+'">'+r.advice+'</td></tr>'; }); }
   html += '</tbody></table></div><div style="display:flex;justify-content:center;gap:8px;padding:12px 0;align-items:center"><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.max(1,window._slowPage-1);renderSlowMoving()" '+(p<=1?'disabled':'')+'>上一页</button><span style="font-size:12px">第'+p+'/'+totalPages+'页（共'+detailRows.length+'条）</span><button class="btn-export" style="padding:4px 12px;font-size:12px" onclick="window._slowPage=Math.min('+totalPages+',window._slowPage+1);renderSlowMoving()" '+(p>=totalPages?'disabled':'')+'>下一页</button></div></div>';
@@ -26408,7 +26475,7 @@ function renderAdjustTrack() {
   }
   const computed = buildAdjComputed();
   const st = window._adjState;
-  const filtered = _adjFiltered(computed);
+  const filtered = _adjFiltered(computed).filter(function(r) { return skuQHit('adj-detail', r.sku, r.skuName); }); // v532: 调整明细 SKU 查询框
   const maxOrd = computed.maxOrd;
   // 🔴 v345 修复：本行此前漏写 —— 归因表(17645)、筛选下拉(17691)、RDC堆叠图(17874) 三处都引用
   //   typeList，但只定义了取类型的函数 _adjTypeList()，没有实际调用赋值，导致整页抛
@@ -26573,7 +26640,7 @@ function renderAdjustTrack() {
 
   // 明细表
   // v347: 归因表 / 四象限的下钻落点。带「筛选后 SKU 汇总」徽标，避免用户从图表跳下来不知道筛了什么。
-  html += '<div class="card" id="adj-detail-card" style="margin-bottom:12px"><div class="card-header"><span class="card-title">调整明细（点击行查看扣减 vs 缺货因果图）<span style="font-weight:400;color:var(--text-secondary);font-size:11px"> ｜ 默认按窗口缺货(箱)降序，有缺货的排最前</span></span>';
+  html += '<div class="card" id="adj-detail-card" style="margin-bottom:12px"><div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="card-title">调整明细（点击行查看扣减 vs 缺货因果图）<span style="font-weight:400;color:var(--text-secondary);font-size:11px"> ｜ 默认按窗口缺货(箱)降序，有缺货的排最前</span></span>' + skuQHtml('adj-detail', 'renderAdjustTrack', 'SKU代码/品名');
   // v348: 下钻时默认只列「走完后有缺货」的条（与归因表「缺货条数」同口径），并给出可点击取消的徽标 —— 否则用户
   //   看到的是该类型全部记录（含走完没缺、窗口没走完的），对不上表里的数字。
   // v393: 条件里补 batchShort，并在筛选带批次时把批次号写进徽标 —— 用户从红柱跳下来必须一眼知道「现在筛的是什么批次」
@@ -27248,7 +27315,8 @@ function renderPlanMonitor() {
   const _pmSortKey = window._pmSkuSort;
   const _pmStatus = window._pmSkuStatus;
   // 状态筛选
-  const _pmRowsFiltered = _pmStatus === 'all' ? rows.slice() : rows.filter(function(r){ return r.status === _pmStatus; });
+  const _pmRowsFiltered = (_pmStatus === 'all' ? rows.slice() : rows.filter(function(r){ return r.status === _pmStatus; }))
+    .filter(function(r){ return skuQHit('pm-detail', r.sku, r.skuName); }); // v532: 分仓计划偏差明细 SKU 查询框
   // 排序
   if (_pmSortKey === 'comp-asc') _pmRowsFiltered.sort(function(a, b){ return a.comp - b.comp; });
   else if (_pmSortKey === 'comp-desc') _pmRowsFiltered.sort(function(a, b){ return b.comp - a.comp; });
@@ -27460,6 +27528,7 @@ html += '<span style="font-size:11px;color:var(--text-secondary)">当前目标�
       '</select>' +
       '<span style="font-size:11px;color:var(--text-secondary);margin-left:4px">排序：</span>' +
       _pmSortBtn('comp-asc', '完成率升序') + _pmSortBtn('comp-desc', '完成率降序') + _pmSortBtn('qty-desc', '实际出货降序') + _pmSortBtn('qty-asc', '实际出货升序') +
+      skuQHtml('pm-detail', 'renderPlanMonitor', 'SKU代码/品名') +
       '<button class="btn-export" onclick="exportPlanMonitor()" style="margin-left:6px">导出CSV</button>' +
     '</div>' +
   '</div>';
@@ -29704,6 +29773,7 @@ function renderBizDemandDetail() {
   }
 
   // 保存到全局，供导出使用
+  displayRows = displayRows.filter(function(d) { return skuQHit('biz-sku', d.opCode, d.productName); }); // v532: 业务需求SKU明细 SKU 查询框
   window._bizDrillRows = displayRows;
 
   // 分页
@@ -29721,6 +29791,7 @@ function renderBizDemandDetail() {
   html += '<div style="padding:16px 20px;background:var(--bg-card);border-radius:12px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
   html += '<button class="btn-export" onclick="navigateTo(\'biz-demand\')" style="display:flex;align-items:center;gap:4px">← 返回需求满足分析</button>';
   html += '<span style="font-size:14px;font-weight:600;color:var(--text-primary)">SKU明细 — ' + titleText + '</span>';
+  html += skuQHtml('biz-sku', 'renderBizDemandDetail', 'SKU代码/品名');
   html += '<button class="btn-export" onclick="exportBizDemandDetail()">导出CSV</button>';
   html += '<span style="font-size:11px;color:var(--text-secondary);margin-left:auto">共 ' + displayRows.length + ' 条SKU · 需求已去重（同SKU同渠道同数量重复提报只计一次） · 出货窗口：当月至次月15日</span>';
   html += '</div>';
