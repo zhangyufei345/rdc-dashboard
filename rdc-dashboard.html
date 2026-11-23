@@ -1416,7 +1416,8 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 538; // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
+const BUILD_VERSION = 539; // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
+// v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
 // v536: 拉回数据 10A* 库位统一归「大仓共享库」（用户裁定，优先级高于C列与基础数据误登记）；原筛选/下钻结构不动
 // v535: 拉回数据「未知收货仓」按库位回查修正——9个库位用基础数据映射，用户确认5个库位归入大仓专有库；原筛选/下钻结构不动
@@ -16278,6 +16279,30 @@ function pullbackEffectiveRec(r, inv) {
   if (loc && m[loc]) return m[loc];
   return PULL_LOC_WH_FIX[loc] || '未知';
 }
+// v539: 品牌回填规则（只作用于拉回分析）
+//   ① 商品代码含字母 = 物料/赠品，用户裁定统一归「非卖品」（优先级最高）
+//   ② 已有品牌 → _brandMap → 基础数据 productMaster → 品名关键词兜底 → 未知
+//   解决拉回数据先于基础数据解析导致品牌被固化成「未知」的问题，不改源数据。
+var PULL_BRAND_NAME_RULES = [
+  ['片仔癀', '片仔癀'], ['六神', '六神'], ['家安', '家安'], ['美加净', '美加净'],
+  ['启初', '启初'], ['高夫', '高夫'], ['玉泽', '玉泽'], ['典萃', '典萃'],
+  ['佰草集', '佰草集'], ['上海', '上海']
+];
+function pullbackEffectiveBrand(r, inv) {
+  var sku = String((r && r.sku) || '').trim();
+  var name = String((r && r.name) || '');
+  if (/[A-Za-z]/.test(sku)) return '非卖品';
+  var b = String((r && r.brand) || '').trim();
+  if (b && b !== '未知') return b;
+  var bm = (window._brandMap || {})[sku];
+  if (bm) return String(bm).trim();
+  var master = (inv && inv.productMaster || {})[sku];
+  if (master && String(master.brand || '').trim()) return String(master.brand).trim();
+  for (var i = 0; i < PULL_BRAND_NAME_RULES.length; i++) {
+    if (name.indexOf(PULL_BRAND_NAME_RULES[i][0]) >= 0) return PULL_BRAND_NAME_RULES[i][1];
+  }
+  return '未知';
+}
 // v122: 「按收货仓」两级下钻 —— 收货仓 → 实际收货库位 → 该库位 SKU 汇总明细。
 // window._pullRecDrill : 当前展开的收货仓名（'' = 全部收起）
 // window._pullLocDrill : 当前展开的库位号；null/undefined = 尚未设置(渲染时自动展开数量TOP1库位)，'' = 显式全部收起
@@ -16419,7 +16444,7 @@ function renderPullbackAnalysis(page) {
     var rd = r.rdc;
     var sk = r.sku;
     var nm = r.name;
-    var br = r.brand || '未知';
+    var br = pullbackEffectiveBrand(r, inv); // v539: 字母代码→非卖品；其余按品牌表/品名回填
     var rw = pullbackEffectiveRec(r, inv); // v535: C列空行的收货仓按库位回查修正（含用户确认的5个库位）
 
     // 筛选：海南花露水
