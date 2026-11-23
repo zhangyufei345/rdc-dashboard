@@ -1416,7 +1416,8 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 535; // v535: 拉回数据「未知收货仓」按库位回查修正——9个库位用基础数据映射，用户确认5个库位归入大仓专有库；原筛选/下钻结构不动
+const BUILD_VERSION = 536; // v536: 拉回数据 10A* 库位统一归「大仓共享库」（用户裁定，优先级高于C列与基础数据误登记）；原筛选/下钻结构不动
+// v535: 拉回数据「未知收货仓」按库位回查修正——9个库位用基础数据映射，用户确认5个库位归入大仓专有库；原筛选/下钻结构不动
 // v534: 拉回数据分析新增「月份」「收货仓」筛选，SKU明细增加「收货库位」列；原有统计口径/海南花露水/4月华东仓顺序与下钻结构不动
 // v533: 补货决策复盘逐笔归因「遇下一笔补货截断」——观察窗末日=min(到货日+3, 下笔补货日−1),下笔补货日的缺口归下笔,消除11-12缺货误判11-05加量仍缺; 仅改复盘模块(_revBatchAttrib/_revBatchList),补货调整跟踪口径不动
 // v494（2026-11-13 用户截图裁定）：默认参数改为「历史窗口 近12周 + 覆盖天数 10 天」。
@@ -16261,6 +16262,9 @@ var PULL_LOC_WH_FIX = {
 function pullbackEffectiveRec(r, inv) {
   var rw = String((r && r.rec) || '').trim();
   var loc = String((r && r.recLoc) || '').trim();
+  // v536: 用户确认 10A* 库位一律为「大仓共享库」，优先级高于 C列与基础数据
+  //   （基础数据把 10A1/10A2 误登记为「大仓专有库」，导致 C列空行走回退时串仓）
+  if (loc.indexOf('10A') === 0) return '大仓共享库';
   if (rw && rw !== '未知') return rw;
   var m = (inv && inv.recWhMap) || {};
   if (loc && m[loc]) return m[loc];
