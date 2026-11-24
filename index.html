@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 542; // v542: 山姆卡片①口径改为扣本周已发生订单(与表格一致),删除全部口径澄清文案
+const BUILD_VERSION = 543; // v543: 优化建议导出/页面的生命周期改取 demand.json.meta（新品观察期等最新标签）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -28382,6 +28382,11 @@ function buildPlanOptimAdvice() {
   const _ordBrandMap = window._ordBrandMap || {};
   const _ordNameMap2 = window._ordSkuNameMap || {};
   const _masterNB2 = window._masterNB || {};
+  // v543（用户 2026-11-24）：生命周期以 demand.json.meta 为准。
+  //   inventory.xlsx「基础数据」的「生命周期标签」是旧值（72141/72148/72160/72163/72123 仍写「新品期」），
+  //   而 demand.json.meta（由产品主数据下发）已更新为「新品观察期」——导出与页面徽章此前只取 _skuMasterMap，
+  //   于是导出显示旧值。这里优先取 demandMeta，取不到再回退 inventory，不影响任何评分/方向判定。
+  const _lifeMeta543 = (typeof dataStore !== 'undefined' && dataStore && dataStore.inventory && dataStore.inventory.demandMeta) || {};
 
   // v233: SKU 主数据映射（供应链品类 / 生命周期标签 / 品名 / 品牌，权威源 = 产品主数据「基础数据」sheet）
   //   ⚠️ 该 sheet 是**多段拼接表头**（产品编码出现 3 次、产品名称 2 次、品牌 2 次），不能按下标硬取：
@@ -28859,7 +28864,11 @@ function buildPlanOptimAdvice() {
         brand: (cd && cd.brand) || (_skuMasterMap[sku] && _skuMasterMap[sku].brand) || (_skuMasterMap[normSkuCode(sku)] && _skuMasterMap[normSkuCode(sku)].brand) || (_masterNB2[sku] && _masterNB2[sku].brand) || (_masterNB2[normSkuCode(sku)] && _masterNB2[normSkuCode(sku)].brand) || _ordBrandMap[sku] || _ordBrandMap[normSkuCode(sku)] || (window._brandMap && (window._brandMap[sku] || window._brandMap[normSkuCode(sku)])) || '(未分类)',
         rdc: rdc,
         cat: (_skuMasterMap[sku] && _skuMasterMap[sku].cat) || '',
-        life: (_skuMasterMap[sku] && _skuMasterMap[sku].life) || '',
+        // v543：优先 demand.json.meta（新品观察期等最新标签），回退 inventory「基础数据」旧值
+        life: (_lifeMeta543[sku] && _lifeMeta543[sku].life)
+              || (_lifeMeta543[_skuN] && _lifeMeta543[_skuN].life)
+              || (_skuMasterMap[sku] && _skuMasterMap[sku].life)
+              || '',
         plan: plan, shipped: shipped, comp: comp,
         dims: dims,
         direction: direction, timeWindow: timeWindow,
