@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 545; // v545: 修正扣单后 gapVsRop 未重算；增量分析增加 RDC 筛选
+const BUILD_VERSION = 546; // v546: 山姆安全库存图删除峰值法参考柱（仅画采用的统计法）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -4834,11 +4834,10 @@ function renderSamsFc() {
      + '<div id="sams-chart-trend" style="height:360px"></div></div>';
 
 
-  // ---- 图3：安全库存是怎么算出来的 ----
+  // ---- 图3：安全库存是怎么算出来的（v546：删除峰值法参考柱，只画采用的统计法）----
   h += '<div class="card"><div class="card-header"><div class="card-title">图2 · 安全库存是怎么算出来的：v544 起仅统计法</div></div>'
      + '<div class="card-subtitle" style="margin-bottom:8px">'
-     + '①统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数（概率口径：按历史波动，服务水平 ' + (st.csl * 100).toFixed(0) + '% 情况下够用，随天数按 √D 增长）——<b>v544 起为唯一采用口径</b>｜'
-     + '②峰值法 = (周上沿÷7 − 基准日均) × 覆盖天数（情景口径）——保留作参考对照，<b>不再参与取值</b>。'
+     + '①统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数（概率口径：按历史波动，服务水平 ' + (st.csl * 100).toFixed(0) + '% 情况下够用，随天数按 √D 增长）——<b>v544 起为唯一采用口径</b>。'
      + '⚠ 柱高<b>已 × 需求倍率 k</b>（与 KPI 卡 / 明细表的「②安全库存」同口径）；公式原值见工具提示。</div>'
      + '<div id="sams-chart-ss" style="height:300px"></div></div>';
 
@@ -6515,7 +6514,7 @@ function samsCharts(data, rows, st) {
   var names = rows.map(function (r) { return r.short; });
   var z = samsProbit(st.csl);   // 统计法 z（服务水平 F⁻¹(csl)）
 
-  // ===== 图3 安全库存怎么算出来的：①统计法 vs ②峰值法，取大者 =====
+  // ===== 图3 安全库存怎么算出来的（v546：峰值法已不用，删除橙色参考柱；只画采用的统计法）=====
   var elSS = document.getElementById('sams-chart-ss');
   if (elSS) {
     var _pickLab = function (mode) {
@@ -6525,6 +6524,7 @@ function samsCharts(data, rows, st) {
       };
     };
     var cS = initChart('sams-chart-ss');
+    // v546: 图里已删峰值法柱，tooltip 同步不再显示峰值法行
     if (cS) cS.setOption({
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' },
         formatter: function (ps) {
@@ -6534,9 +6534,6 @@ function samsCharts(data, rows, st) {
           o += '① 统计法 ' + z.toFixed(3) + ' × σ日 × √D = ' + z.toFixed(3) + ' × ' + Math.round(r.sdD) + ' × √' + r.D
              + ' → 公式 ' + Math.round(r.ss1).toLocaleString('zh-CN') + ' × k ' + r.k.toFixed(3)
              + ' = <b>' + Math.round(r.ss1 * r.k).toLocaleString('zh-CN') + '</b> 箱<br>';
-          o += '② 峰值法 (上沿÷7 − 基准日均) × D = ' + (SAMS_SSU).toFixed(3) + ' × (' + Math.round(r.hiW) + '÷7 − '
-             + Math.round(r.dUse) + ') × ' + r.D + ' → 公式 ' + Math.round(r.ss2).toLocaleString('zh-CN')
-             + ' × k ' + r.k.toFixed(3) + ' = <b>' + Math.round(r.ss2 * r.k).toLocaleString('zh-CN') + '</b> 箱（v544 起仅参考）<br>';
           o += '→ 采用 = <b>' + r.ssPick + ' ' + Math.round(r.ssFinal).toLocaleString('zh-CN') + ' 箱</b>';
           return o;
         } },
@@ -6545,13 +6542,11 @@ function samsCharts(data, rows, st) {
       xAxis: { type: 'category', data: names, axisLabel: { color: sub, fontSize: 11 }, axisLine: { lineStyle: { color: bd } } },
       yAxis: { type: 'value', name: '安全库存(箱)', nameTextStyle: { color: sub, fontSize: 11 },
                axisLabel: { color: sub, fontSize: 11 }, splitLine: { lineStyle: { color: bd } } },
+      // v546: 删除「② 峰值法 上行缺口×D」橙色柱（v544 起已不参与取值，用户要求删除）
       series: [
         { name: '① 统计法 ' + z.toFixed(3) + '×σ日×√D', type: 'bar', barMaxWidth: 26, itemStyle: { color: '#85B7EB' },
           label: { show: true, position: 'top', color: '#185FA5', fontSize: 10, formatter: _pickLab('统计法') },
-          data: rows.map(function (r) { return Math.round(r.ss1 * r.k); }) },
-        { name: '② 峰值法 上行缺口×D', type: 'bar', barMaxWidth: 26, itemStyle: { color: '#EF9F27' },
-          label: { show: true, position: 'top', color: '#854F0B', fontSize: 10, formatter: _pickLab('峰值法') },
-          data: rows.map(function (r) { return Math.round(r.ss2 * r.k); }) }
+          data: rows.map(function (r) { return Math.round(r.ss1 * r.k); }) }
       ]
     });
   }
