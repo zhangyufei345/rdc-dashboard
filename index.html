@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 543; // v543: 优化建议导出/页面的生命周期改取 demand.json.meta（新品观察期等最新标签）
+const BUILD_VERSION = 544; // v544: 山姆安全库存去掉峰值法，只用统计法（峰值法列保留为参考·不参与）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -3675,10 +3675,11 @@ function samsRopAt(wh, coverW, st) {
   var upGapDay = Math.max(0, hiW / 7 - d);      // 上行缺口（箱/天）
   // v449: 「已 N 天无新周」提示已按用户要求删除，histStaleDays 计算随之移除（只保留最新有效周标签本身）
   var lastOkIdx = useIdx.length ? useIdx[useIdx.length - 1] : -1;
+  // v544（用户 2026-11-24 裁定）：去掉峰值法，安全库存只用统计法。峰值法 ss2 仍算出仅为展示对照（保留原列不删），不参与取值。
   var ss1 = samsProbit(st.csl) * sdD * Math.sqrt(D);   // ① 统计法：F⁻¹(csl) × σ日 × √覆盖天数（z 随服务水平走，默认 95%→1.6449）
-  var ss2 = SAMS_SSU * upGapDay * D;   // ② 峰值法：SAMS_SSU × 上行缺口(箱/天) × 覆盖天数（情景口径，不随服务水平 z 变；v436 起 SAMS_SSU=1.0）
-  var ss = Math.max(ss1, ss2);
-  var ssPick = ss2 > ss1 ? '峰值法' : '统计法';  // 取大者（用于展示"安全库存是怎么来的"）
+  var ss2 = SAMS_SSU * upGapDay * D;   // ② 峰值法：v544 起仅参考展示、不参与取值
+  var ss = ss1;                        // v544：只用统计法（原 Math.max(ss1,ss2)）
+  var ssPick = '统计法';               // v544：恒为统计法（原按取大者动态标注）
   var ropHist = d * D + ss;
 
   var pv = [];
@@ -3829,10 +3830,11 @@ function samsRopAt(wh, coverW, st) {
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
   //   sdD = σ日、upGapDay = 上行缺口(箱/天)、k = 未来日均÷历史日均（同比例缩放），均来自上方 samsRopAt 作用域。
+  // v544：目标水位侧同样去掉峰值法，只用统计法（与预警线侧 ss 口径一致）。ss2c 仅参考展示、不参与取值。
   var ss1c = samsProbit(st.csl) * sdD * Math.sqrt(coverDays);     // ① 统计法：F⁻¹(csl) × σ日 × √覆盖天数
-  var ss2c = SAMS_SSU * upGapDay * coverDays;     // ② 峰值法：SAMS_SSU × 上行缺口 × 覆盖天数（情景口径；v436 起 SAMS_SSU=1.0）
-  var ssc = Math.max(ss1c, ss2c);
-  var ssPickC = ss2c > ss1c ? '峰值法' : '统计法';
+  var ss2c = SAMS_SSU * upGapDay * coverDays;     // ② 峰值法：v544 起仅参考展示、不参与取值
+  var ssc = ss1c;                                 // v544：只用统计法（原 Math.max(ss1c,ss2c)）
+  var ssPickC = '统计法';                         // v544：恒为统计法
   var ssFinalC = ssc * k;                                     // 按需求倍率 k 同比例放大
   var coverTarget = coverDemandArr + ssFinalC;                // 目标库存水位（含安全库存，安全库存按覆盖天数定）
   var coverNeed = Math.max(0, coverTarget - curStock);        // v430：减【当前库存】（今天时点），原为 stockAtArrival
@@ -4116,7 +4118,7 @@ function samsExportCSV() {
   var head = ['前置仓', '仓编码', '近' + (st.win > 0 ? st.win + '周' : '全部') + '周均(箱)', '周σ', '周上沿(窗口内最高周)',
               '基准周均(箱)', '基准日均(箱)', '覆盖周数', '覆盖天数',
               '需求覆盖口径', '未来覆盖区间', '未来已覆盖天数', '未来外推天数', '未来计划合计(箱)',
-              '【1】需求覆盖(箱)', '①统计法(公式值)', '②峰值法(公式值)', '①统计法(已×k)', '②峰值法(已×k)', '安全库存采用', '【2】安全库存(已×k)',
+              '【1】需求覆盖(箱)', '①统计法(公式值)', '②峰值法(公式值·v544起不参与)', '①统计法(已×k)', '②峰值法(已×k·不参与)', '安全库存采用(v544=统计法)', '【2】安全库存(已×k)',
               '历史口径预警线(仅对照·箱)', '需求倍率k(仅缩放安全库存)', '预警线(箱)', '预警线折合天数',
               '运输时效(天)', '当前库存(下单时·实填·箱)', '期初库存来源', '到仓前消耗(今天起·箱)', '到仓时在库(箱)',
               '到仓后日均(箱)', '售罄/库存可售天数(有补货=入库起·0车=今天起)', '售罄天数外推(天)', '单批售罄天数(下单起·保守上界)',
@@ -4499,7 +4501,7 @@ function renderSamsFc() {
   h += '<div class="card" style="margin-top:0"><div class="card-header"><div class="card-title">📋 逐仓测算明细 + 补货建议（预警线组成 → 补几车，一表到底）</div></div>'
      + '<div class="card-subtitle" style="margin-bottom:8px">读法：'
      + '<span style="background:#E6F1FB;padding:1px 6px;border-radius:3px">①需求覆盖</span> + '
-     + '<span style="background:#FAEEDA;padding:1px 6px;border-radius:3px">②安全库存（①统计法/②峰值法取大）</span> = '
+     + '<span style="background:#FAEEDA;padding:1px 6px;border-radius:3px">②安全库存（v544 起仅统计法；峰值法列保留作参考、不参与）</span> = '
      + '<b>预警线</b> → 按「' + modeLabel + '」<b>反推建议车数</b> → 单批售罄天数校验免租。'
      + '「周σ / 上沿」为波动输入；折合天数 = 覆盖天数 + 安全库存折合天数。'
      + '<br><b>v416 起原「📦 补货建议」表已并入本表</b>（两表有 6 列完全重复）：新增「到仓时在库 / 目标售罄 / 建议补货量 / 车数是怎么定出来的」4 列，'
@@ -4512,8 +4514,8 @@ function renderSamsFc() {
      + '<th>前置仓</th><th>近' + (st.win > 0 ? st.win + '周' : '全部') + '周均(箱)</th><th>周σ</th><th>上沿<br>(最高周)</th>'
      + '<th>基准周均<br>(箱)</th><th>基准日均<br>(今天起/到仓后)</th><th>覆盖<br>天数</th>'
      + '<th style="background:#E6F1FB">①需求覆盖<br>(未来周·箱)</th>'
-     + '<th>①统计法<br>安全库存</th><th>②峰值法<br>安全库存</th>'
-     + '<th style="background:#FAEEDA">②安全库存<br>(箱·取大)</th>'
+     + '<th>①统计法<br>安全库存(采用)</th><th title="v544 起不再参与取值，仅保留对照">②峰值法<br>安全库存(参考)</th>'
+     + '<th style="background:#FAEEDA">②安全库存<br>(箱·统计法)</th>'
      + '<th style="background:#E1F5EE">预警线<br>(箱 = ①+②)</th>'
      + '<th>折合<br>天数</th><th>运输<br>时效(天)</th>'
      + '<th style="background:#E6F1FB">到仓时在库<br>(箱·补货前)</th>'
@@ -4540,9 +4542,9 @@ function renderSamsFc() {
           : (r.basisWhy === 'chosen' ? '按历史销售覆盖' : '历史回退'))
       + (Math.abs(r.k - 1) > 0.02 ? ' · 较历史 ×' + r.k.toFixed(2) : '')
       + '</div></td>'
-      + '<td' + (r.ss1 >= r.ss2 ? ' style="font-weight:600"' : '') + '>' + F(r.ss1 * r.k)
+      + '<td style="font-weight:600">' + F(r.ss1 * r.k) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">采用</div>'
       + (Math.abs(r.k - 1) > 0.001 ? '<div style="font-size:10px;color:var(--text-secondary)">公式 ' + F(r.ss1) + '</div>' : '') + '</td>'
-      + '<td' + (r.ss2 > r.ss1 ? ' style="font-weight:600"' : '') + '>' + F(r.ss2 * r.k) + (r.ss2 > r.ss1 ? ' ✔' : '')
+      + '<td style="color:var(--text-muted)">' + F(r.ss2 * r.k) + '<div style="font-size:10px;color:var(--text-muted);font-weight:400">参考·不参与</div>'
       + (Math.abs(r.k - 1) > 0.001 ? '<div style="font-size:10px;color:var(--text-secondary)">公式 ' + F(r.ss2) + '</div>' : '') + '</td>'
       + '<td style="background:#FAEEDA;font-weight:600">' + F(r.ssFinal) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">' + r.ssPick + '</div></td>'
       + '<td style="background:#E1F5EE;font-weight:700;color:var(--color-blue)">' + F(r.rop)
@@ -4621,7 +4623,7 @@ function renderSamsFc() {
      + '</summary>'
      + '<div style="margin-top:8px">'
      + '注：<b>预警线 = ①需求覆盖 + ②安全库存</b>，两项都已是最终值，<b>不需要再乘任何系数</b>。'
-     + '①统计法/②峰值法两列<b>已按需求倍率 k 换算</b>（= 公式值 × k），所以 max(两列) 恒等于「②安全库存(取大)」；'
+     + '①统计法/②峰值法两列<b>已按需求倍率 k 换算</b>（= 公式值 × k）；v544 起安全库存<b>只用①统计法</b>，②峰值法列仅作对照、不参与取值（原为两列取大）；'
      + 'k≠1 的仓在格内以小字补出公式原值。预警线格内小字「历史口径」= 若按历史日均×覆盖天数 + 未缩放的 ss 反算会得到的值，<b>仅作对照，不作为预警线</b>。<br>'
      // 🔴 v434：只剩一套算法（覆盖天数）；预警线地板已随 target 模式删除
      + '<b>建议车数</b>（v430）= ⌈max(0, 今天起 D 天需求 ＋ 安全库存 − <b>当前库存</b>) ÷ 整车容量⌉，'
@@ -4643,7 +4645,7 @@ function renderSamsFc() {
      + '这是正确结论（现有库存已够 7 天），不是算错。'
      + '<br>　🔴 <b>v431 安全库存口径改为跟随「覆盖天数」</b>：此前覆盖目标的安全库存与预警线共用同一套（按「覆盖周数×7」算），'
      + '导致把「覆盖天数」拉到 14、而「覆盖周数」停在 1 时，需求按 14 天涨、安全库存却仍是 7 天的量（惠州 14 天安全库存仍是 3,190 箱）。'
-     + '现覆盖目标的安全库存按「覆盖天数」重算（统计法 ' + samsProbit(st.csl).toFixed(3) + '×σ日×√D、峰值法 上行缺口×D，取大后 × k），'
+     + '现覆盖目标的安全库存按「覆盖天数」重算（v544 起仅统计法 ' + samsProbit(st.csl).toFixed(3) + '×σ日×√D × k；原峰值法 上行缺口×D 保留对照、不参与），'
      + '只有「覆盖天数 ≠ 覆盖周数×7」时才与预警线安全库存不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。'
      + '上方「📐 覆盖天数算法·计算过程」面板逐仓给出该安全库存与其推导。'
      + '<br>　⚠ <b>v426 起不再用「预警线」反推车数</b>：旧版还有一条结构性下限 ⌈(预警线 − 到仓时在库) ÷ 整车容量⌉，'
@@ -4675,8 +4677,8 @@ function renderSamsFc() {
              + '<td>' + F(r.coverDemandArr)
              + (r.ded > 0 ? '<div style="font-size:10px;color:#8A5A12;font-weight:400">已扣本周订单 ' + F(r.ded) + (r.dedOverflow > 0 ? '（超DP作废 ' + F(r.dedOverflow) + '）' : '') + '</div>' : '')
              + '</td>'
-             + '<td' + (r.ssPickC === '统计法' ? ' style="font-weight:600"' : '') + '>' + F(r.ss1c * r.k) + '</td>'
-             + '<td' + (r.ssPickC === '峰值法' ? ' style="font-weight:600"' : '') + '>' + F(r.ss2c * r.k) + '</td>'
+             + '<td style="font-weight:600">' + F(r.ss1c * r.k) + '</td>'
+             + '<td style="color:var(--text-muted)">' + F(r.ss2c * r.k) + '<div style="font-size:10px;color:var(--text-muted);font-weight:400">参考·不参与</div></td>'
              + '<td style="background:#FAEEDA;font-weight:600">' + F(r.ssFinalC) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">' + r.ssPickC + '</div></td>'
              + '<td style="background:#E1F5EE;font-weight:700;color:var(--color-blue)">' + F(r.coverTarget) + '</td>'
              + '<td' + (r.curKnown ? '' : ' style="color:var(--text-secondary)"') + '>' + F(r.curStock) + (r.curKnown ? '' : '<div style="font-size:10px">未填·按预警线</div>') + '</td>'
@@ -4687,14 +4689,14 @@ function renderSamsFc() {
          return '<div class="card" style="margin-top:14px;border-left:3px solid #185FA5">'
            + '<div class="card-header"><div class="card-title">📐 覆盖天数算法 · 计算过程（当前生效）</div>'
            + '<div class="card-subtitle">'
-           + '目标水位 = ①今天起 ' + st.coverDays + ' 天需求（已扣本周订单） ＋ ④安全库存；④ = max(②统计法, ③峰值法) × 需求倍率 k；'
+           + '目标水位 = ①今天起 ' + st.coverDays + ' 天需求（已扣本周订单） ＋ ④安全库存；④ = ②统计法 × 需求倍率 k（v544 起去掉峰值法，③列保留作参考）；'
            + '⑦需补 = max(0, ⑤目标 − ⑥当前库存)；⑧车数 = ⌈⑦ ÷ 整车 ' + st.car + '⌉，'
            + '但 ⑦ 不足最小起补量 ' + F(st.car * st.minCarRatio) + ' 箱（' + st.minCarRatio + ' 车）时本批不补（0 车）。'
            + '<br>扣减 = min(本周已发生订单 + 人工补填, 本周 DP 共识)，超出部分作废；下周需求与安全库存完整保留。</div></div>'
            + '<div style="overflow:auto"><table class="data-table" style="white-space:nowrap;font-size:12px"><thead><tr>'
            + '<th>仓</th><th>① 今天起 ' + st.coverDays + ' 天需求' + (rows.some(function(r){return r.ded>0;}) ? '<br>（已扣本周订单）' : '') + '</th>'
            + '<th>② 安全库存<br>统计法(×k)</th><th>③ 安全库存<br>峰值法(×k)</th>'
-           + '<th>④ 安全库存<br>取大·采用</th><th>⑤ 目标水位<br>=①+④</th>'
+           + '<th>④ 安全库存<br>统计法·采用</th><th>⑤ 目标水位<br>=①+④</th>'
            + '<th>⑥ 当前库存</th><th>⑦ 需补<br>=max(0,⑤−⑥)</th><th>⑧ 车数</th>'
            + '</tr></thead><tbody>' + _rows + '</tbody>'
            + '<tfoot><tr style="font-weight:700;background:var(--bg-primary)">'
@@ -4703,7 +4705,7 @@ function renderSamsFc() {
            + '<td>' + F(_totNeed) + '</td><td>' + _totCar + ' 车</td>'
            + '</tr></tfoot></table></div>'
            + '<div style="font-size:11px;color:var(--text-secondary);margin:8px 4px 0;line-height:1.7">'
-           + '注：②统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数（概率口径，服务水平 ' + (st.csl * 100).toFixed(0) + '% 情况下够用）；③峰值法 = 上行缺口(箱/天) × 覆盖天数（情景口径，需求贴历史最高周跑）；两者量级接近、互相反超，取大者。'
+           + '注：②统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数（概率口径，服务水平 ' + (st.csl * 100).toFixed(0) + '% 情况下够用），v544 起为唯一采用口径；③峰值法 = 上行缺口(箱/天) × 覆盖天数，仅保留对照、不再参与取值。'
            + 'k = 未来日均 ÷ 历史日均（②/③/④已按 k 换算）；⑥未填时默认按预警线假设当前库存。'
            + '本面板展示覆盖天数算法的逐仓推导，预警线的完整组成见上方明细表与安全库存列。</div>'
            + '</div>';
@@ -4830,12 +4832,11 @@ function renderSamsFc() {
 
 
   // ---- 图3：安全库存是怎么算出来的 ----
-  h += '<div class="card"><div class="card-header"><div class="card-title">图2 · 安全库存是怎么算出来的：两套公式取较大值</div></div>'
+  h += '<div class="card"><div class="card-header"><div class="card-title">图2 · 安全库存是怎么算出来的：v544 起仅统计法</div></div>'
      + '<div class="card-subtitle" style="margin-bottom:8px">'
-     + '①统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数（概率口径：按历史波动，服务水平 ' + (st.csl * 100).toFixed(0) + '% 情况下够用，随天数按 √D 增长）｜'
-     + '②峰值法 = (周上沿÷7 − 基准日均) × 覆盖天数（情景口径：需求贴着历史最高周跑，随天数按 D 线性增长）｜'
-     + '两者<b>取较大值</b>，被选中的那根标「采用」。'
-     + '⚠ 柱高<b>已 × 需求倍率 k</b>（与 KPI 卡 / 明细表的「②安全库存」同口径，故 max(①,②) 恒等于那里的②）；公式原值见工具提示。</div>'
+     + '①统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数（概率口径：按历史波动，服务水平 ' + (st.csl * 100).toFixed(0) + '% 情况下够用，随天数按 √D 增长）——<b>v544 起为唯一采用口径</b>｜'
+     + '②峰值法 = (周上沿÷7 − 基准日均) × 覆盖天数（情景口径）——保留作参考对照，<b>不再参与取值</b>。'
+     + '⚠ 柱高<b>已 × 需求倍率 k</b>（与 KPI 卡 / 明细表的「②安全库存」同口径）；公式原值见工具提示。</div>'
      + '<div id="sams-chart-ss" style="height:300px"></div></div>';
 
   // ---- 图3 + 图4（v457：删除原图1「补货前后水位对比」，图号整体前移一位）----
@@ -4875,10 +4876,9 @@ function renderSamsFc() {
      + '<b>按天数比例切分</b>后累加）'
      + '<br>　　例：今天落在「10/12~10/18」这周内，覆盖 7 天 = 本周剩余 2 天 + 下周 5 天 → 2/7×本周DP + 5/7×下周DP。'
      + '<br>　　无未来 DP 的仓 → 回退「历史日均 × 覆盖天数」，页面标注「历史回退」。'
-     + '<br>　<span style="color:#854F0B;font-weight:600">②安全库存 = max(①统计法, ②峰值法)</span>'
-     + '<br>　　①统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数 —— 概率口径：按历史波动，服务水平 ' + (st.csl * 100).toFixed(0) + '% 的情况下够用（随天数按 √D 增长）'
-     + '<br>　　②峰值法 = (周上沿÷7 − 基准日均) × 覆盖天数 —— 情景口径：需求贴着历史最高周跑（随天数按 D 线性增长）'
-     + '<br>　　两式量级接近、会互相反超：覆盖天数小 → 统计法占优；天数大 → 峰值法占优。故必须<b>取大者</b>（见图2 中标「采用」的柱子）。'
+     + '<br>　<span style="color:#854F0B;font-weight:600">②安全库存 = 统计法（v544 起，去掉峰值法）</span>'
+     + '<br>　　①统计法 = ' + samsProbit(st.csl).toFixed(3) + ' × σ日 × √覆盖天数 —— 概率口径：按历史波动，服务水平 ' + (st.csl * 100).toFixed(0) + '% 的情况下够用（随天数按 √D 增长）——<b>唯一采用</b>'
+     + '<br>　　②峰值法 = (周上沿÷7 − 基准日均) × 覆盖天数 —— v544 起仅保留对照、<b>不参与取值</b>（原口径为两式取大者）。'
      + '<br>　<b>预警线 = ① + ②</b>（两项都是最终值，<b>不再二次乘系数</b>；k 只用于把②安全库存按未来需求同比例放大）。'
      + '<br><b>周上沿 = 窗口内实测最高自然周</b>（源表无区间上下沿数据，用历史峰值代理压力情景，不用「周均+Nσ」这类拍脑袋倍数）。'
      + '<br><b>折合天数</b> = 预警线 ÷ 基准日均 = 覆盖天数 + 安全库存折合天数（例：惠州 7.0 + 8.2 = 15.2 天）。'
@@ -6533,8 +6533,8 @@ function samsCharts(data, rows, st) {
              + ' = <b>' + Math.round(r.ss1 * r.k).toLocaleString('zh-CN') + '</b> 箱<br>';
           o += '② 峰值法 (上沿÷7 − 基准日均) × D = ' + (SAMS_SSU).toFixed(3) + ' × (' + Math.round(r.hiW) + '÷7 − '
              + Math.round(r.dUse) + ') × ' + r.D + ' → 公式 ' + Math.round(r.ss2).toLocaleString('zh-CN')
-             + ' × k ' + r.k.toFixed(3) + ' = <b>' + Math.round(r.ss2 * r.k).toLocaleString('zh-CN') + '</b> 箱<br>';
-          o += '→ 取大者 = <b>' + r.ssPick + ' ' + Math.round(Math.max(r.ss1, r.ss2) * r.k).toLocaleString('zh-CN') + ' 箱</b>';
+             + ' × k ' + r.k.toFixed(3) + ' = <b>' + Math.round(r.ss2 * r.k).toLocaleString('zh-CN') + '</b> 箱（v544 起仅参考）<br>';
+          o += '→ 采用 = <b>' + r.ssPick + ' ' + Math.round(r.ssFinal).toLocaleString('zh-CN') + ' 箱</b>';
           return o;
         } },
       legend: { top: 0, textStyle: { color: sub, fontSize: 11 } },
