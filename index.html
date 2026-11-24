@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 544; // v544: 山姆安全库存去掉峰值法，只用统计法（峰值法列保留为参考·不参与）
+const BUILD_VERSION = 545; // v545: 修正扣单后 gapVsRop 未重算；增量分析增加 RDC 筛选
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -3820,9 +3820,12 @@ function samsRopAt(wh, coverW, st) {
       curStock = rop;
       stockAtArrival = Math.max(0, curStock - leadDemand);
       stockoutRisk = leadDemand > curStock;
-      gapVsRop = curStock - rop;
       curStockDays = dUse > 0 ? curStock / dUse : 0;
     }
+    // v545（用户 2026-11-24）：gapVsRop 必须按扣单后的新预警线重算。
+    //   原写在 if(!curKnown) 内 → 实填库存仓（如天津 2000 箱）走不到，仍显示按扣单前旧预警线 5946 算出的
+    //   「低于预警线 3946 箱」；现与 dropDays 并列，未填/实填库存仓一律重算：2000−3035=−1035 箱。
+    gapVsRop = curStock - rop;
     dropDays = dUse > 0 ? rop / dUse : 0;
   }
   var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求
@@ -26384,7 +26387,10 @@ function buildUpAdjAvoid() {
   if (!rows.length || !dataStore.orderDetail || !dataStore.orderDetail.length) return null;
   // v527: 月度筛选（按补货日）—— 只筛「进入分析的加量记录」，观察期订单明细 demMap 仍用全量构建（不受筛选限制）。
   const upMonth = (window._adjState && window._adjState.month) || 'all';
-  const sig = rows.length + '|' + dataStore.orderDetail.length + '|m' + upMonth;
+  // v545（用户 2026-11-24）：增量分析增加 RDC 筛选，与减量分析共用 _adjState.rdc（短名）；
+  //   必须进缓存 sig，否则切换 RDC 会命中旧缓存串数据。
+  const upRdc = (window._adjState && window._adjState.rdc) || 'all';
+  const sig = rows.length + '|' + dataStore.orderDetail.length + '|m' + upMonth + '|r' + upRdc;
   if (window._upAdjCache && window._upAdjCache.sig === sig) return window._upAdjCache;
   // 逐日(日期|仓|SKU)订单需求，单位支；maxOrd 用全部日期(含周末)覆盖边界
   const demMap = Object.create(null);
@@ -26418,6 +26424,11 @@ function buildUpAdjAvoid() {
     if (upMonth !== 'all' && date.slice(0, 7) !== upMonth) continue;  // v527: 按补货日筛月份（观察期 demMap 全量不变）
     const rdcRaw = String(r.rdc || '').trim();
     const rdcShort = rdcRaw.replace(/RDC$/, '');   // replenish-detail 的 rdc 是完整名(华中RDC)，运输周期表用短名
+    // v545: 用户铁律「广东RDC 一律等同 华南RDC」。当前 replenish-detail.json 实测仅 6 个标准名
+    //   （华中613/西南466/华南415/西北333/东北251/华北247），无此别名；筛选侧仍显式归一，
+    //   避免未来源出现「广东RDC」时选华南漏数。full/lead 计算链保持原样不动。
+    const rdcFilter = (rdcShort === '广东' || rdcShort === '广东仓' || rdcShort === '华南仓') ? '华南' : rdcShort;
+    if (upRdc !== 'all' && rdcFilter !== upRdc) continue;   // v545: 按 RDC 筛选（短名对短名）
     const full = rdcShort !== rdcRaw ? rdcRaw : (ADJ_RDC_FULL[rdcRaw] || (rdcRaw + 'RDC'));
     const lead = ADJ_TRANSPORT[rdcShort] != null ? ADJ_TRANSPORT[rdcShort] : ADJ_TRANSPORT[rdcRaw];
     if (lead == null) continue;
@@ -26505,9 +26516,14 @@ function renderUpAdjTab(page, tabBar) {
   const months = _adjMonthOptions();
   const curMonth = (window._adjState && window._adjState.month) || 'all';
   const monthSel = '<select onchange="window._adjState.month=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all"' + (curMonth === 'all' ? ' selected' : '') + '>全部月份</option>' + months.map(function(m) { return '<option value="' + m + '"' + (curMonth === m ? ' selected' : '') + '>' + m.replace('-', ' 年 ') + ' 月</option>'; }).join('') + '</select>';
+  // v545（用户 2026-11-24）：增量分析增加 RDC 下拉。复用 _adjState.rdc（与减量分析同字段、同短名值域），
+  //   RDC 列表与减量分析保持一致；buildUpAdjAvoid 内按此字段过滤并把字段加入缓存 key。
+  const adjRdcList = ['华中', '华南', '华北', '东北', '西北', '西南'];
+  const curRdc = (window._adjState && window._adjState.rdc) || 'all';
+  const rdcSel = '<select onchange="window._adjState.rdc=this.value;renderAdjustTrack()" style="' + selStyle + '"><option value="all"' + (curRdc === 'all' ? ' selected' : '') + '>全部 RDC</option>' + adjRdcList.map(function(x) { return '<option value="' + x + '"' + (curRdc === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   const c = buildUpAdjAvoid();
   if (!c) {
-    page.innerHTML = tabBar + '<div style="padding:14px 16px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…（' + monthSel + '）</div>';
+    page.innerHTML = tabBar + '<div style="padding:14px 16px;color:var(--text-secondary);font-size:12px">⏳ 加量避缺分析数据加载中…（' + monthSel + rdcSel + '）</div>';
     return;
   }
   // v530: 长短窗口单选切换（radio 互斥，不可复选）；默认短窗口 = 主口径，保持原有展示不变
@@ -26528,7 +26544,7 @@ function renderUpAdjTab(page, tabBar) {
     '</div>';
 
   let h = tabBar;
-  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' + monthSel + '<span style="font-size:12px;color:var(--text-secondary)">按<b>补货日</b>筛选；观察窗内订单数据始终全量（不受筛选限制）</span></div>';
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' + monthSel + rdcSel + '<span style="font-size:12px;color:var(--text-secondary)">按<b>补货日</b>与<b>RDC</b>筛选；观察窗内订单数据始终全量（不受筛选限制）</span></div>';
   h += '<div class="card" style="margin-bottom:12px;padding:14px 16px">';
   h += '<div style="font-size:13px;font-weight:600;margin-bottom:8px">📈 加量避缺分析 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 加量补货是否真的避免了缺货？反事实推演：如果不加量，观察窗内会不会缺</span></div>';
   h += winSel;
