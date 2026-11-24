@@ -1,7 +1,7 @@
 /* ==========================================================================
  * 山姆前置仓「补货量 → 库存演化」沙箱引擎 —— 自动生成，请勿手改
  * 生成脚本 : tools/build_sams_sim_bundle.py
- * 来源     : rdc-dashboard.html 逐字抽取 L3011~L4003（993 行，sha16=78d34b49b08da00b）
+ * 来源     : rdc-dashboard.html 逐字抽取 L3018~L4032（1015 行，sha16=2995ba835a34028f）
  * 用法     : 页面按需 fetch 本文件文本，用 new Function('window', code) 编译，
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *
@@ -14,7 +14,7 @@
  * ========================================================================== */
 (function (global) {
   var RealDate = global.Date;
-  var SHA16 = '78d34b49b08da00b';
+  var SHA16 = '2995ba835a34028f';
 
   // 形参 window / Date 遮蔽全局：SRC 里的 window._samsState 落在沙箱对象上，
   // new Date() 走 FakeDate，绝不污染看板主页面的 Date / _samsState。
@@ -681,10 +681,11 @@ function samsRopAt(wh, coverW, st) {
   var upGapDay = Math.max(0, hiW / 7 - d);      // 上行缺口（箱/天）
   // v449: 「已 N 天无新周」提示已按用户要求删除，histStaleDays 计算随之移除（只保留最新有效周标签本身）
   var lastOkIdx = useIdx.length ? useIdx[useIdx.length - 1] : -1;
+  // v544（用户 2026-11-24 裁定）：去掉峰值法，安全库存只用统计法。峰值法 ss2 仍算出仅为展示对照（保留原列不删），不参与取值。
   var ss1 = samsProbit(st.csl) * sdD * Math.sqrt(D);   // ① 统计法：F⁻¹(csl) × σ日 × √覆盖天数（z 随服务水平走，默认 95%→1.6449）
-  var ss2 = SAMS_SSU * upGapDay * D;   // ② 峰值法：SAMS_SSU × 上行缺口(箱/天) × 覆盖天数（情景口径，不随服务水平 z 变；v436 起 SAMS_SSU=1.0）
-  var ss = Math.max(ss1, ss2);
-  var ssPick = ss2 > ss1 ? '峰值法' : '统计法';  // 取大者（用于展示"安全库存是怎么来的"）
+  var ss2 = SAMS_SSU * upGapDay * D;   // ② 峰值法：v544 起仅参考展示、不参与取值
+  var ss = ss1;                        // v544：只用统计法（原 Math.max(ss1,ss2)）
+  var ssPick = '统计法';               // v544：恒为统计法（原按取大者动态标注）
   var ropHist = d * D + ss;
 
   var pv = [];
@@ -813,15 +814,36 @@ function samsRopAt(wh, coverW, st) {
   var dedCap      = Math.min(weekDp != null ? weekDp : 0, Math.max(0, coverDemandRaw));  // 上限=当周DP，超出作废
   var ded         = Math.min(dedBase, dedCap);
   var dedOverflow = Math.max(0, dedBase - dedCap);                  // 超出当周DP被作废的量（展示用）
+  // v542（用户 2026-11-24）：卡片①「需求覆盖」口径改为与表格①一致 —— 同样扣本周已发生订单。
+  //   🔴 ded 依赖 coverDemandRaw（今天起 coverDays 的需求轴），算出来时 rop / curStock / gapVsRop /
+  //      dropDays / stockAtArrival 已按「未扣」的 reqCover 求好，必须在这里追补重算，
+  //      否则卡片①显示扣后数、预警线与「库存未填＝按预警线」却仍是扣前数，又变成两套账。
+  //   扣减沿用表格同一笔 ded（本周已发生＋补填，上限本周 DP、超出作废），下限 0 防扣穿。
+  if (ded > 0) {
+    reqCover = Math.max(0, reqCover - ded);
+    rop = reqCover + ssFinal;
+    if (!curKnown) {   // 未填库存时按预警线假设，必须跟着新 rop 走
+      curStock = rop;
+      stockAtArrival = Math.max(0, curStock - leadDemand);
+      stockoutRisk = leadDemand > curStock;
+      curStockDays = dUse > 0 ? curStock / dUse : 0;
+    }
+    // v545（用户 2026-11-24）：gapVsRop 必须按扣单后的新预警线重算。
+    //   原写在 if(!curKnown) 内 → 实填库存仓（如天津 2000 箱）走不到，仍显示按扣单前旧预警线 5946 算出的
+    //   「低于预警线 3946 箱」；现与 dropDays 并列，未填/实填库存仓一律重算：2000−3035=−1035 箱。
+    gapVsRop = curStock - rop;
+    dropDays = dUse > 0 ? rop / dUse : 0;
+  }
   var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
   //   sdD = σ日、upGapDay = 上行缺口(箱/天)、k = 未来日均÷历史日均（同比例缩放），均来自上方 samsRopAt 作用域。
+  // v544：目标水位侧同样去掉峰值法，只用统计法（与预警线侧 ss 口径一致）。ss2c 仅参考展示、不参与取值。
   var ss1c = samsProbit(st.csl) * sdD * Math.sqrt(coverDays);     // ① 统计法：F⁻¹(csl) × σ日 × √覆盖天数
-  var ss2c = SAMS_SSU * upGapDay * coverDays;     // ② 峰值法：SAMS_SSU × 上行缺口 × 覆盖天数（情景口径；v436 起 SAMS_SSU=1.0）
-  var ssc = Math.max(ss1c, ss2c);
-  var ssPickC = ss2c > ss1c ? '峰值法' : '统计法';
+  var ss2c = SAMS_SSU * upGapDay * coverDays;     // ② 峰值法：v544 起仅参考展示、不参与取值
+  var ssc = ss1c;                                 // v544：只用统计法（原 Math.max(ss1c,ss2c)）
+  var ssPickC = '统计法';                         // v544：恒为统计法
   var ssFinalC = ssc * k;                                     // 按需求倍率 k 同比例放大
   var coverTarget = coverDemandArr + ssFinalC;                // 目标库存水位（含安全库存，安全库存按覆盖天数定）
   var coverNeed = Math.max(0, coverTarget - curStock);        // v430：减【当前库存】（今天时点），原为 stockAtArrival
