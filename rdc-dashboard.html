@@ -4275,6 +4275,19 @@ function renderSamsFc() {
   // ---- KPI 卡：每仓一条预警线 + 完整组成 ----
   h += '<div style="font-size:13px;font-weight:600;color:var(--text-primary);margin:18px 0 8px">'
      + '📊 预警线水位 + 建议车数（水位＝①需求覆盖 + ②安全库存；卡片内蓝块＝按「' + modeLabel + '」反推的补货车数）</div>';
+  // v541（用户 2026-11-24）：全宽说明「两个①」的口径差异。
+  //   🔴 必须放在这里、不能放进仓卡片 —— 仓卡片只有约 206px 宽，长文案会被挤成 8~9 行，破坏数据展示。
+  if (st.coverDays !== Math.round(st.coverW * 7)) {
+    h += '<div style="font-size:11px;line-height:1.7;color:#8A5A12;background:#FDF3E3;border-left:3px solid #EF9F27;'
+       + 'padding:7px 11px;border-radius:0 6px 6px 0;margin:0 0 10px">'
+       + '<b>⚠ 本页有两个「①」，口径不同，不要横向比大小：</b><br>'
+       + '· 下方卡片 ① ＝ <b>预警线口径</b>：<b>未来 ' + Math.round(st.coverW * 7) + ' 天</b>（覆盖周数×7）DP 共识计划，<b>不扣</b>订单'
+       + '（卡片 ② 安全库存同样按 ' + Math.round(st.coverW * 7) + ' 天算）<br>'
+       + '· 最下方「📐 覆盖天数算法」表 ① ＝ <b>目标水位口径</b>：<b>今天起 ' + st.coverDays + ' 天</b>累计需求，<b>已扣</b>本周已发生订单'
+       + '（表格 ④ 安全库存同样按 ' + st.coverDays + ' 天算）<br>'
+       + '→ 天数多的那个反而可能更小：多算的那几天需求，抵不过被扣掉的本周订单。属正常，<b>不是算错</b>。'
+       + '</div>';
+  }
   // ---- 🔴 v420：当前库存输入口的提示文案 ----
   //   用户 2026-10-18 问「是不是警戒线也无所谓了？只要输入库存就能吐出应该补多少量」。
   //   实质：车数公式里**确实没有预警线**（见 samsRopAt 的 coverNeed），预警线不参与决定补几车；
@@ -4448,7 +4461,7 @@ function renderSamsFc() {
        + '</div>'
        + '<div style="font-size:11px;color:var(--text-secondary);line-height:1.65">'
        +   '<span style="display:inline-block;width:7px;height:7px;background:#378ADD;border-radius:2px;margin-right:4px"></span>'
-       +   '<span style="color:#378ADD;font-weight:600">［预警线口径］</span>需求覆盖<span style="color:#64748B;font-size:10px">（未来 ' + r.reqCoverDays + ' 天＝覆盖周数×7，未扣订单）</span> <b style="color:var(--text-primary)">' + F(r.reqCover) + '</b>（'
+       +   '<span style="color:#378ADD;font-weight:600">［预警线］</span>需求覆盖<span style="color:#64748B;font-size:10px;cursor:help" title="预警线口径：未来 ' + r.reqCoverDays + ' 天 ＝ 覆盖周数×7，取 DP 共识计划合计，不扣订单">（未来 ' + r.reqCoverDays + ' 天·未扣单）</span> <b style="color:var(--text-primary)">' + F(r.reqCover) + '</b>（'
        // v458 修文案 bug：取大者(max)模式下「历史 > 未来」也会落到 hist，旧文案却一律写「无未来计划」——
        //   惠州/天津 明明有 DP（4,880 / 6,938 箱）却被标成"没有未来计划"，与下方「未来计划 4,880 箱」自相矛盾。
        //   只有真正没有 DP 时才允许说「无未来计划」。
@@ -4462,21 +4475,25 @@ function renderSamsFc() {
        +   '）<br>'
        +   '<span style="display:inline-block;width:7px;height:7px;background:#EF9F27;border-radius:2px;margin-right:4px"></span>'
        +   '②安全库存 <b style="color:var(--text-primary)">' + F(r.ssFinal) + '</b>（' + r.ssDays.toFixed(1) + ' 天·' + r.ssPick + '）<br>'
-       +   '＝ 预警线折合 <b>' + r.dropDays.toFixed(1) + '</b> 天（' + r.reqCoverDays + ' 天需求 + ' + r.ssDays.toFixed(1) + ' 天安全库存）<br>'
+       +   '＝ 预警线折合 <b>' + r.dropDays.toFixed(1) + '</b> 天（' + r.reqCoverDays + ' + ' + r.ssDays.toFixed(1) + '）<br>'
        // v541（用户 2026-11-24）：澄清「两个①」。卡片的①需求覆盖走预警线口径（未来 coverW×7 天 DP 计划、不扣订单），
        //   下方表格的①走目标水位口径（今天起 coverDays 天累计需求、已扣本周订单）。
        //   当 coverDays ≠ coverW×7 时两套天数不同期、窗口起点也不同（「未来 N 天」≠「今天起 N 天」），
        //   天数多的那个反而可能更小（扣了本周订单），必须显式提示，否则会被读成「算错了」。
        //   ⚠ 不改口径：实测把预警线 D 改成 coverDays 后，「当前库存未填=按预警线」假设会同步上抬，
        //     全仓需补 13,855→0、车数 2→0，会把真实的补货需求吃掉。
+       //   🔴 版式约束：仓卡片只有约 206px 宽（实测 cityName 卡片 ctxW=206），长文案会被挤成 8~9 行、
+       //     严重破坏数据展示。所以卡片内只放「2 行极简 + title 悬浮补全」，完整解释放在下方
+       //     「📐 覆盖天数算法」卡片的 subtitle 里（那处是整幅宽度）。
        +   ((st.coverDays !== r.reqCoverDays)
-            ? '<div style="margin:5px 0 7px;padding:5px 8px;background:#FDF3E3;border-left:3px solid #EF9F27;border-radius:4px;'
-              + 'font-size:10px;line-height:1.65;color:#8A5A12">'
-              + '<b>⚠ 本页有两个「①」，不是同一个量，不要横向比大小</b><br>'
-              + '· 本卡片 ＝ <b>预警线口径</b>：<b>未来 ' + r.reqCoverDays + '</b> 天需求（覆盖周数×7），<b>不扣</b>订单<br>'
-              + '· 下方「计算过程」表 ＝ <b>目标水位口径</b>：<b>今天起 ' + st.coverDays + '</b> 天需求，<b>已扣</b>本周订单'
-              + (r.ded > 0 ? '（本仓已扣 ' + F(r.ded) + ' 箱）' : '') + '<br>'
-              + '天数多的那个反而可能更小 —— 多算的需求被「扣本周订单」盖过，属正常，不是算错。'
+            ? '<div style="margin:5px 0 6px;padding:4px 7px;background:#FDF3E3;border-left:3px solid #EF9F27;border-radius:4px;'
+              + 'font-size:10px;line-height:1.5;color:#8A5A12;cursor:help"'
+              + ' title="本卡片①＝预警线口径：未来 ' + r.reqCoverDays + ' 天需求（覆盖周数×7），不扣订单；'
+              + '下方「📐 覆盖天数算法 · 计算过程」表①＝目标水位口径：今天起 ' + st.coverDays + ' 天需求，已扣本周订单'
+              + (r.ded > 0 ? ' ' + F(r.ded) + ' 箱' : '') + '。两套口径不同期，天数多的那个反而可能更小，属正常，不是算错。">'
+              + '⚠ 两个「①」不可比<br>'
+              + '本卡 ' + r.reqCoverDays + ' 天·未扣 ↔ 表 ' + st.coverDays + ' 天·已扣'
+              + (r.ded > 0 ? ' ' + F(r.ded) : '')
               + '</div>'
             : '')
        +   '近' + (st.win > 0 ? st.win + '周' : '全部') + '周均 ' + F(r.W_hist) + ' ｜ 最新周 ' + F(r.lastVal)
