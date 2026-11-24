@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 540; // v540: 拉回分析新增「非卖品」开关(默认不包含)与「品牌」筛选；原有控件/口径/下钻不变
+const BUILD_VERSION = 541; // v541: 山姆补货澄清「两个①」口径差异(预警线口径 vs 目标水位口径),数值与口径零改动
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -4448,7 +4448,7 @@ function renderSamsFc() {
        + '</div>'
        + '<div style="font-size:11px;color:var(--text-secondary);line-height:1.65">'
        +   '<span style="display:inline-block;width:7px;height:7px;background:#378ADD;border-radius:2px;margin-right:4px"></span>'
-       +   '①需求覆盖 <b style="color:var(--text-primary)">' + F(r.reqCover) + '</b>（' + r.reqCoverDays + ' 天·'
+       +   '<span style="color:#378ADD;font-weight:600">［预警线口径］</span>需求覆盖<span style="color:#64748B;font-size:10px">（未来 ' + r.reqCoverDays + ' 天＝覆盖周数×7，未扣订单）</span> <b style="color:var(--text-primary)">' + F(r.reqCover) + '</b>（'
        // v458 修文案 bug：取大者(max)模式下「历史 > 未来」也会落到 hist，旧文案却一律写「无未来计划」——
        //   惠州/天津 明明有 DP（4,880 / 6,938 箱）却被标成"没有未来计划"，与下方「未来计划 4,880 箱」自相矛盾。
        //   只有真正没有 DP 时才允许说「无未来计划」。
@@ -4462,7 +4462,23 @@ function renderSamsFc() {
        +   '）<br>'
        +   '<span style="display:inline-block;width:7px;height:7px;background:#EF9F27;border-radius:2px;margin-right:4px"></span>'
        +   '②安全库存 <b style="color:var(--text-primary)">' + F(r.ssFinal) + '</b>（' + r.ssDays.toFixed(1) + ' 天·' + r.ssPick + '）<br>'
-       +   '＝ 预警线折合 <b>' + r.dropDays.toFixed(1) + '</b> 天（' + r.reqCoverDays + ' + ' + r.ssDays.toFixed(1) + '）<br>'
+       +   '＝ 预警线折合 <b>' + r.dropDays.toFixed(1) + '</b> 天（' + r.reqCoverDays + ' 天需求 + ' + r.ssDays.toFixed(1) + ' 天安全库存）<br>'
+       // v541（用户 2026-11-24）：澄清「两个①」。卡片的①需求覆盖走预警线口径（未来 coverW×7 天 DP 计划、不扣订单），
+       //   下方表格的①走目标水位口径（今天起 coverDays 天累计需求、已扣本周订单）。
+       //   当 coverDays ≠ coverW×7 时两套天数不同期、窗口起点也不同（「未来 N 天」≠「今天起 N 天」），
+       //   天数多的那个反而可能更小（扣了本周订单），必须显式提示，否则会被读成「算错了」。
+       //   ⚠ 不改口径：实测把预警线 D 改成 coverDays 后，「当前库存未填=按预警线」假设会同步上抬，
+       //     全仓需补 13,855→0、车数 2→0，会把真实的补货需求吃掉。
+       +   ((st.coverDays !== r.reqCoverDays)
+            ? '<div style="margin:5px 0 7px;padding:5px 8px;background:#FDF3E3;border-left:3px solid #EF9F27;border-radius:4px;'
+              + 'font-size:10px;line-height:1.65;color:#8A5A12">'
+              + '<b>⚠ 本页有两个「①」，不是同一个量，不要横向比大小</b><br>'
+              + '· 本卡片 ＝ <b>预警线口径</b>：<b>未来 ' + r.reqCoverDays + '</b> 天需求（覆盖周数×7），<b>不扣</b>订单<br>'
+              + '· 下方「计算过程」表 ＝ <b>目标水位口径</b>：<b>今天起 ' + st.coverDays + '</b> 天需求，<b>已扣</b>本周订单'
+              + (r.ded > 0 ? '（本仓已扣 ' + F(r.ded) + ' 箱）' : '') + '<br>'
+              + '天数多的那个反而可能更小 —— 多算的需求被「扣本周订单」盖过，属正常，不是算错。'
+              + '</div>'
+            : '')
        +   '近' + (st.win > 0 ? st.win + '周' : '全部') + '周均 ' + F(r.W_hist) + ' ｜ 最新周 ' + F(r.lastVal)
        +   (r.lastWeekLbl ? '<span style="font-size:10px">（' + r.lastWeekLbl + (r.lastIsExcluded ? '·已剔除' : '') + '）</span>' : '') + '<br>'
        +   (r.nExcluded ? '<span style="color:var(--color-orange)">已剔除 ' + r.nExcluded + ' 个异常周，未计入周均/波动/上沿</span><br>' : '')
@@ -4666,6 +4682,8 @@ function renderSamsFc() {
      // ===== v434：覆盖天数算法的「计算过程」面板（唯一算法，恒显）=====
      + (function () {
          var _totDem = 0, _totSS = 0, _totTgt = 0, _totCur = 0, _totNeed = 0, _totCar = 0;
+         // v541：预警线天数（= 覆盖周数×7）与卡片完全同源取自 rows[0].reqCoverDays，不另算 st.coverW，避免两处漂移
+         var _rcDays = rows.length ? rows[0].reqCoverDays : Math.round(st.coverW * 7);
          var _rows = rows.map(function (r) {
            _totDem += r.coverDemandArr; _totSS += r.ssFinalC; _totTgt += r.coverTarget;
            _totCur += r.curStock; _totNeed += Math.max(0, r.needEff); _totCar += r.byTargetEff;
@@ -4685,13 +4703,19 @@ function renderSamsFc() {
          }).join('');
          return '<div class="card" style="margin-top:14px;border-left:3px solid #185FA5">'
            + '<div class="card-header"><div class="card-title">📐 覆盖天数算法 · 计算过程（当前生效）</div>'
-           + '<div class="card-subtitle">目标水位 = ①今天起 D 天需求 ＋ ④安全库存；④ = max(②统计法, ③峰值法) × 需求倍率 k；'
+           + '<div class="card-subtitle">［<b>目标水位口径</b>，与上方卡片的「预警线口径」是两套账］<br>'
+           + '目标水位 = ①今天起 ' + st.coverDays + ' 天需求 ＋ ④安全库存；④ = max(②统计法, ③峰值法) × 需求倍率 k；'
            + '⑦需补 = max(0, ⑤目标 − ⑥当前库存)；⑧车数 = ⌈⑦ ÷ 整车 ' + st.car + '⌉，'
            + '但 ⑦ 不足最小起补量 ' + F(st.car * st.minCarRatio) + ' 箱（' + st.minCarRatio + ' 车）时本批不补（0 车）。'
-           + '安全库存口径自 v431 起跟随「覆盖天数」（覆盖天数 = 覆盖周数×7 时与预警线安全库存相等）。'
-           + '<br>① 已按 <b>v524 口径</b>扣本周订单：扣减 = min(本周已发生订单 + 人工补填, 本周 DP 共识)，超出本周 DP 的部分作废；下周需求与安全库存完整保留。</div></div>'
+           // v541：原句「覆盖天数 = 覆盖周数×7 时与预警线安全库存相等」技术上成立但默认参数下永不发生
+           //   （coverW=1 → 7 天、coverDays=10 天），会被读成「两边安全库存相等」，改成直说现状。
+           + '④ 安全库存按「覆盖天数 ' + st.coverDays + ' 天」算，而上方卡片的 ② 按「覆盖周数×7 = '
+           + _rcDays + ' 天」算 —— 默认参数下两者天数不同，故两张表的⑥安全库存数值也不相等。'
+           + '<br>① 已按 <b>v524 口径</b>扣本周订单：扣减 = min(本周已发生订单 + 人工补填, 本周 DP 共识)，超出本周 DP 的部分作废；下周需求与安全库存完整保留。'
+           + '<br><span style="color:#8A5A12">⚠ 本表 ①（今天起 ' + st.coverDays + ' 天·已扣订单）与上方卡片 ①（未来 '
+           + _rcDays + ' 天·未扣订单）口径不同，天数多的那个反而可能更小，不要横向比大小。</span></div></div>'
            + '<div style="overflow:auto"><table class="data-table" style="white-space:nowrap;font-size:12px"><thead><tr>'
-           + '<th>仓</th><th>① 今天起 ' + st.coverDays + ' 天需求' + (rows.some(function(r){return r.ded>0;}) ? '<br>（已扣本周订单）' : '') + '</th>'
+           + '<th>仓</th><th>① 今天起 ' + st.coverDays + ' 天需求' + (rows.some(function(r){return r.ded>0;}) ? '<br>（已扣本周订单）' : '') + '<br><span style="font-weight:400;font-size:10px;color:#64748B">目标水位口径</span></th>'
            + '<th>② 安全库存<br>统计法(×k)</th><th>③ 安全库存<br>峰值法(×k)</th>'
            + '<th>④ 安全库存<br>取大·采用</th><th>⑤ 目标水位<br>=①+④</th>'
            + '<th>⑥ 当前库存</th><th>⑦ 需补<br>=max(0,⑤−⑥)</th><th>⑧ 车数</th>'
