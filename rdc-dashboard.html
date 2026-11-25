@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 559; // v559: 补货决策复盘删除顶部长篇口径说明块（用户要求「废话删掉」）
+const BUILD_VERSION = 560; // v560: 山姆安全库存缩放系数 kSs 改用扣本周订单后的日均，随需求覆盖同步变化
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -3700,10 +3700,11 @@ function samsRopAt(wh, coverW, st) {
   } else {
     dUse = fut.daily; reqCover = fut.sum; reqBasis = 'future';
   }
-  var k = d > 0 ? dUse / d : 1;                   // 未来日均 ÷ 历史日均 → 安全库存同比例缩放
+  var k = d > 0 ? dUse / d : 1;                   // 扣本周订单前的未来日均 ÷ 历史日均（仅保留作展示/兼容）
+  var dSs = dUse, kSs = k;                        // v560: 安全库存专用基数——默认同 k；扣本周订单后改按扣后日均（随①需求覆盖同步）
   var W_use = dUse * 7;                           // 基准周均（兼容旧字段 / 明细表 / CSV）
   // ===== 预警线的完整组成 =====
-  var ssFinal = ss * k;                           // 【第二段】安全库存（按需求倍率等比缩放）
+  var ssFinal = ss * kSs;                         // 【第二段】安全库存（v560: 按扣后需求倍率 kSs 等比缩放）
   var rop = reqCover + ssFinal;                   // = 两段之和
 
   // v409: 「最新周实际」= 最新一个有实际数据的自然周（**含进行中的本周**，页面会标"进行中"）。
@@ -3721,7 +3722,7 @@ function samsRopAt(wh, coverW, st) {
   var leadKnown = !!(SAMS_LEAD && SAMS_LEAD[_leadKey] != null);
   var lead = leadKnown ? SAMS_LEAD[_leadKey] : 0;
   // ===== v421: 【两个时点分开】预警线用「今天起」，补货决策用「到仓后」 =====
-  //   - 预警线 rop 回答「今天该有多少库存」→ 用今天起 D 天的需求（上面的 reqCover + ss×k，口径未变）
+  //   - 预警线 rop 回答「今天该有多少库存」→ 用今天起 D 天的需求（上面的 reqCover + ss×kSs，v560 起 SS 随扣后需求同步）
   //   - 补货决策（需补量 / 车数 / 售罄天数 / 再下单间隔 / 免租上限线）回答「到仓后这批货撑多久、补多少」
   //     → 货在到仓日入库，从那天起才消耗它 ⇒ 必须用【到仓日起】的逐段实际需求
   //   这两条轴只在「需求恒定」时重合；DP 按周排、且到仓后可能跨进更高的一周时就会分叉。
@@ -3753,7 +3754,7 @@ function samsRopAt(wh, coverW, st) {
   var stockoutRisk = leadDemand > curStock;                  // 到货前就断货 ⇒ 覆盖天数不足以覆盖时效
   var gapVsRop = curStock - rop;                             // 当前库存相对预警线的缺口（<0 = 已低于预警线）
   var curStockDays = dUse > 0 ? curStock / dUse : 0;         // 当前库存还能撑几天（不含在途/在产）
-  var dropDays = dUse > 0 ? rop / dUse : 0;                  // 预警线折合天数（今天起口径：= 覆盖天数 + 安全库存天数）
+  var dropDays = dSs > 0 ? rop / dSs : 0;                    // v560: 预警线折合天数按扣后日均（与 rop 同口径）
 
   // ===== v434：目标售罄天数算法已删除（用户 2026-10-18 裁定），以下为历史记录 =====
   //   v411~v433 曾有第二入口：needBoxes = 到仓后 targetDays 天需求 − 到仓时在库；byTarget = ⌈needBoxes ÷ 整车⌉。
@@ -3815,6 +3816,11 @@ function samsRopAt(wh, coverW, st) {
   //   扣减沿用表格同一笔 ded（本周已发生＋补填，上限本周 DP、超出作废），下限 0 防扣穿。
   if (ded > 0) {
     reqCover = Math.max(0, reqCover - ded);
+    // v560（用户 2026-11-25 裁定）：安全库存随需求覆盖同步——扣本周订单后，用扣后日均重算 kSs/ssFinal，
+    //   不再让 SS 停在扣前 DP 口径。dUse/k 仍是扣前值，仅用于 W_use/展示；SS 与目标水位统一走 kSs。
+    dSs = D > 0 ? reqCover / D : dUse;
+    kSs = d > 0 ? dSs / d : 1;
+    ssFinal = ss * kSs;
     rop = reqCover + ssFinal;
     if (!curKnown) {   // 未填库存时按预警线假设，必须跟着新 rop 走
       curStock = rop;
@@ -3826,19 +3832,19 @@ function samsRopAt(wh, coverW, st) {
     //   原写在 if(!curKnown) 内 → 实填库存仓（如天津 2000 箱）走不到，仍显示按扣单前旧预警线 5946 算出的
     //   「低于预警线 3946 箱」；现与 dropDays 并列，未填/实填库存仓一律重算：2000−3035=−1035 箱。
     gapVsRop = curStock - rop;
-    dropDays = dUse > 0 ? rop / dUse : 0;
+    dropDays = dSs > 0 ? rop / dSs : 0;
   }
   var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
-  //   sdD = σ日、upGapDay = 上行缺口(箱/天)、k = 未来日均÷历史日均（同比例缩放），均来自上方 samsRopAt 作用域。
+  //   sdD = σ日、upGapDay = 上行缺口(箱/天)、kSs = 扣后日均÷历史日均（v560 安全库存同比例缩放），均来自上方 samsRopAt 作用域。
   // v544：目标水位侧同样去掉峰值法，只用统计法（与预警线侧 ss 口径一致）。ss2c 仅参考展示、不参与取值。
   var ss1c = samsProbit(st.csl) * sdD * Math.sqrt(coverDays);     // ① 统计法：F⁻¹(csl) × σ日 × √覆盖天数
   var ss2c = SAMS_SSU * upGapDay * coverDays;     // ② 峰值法：v544 起仅参考展示、不参与取值
   var ssc = ss1c;                                 // v544：只用统计法（原 Math.max(ss1c,ss2c)）
   var ssPickC = '统计法';                         // v544：恒为统计法
-  var ssFinalC = ssc * k;                                     // 按需求倍率 k 同比例放大
+  var ssFinalC = ssc * kSs;                                   // v560: 与预警线同口径，按扣后需求倍率 kSs 放大
   var coverTarget = coverDemandArr + ssFinalC;                // 目标库存水位（含安全库存，安全库存按覆盖天数定）
   var coverNeed = Math.max(0, coverTarget - curStock);        // v430：减【当前库存】（今天时点），原为 stockAtArrival
   // ⚠ 浮点/路径容差：coverTarget 走 samsCumAt（按天分段累加），rop 走 samsFutureDemand（按周桶比例摊），
@@ -3962,17 +3968,16 @@ function samsRopAt(wh, coverW, st) {
     W_hist: W_hist, sdW: sH.sd, d: d, sdD: sdD, hiW: hiW, upGapDay: upGapDay,
     D: D, ss1: ss1, ss2: ss2, ss: ss, ssPick: ssPick, ropHist: ropHist,
     W_plan: W_plan, nPlan: pv.length,
-    W_use: W_use, k: k, rop: rop, dUse: dUse,
+    W_use: W_use, k: k, dSs: dSs, kSs: kSs, rop: rop, dUse: dUse,
     reqCover: reqCover, ssFinal: ssFinal,
     reqBasis: reqBasis, fut: fut, W_future: fut.ok ? fut.daily : 0,
     // v440: 口径来源标注 —— future=用未来DP / chosen=用户选了「按历史销售覆盖」/ fallback=无未来DP被迫历史回退
     //   展示层必须区分 chosen 与 fallback，否则用户选了历史口径却被标成「历史回退」，会以为系统又偷偷用了 DP。
     basisWhy: (reqBasis === 'future') ? 'future' : (st.basis === 'hist' ? 'chosen' : 'fallback'),
-    // 🔴 折合天数必须除以「基准日均」(W_use/7) 而非历史日均：rop 已按 k 缩放，
-    //    若再除以历史 d 会把调整系数重复计入（惠州 会算成 16.3 天而不是 14.9 天）
+    // 🔴 v560: rop 已按 kSs 缩放，折合天数必须除以同口径的扣后日均 dSs（原 dUse 是扣前值，会重复计入口径差）
     dropDays: dropDays,
     reqCoverDays: D,
-    ssDays: dUse > 0 ? ssFinal / dUse : 0,          // 安全库存折合天数
+    ssDays: dSs > 0 ? ssFinal / dSs : 0,            // 安全库存折合天数（按扣后日均）
     batchDays: batchDays,                 // v502：有补货=入库起算（已扣时效）/ 0车=今天起算（在库全额）· 分段累加求解
     batchDaysExtrap: batchDaysExtrap,     // 其中靠「DP 未覆盖外推」的天数（诚实标注）
     // v458：把「确定 / 计划外」拆开 —— 确定 = DP 已排计划区间内算得死的天数；计划外 = batchDaysExtrap
@@ -4121,8 +4126,8 @@ function samsExportCSV() {
   var head = ['前置仓', '仓编码', '近' + (st.win > 0 ? st.win + '周' : '全部') + '周均(箱)', '周σ', '周上沿(窗口内最高周)',
               '基准周均(箱)', '基准日均(箱)', '覆盖周数', '覆盖天数',
               '需求覆盖口径', '未来覆盖区间', '未来已覆盖天数', '未来外推天数', '未来计划合计(箱)',
-              '【1】需求覆盖(箱)', '①统计法(公式值)', '②峰值法(公式值·v544起不参与)', '①统计法(已×k)', '②峰值法(已×k·不参与)', '安全库存采用(v544=统计法)', '【2】安全库存(已×k)',
-              '历史口径预警线(仅对照·箱)', '需求倍率k(仅缩放安全库存)', '预警线(箱)', '预警线折合天数',
+              '【1】需求覆盖(箱)', '①统计法(公式值)', '②峰值法(公式值·v544起不参与)', '①统计法(已×kSs)', '②峰值法(已×kSs·不参与)', '安全库存采用(v544=统计法)', '【2】安全库存(已×kSs)',
+              '历史口径预警线(仅对照·箱)', '需求倍率kSs(扣后·仅缩放安全库存)', '预警线(箱)', '预警线折合天数',
               '运输时效(天)', '当前库存(下单时·实填·箱)', '期初库存来源', '到仓前消耗(今天起·箱)', '到仓时在库(箱)',
               '到仓后日均(箱)', '售罄/库存可售天数(有补货=入库起·0车=今天起)', '售罄天数外推(天)', '单批售罄天数(下单起·保守上界)',
               '覆盖天数(天)', '建议车数(车/批)', '建议补货量(箱)', '再下单间隔(天)', '补完是否达到预警线',
@@ -4137,8 +4142,8 @@ function samsExportCSV() {
                 (r.fut ? r.fut.covDays : 0), (r.fut ? r.fut.extrapDays : 0),
                 (r.fut && r.fut.ok ? Math.round(r.fut.sum) : ''),
                 Math.round(r.reqCover), Math.round(r.ss1), Math.round(r.ss2),
-                Math.round(r.ss1 * r.k), Math.round(r.ss2 * r.k), r.ssPick, Math.round(r.ssFinal),
-                Math.round(r.ropHist), r.k.toFixed(3),
+                Math.round(r.ss1 * r.kSs), Math.round(r.ss2 * r.kSs), r.ssPick, Math.round(r.ssFinal),
+                Math.round(r.ropHist), r.kSs.toFixed(3),
                 Math.round(r.rop), r.dropDays.toFixed(1),
                 (r.leadKnown ? r.lead : ''), (r.curKnown ? Math.round(r.curStock) : ''),
                 (r.curKnown ? '实填' : '按预警线推算'), Math.round(r.leadDemand), Math.round(r.stockAtArrival),
@@ -4545,10 +4550,10 @@ function renderSamsFc() {
           : (r.basisWhy === 'chosen' ? '按历史销售覆盖' : '历史回退'))
       + (Math.abs(r.k - 1) > 0.02 ? ' · 较历史 ×' + r.k.toFixed(2) : '')
       + '</div></td>'
-      + '<td style="font-weight:600">' + F(r.ss1 * r.k) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">采用</div>'
-      + (Math.abs(r.k - 1) > 0.001 ? '<div style="font-size:10px;color:var(--text-secondary)">公式 ' + F(r.ss1) + '</div>' : '') + '</td>'
-      + '<td style="color:var(--text-muted)">' + F(r.ss2 * r.k) + '<div style="font-size:10px;color:var(--text-muted);font-weight:400">参考·不参与</div>'
-      + (Math.abs(r.k - 1) > 0.001 ? '<div style="font-size:10px;color:var(--text-secondary)">公式 ' + F(r.ss2) + '</div>' : '') + '</td>'
+      + '<td style="font-weight:600">' + F(r.ss1 * r.kSs) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">采用</div>'
+      + (Math.abs(r.kSs - 1) > 0.001 ? '<div style="font-size:10px;color:var(--text-secondary)">公式 ' + F(r.ss1) + '</div>' : '') + '</td>'
+      + '<td style="color:var(--text-muted)">' + F(r.ss2 * r.kSs) + '<div style="font-size:10px;color:var(--text-muted);font-weight:400">参考·不参与</div>'
+      + (Math.abs(r.kSs - 1) > 0.001 ? '<div style="font-size:10px;color:var(--text-secondary)">公式 ' + F(r.ss2) + '</div>' : '') + '</td>'
       + '<td style="background:#FAEEDA;font-weight:600">' + F(r.ssFinal) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">' + r.ssPick + '</div></td>'
       + '<td style="background:#E1F5EE;font-weight:700;color:var(--color-blue)">' + F(r.rop)
       + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">历史口径 ' + F(r.ropHist) + '</div></td>'
@@ -4680,8 +4685,8 @@ function renderSamsFc() {
              + '<td>' + F(r.coverDemandArr)
              + (r.ded > 0 ? '<div style="font-size:10px;color:#8A5A12;font-weight:400">已扣本周订单 ' + F(r.ded) + (r.dedOverflow > 0 ? '（超DP作废 ' + F(r.dedOverflow) + '）' : '') + '</div>' : '')
              + '</td>'
-             + '<td style="font-weight:600">' + F(r.ss1c * r.k) + '</td>'
-             + '<td style="color:var(--text-muted)">' + F(r.ss2c * r.k) + '<div style="font-size:10px;color:var(--text-muted);font-weight:400">参考·不参与</div></td>'
+             + '<td style="font-weight:600">' + F(r.ss1c * r.kSs) + '</td>'
+             + '<td style="color:var(--text-muted)">' + F(r.ss2c * r.kSs) + '<div style="font-size:10px;color:var(--text-muted);font-weight:400">参考·不参与</div></td>'
              + '<td style="background:#FAEEDA;font-weight:600">' + F(r.ssFinalC) + '<div style="font-size:10px;color:var(--text-secondary);font-weight:400">' + r.ssPickC + '</div></td>'
              + '<td style="background:#E1F5EE;font-weight:700;color:var(--color-blue)">' + F(r.coverTarget) + '</td>'
              + '<td' + (r.curKnown ? '' : ' style="color:var(--text-secondary)"') + '>' + F(r.curStock) + (r.curKnown ? '' : '<div style="font-size:10px">未填·按预警线</div>') + '</td>'
@@ -5297,6 +5302,7 @@ function samsSimRun() {
             ssFinal: Math.round((r.ssFinal || 0) * 100) / 100,
             ss1: Math.round((r.ss1 || 0) * 100) / 100, ss2: Math.round((r.ss2 || 0) * 100) / 100,
             ssPick: r.ssPick || '', k: Math.round((r.k == null ? 1 : r.k) * 1000) / 1000,
+            kSs: Math.round((r.kSs == null ? (r.k == null ? 1 : r.k) : r.kSs) * 1000) / 1000,
             coverDaysRop: r.D || 0, ssDays: Math.round((r.ssDays || 0) * 100) / 100,
             basisWhy: r.basisWhy || '',
             nCar: isWd ? r.nCar : 0, reqBasis: r.reqBasis, shortage: demand - served, ship: demand,
@@ -6137,7 +6143,7 @@ function samsSimSvg(w, rows, cd, R, keep) {
       + '|　＝ 未来' + (rr.coverDaysRop || 0) + '天需求 ' + samsSimNum(rr.reqCover) + ' 箱'
       + ' ＋ 安全库存 ' + samsSimNum(rr.ssFinal) + ' 箱'
       + '（' + (rr.ssPick || '—') + (rr.ssDays ? '，≈' + rr.ssDays + ' 天' : '')
-      + (rr.k != null && Math.abs(rr.k - 1) > 0.001 ? '，需求倍率 k=' + rr.k : '') + '）'
+      + ((rr.kSs != null ? rr.kSs : rr.k) != null && Math.abs((rr.kSs != null ? rr.kSs : rr.k) - 1) > 0.001 ? '，需求倍率 kSs=' + (rr.kSs != null ? rr.kSs : rr.k) : '') + '）'
       + '|补货目标 ' + samsSimNum(rr.coverTarget) + ' 箱'
       + '|DP 快照 ' + rr.dpSnapshotDate;
   }
@@ -6532,8 +6538,8 @@ function samsCharts(data, rows, st) {
           if (!r) return '';
           var o = '<b>' + r.short + '</b>　安全库存 <b>' + Math.round(r.ssFinal).toLocaleString('zh-CN') + '</b> 箱（' + r.ssDays.toFixed(1) + ' 天）<br>';
           o += '① 统计法 ' + z.toFixed(3) + ' × σ日 × √D = ' + z.toFixed(3) + ' × ' + Math.round(r.sdD) + ' × √' + r.D
-             + ' → 公式 ' + Math.round(r.ss1).toLocaleString('zh-CN') + ' × k ' + r.k.toFixed(3)
-             + ' = <b>' + Math.round(r.ss1 * r.k).toLocaleString('zh-CN') + '</b> 箱<br>';
+             + ' → 公式 ' + Math.round(r.ss1).toLocaleString('zh-CN') + ' × kSs ' + (r.kSs == null ? r.k : r.kSs).toFixed(3)
+             + ' = <b>' + Math.round(r.ss1 * (r.kSs == null ? r.k : r.kSs)).toLocaleString('zh-CN') + '</b> 箱<br>';
           o += '→ 采用 = <b>' + r.ssPick + ' ' + Math.round(r.ssFinal).toLocaleString('zh-CN') + ' 箱</b>';
           return o;
         } },
@@ -6546,7 +6552,7 @@ function samsCharts(data, rows, st) {
       series: [
         { name: '① 统计法 ' + z.toFixed(3) + '×σ日×√D', type: 'bar', barMaxWidth: 26, itemStyle: { color: '#85B7EB' },
           label: { show: true, position: 'top', color: '#185FA5', fontSize: 10, formatter: _pickLab('统计法') },
-          data: rows.map(function (r) { return Math.round(r.ss1 * r.k); }) }
+          data: rows.map(function (r) { return Math.round(r.ss1 * (r.kSs == null ? r.k : r.kSs)); }) }
       ]
     });
   }
