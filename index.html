@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 553; // v553: 加量避缺弹框全量字段+支转箱；复盘TOP20明细改弹框
+const BUILD_VERSION = 554; // v554: 修复全量明细表应补/实补/大仓库存箱数被误除箱规（box字段保持原值）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -26813,6 +26813,9 @@ window._showUpAdjDetail = function(x) {
     else if (c.k === 'coverDays') { html = raw == null ? '—' : Math.round(Number(raw)) + '天'; }
     else if (c.k === '__short' || c.k === '__rej') { html = '—'; }
     else if (raw == null || raw === '') { html = '—'; }
+    // v554（用户 2026-11-25）：t='box' 字段（应补量/调整后补货货量/大仓库存箱数）**本来就是箱数**，
+    //   绝不能再 ÷箱规（上一版一刀切把箱规8的 326箱 误显示成 40.8）。只有 t='pcs' 的支数字段才折箱。
+    else if (c.t === 'box') { html = String(Math.round(Number(raw) * 10) / 10); }
     else { html = String(_pcs2box(raw)); }
     s += '<td style="padding:7px 10px;border-bottom:1px solid var(--border-card);text-align:' + al + '">' + html + '</td>';
   });
