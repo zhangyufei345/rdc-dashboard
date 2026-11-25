@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 557; // v557: 加量避缺两张表删除「长窗终点」列（窗口天数+长窗状态已足够判断）
+const BUILD_VERSION = 558; // v558: 加量避缺表删除遗留的「说明」列（4天漏判对照，短窗口已删）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -26679,7 +26679,7 @@ function renderUpAdjTab(page, tabBar) {
     h += '<div style="font-size:12px;color:#15803D;background:#F0FDF4;border-radius:8px;padding:10px 12px">当前筛选下该窗口期没有「不增量就会缺货」的案例 —— 加量相对需求属于冗余储备（或需求尚未发生）。</div>';
   } else {
     const cols = isLong
-      ? [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['长窗缺口(箱)','longGapBox'],['长窗避缺(箱)','longAvoidBox'],['窗口天数','longCovered'],['长窗状态','longStatus'],['固定4天','avoidBox'],['说明','isNew']]
+      ? [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['长窗缺口(箱)','longGapBox'],['长窗避缺(箱)','longAvoidBox'],['窗口天数','longCovered'],['长窗状态','longStatus'],['固定4天','avoidBox']]
       : [['补货日','date'],['RDC','rdc'],['SKU','sku'],['商品','skuName'],['加量(箱)','incBox'],['不增量缺口(箱)','gapBox'],['避免缺货(箱)','avoidBox'],['到货日','arrival'],['状态','status']];
     h += '<div style="overflow:auto;max-height:360px;border:1px solid var(--border-card);border-radius:8px">';
     h += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="position:sticky;top:0;background:var(--bg-card);z-index:1">';
@@ -26700,7 +26700,6 @@ function renderUpAdjTab(page, tabBar) {
         const _stBg = x.longStatus === '已闭环' ? 'background:#DCFCE7;color:#166534' : (x.longStatus === '实时·未闭环' ? 'background:#FEF3C7;color:#92400E' : 'background:#EFF6FF;color:#1D4ED8');
         h += '<td style="padding:7px 10px;white-space:nowrap"><span style="' + _stBg + ';padding:2px 7px;border-radius:10px;font-size:11px">' + x.longStatus + '</span></td>';
         h += '<td style="padding:7px 10px;text-align:right">' + (x.avoidBox > 0 ? x.avoidBox : '0') + '</td>';
-        h += '<td style="padding:7px 10px;white-space:nowrap;color:' + (isNew ? '#B45309' : '#15803D') + '">' + (isNew ? '⚠ 4天漏判' : '主口径已抓到') + '</td>';
       } else {
         h += '<td style="padding:7px 10px;text-align:right;color:#B91C1C">' + x.gapBox + '</td>';
         h += '<td style="padding:7px 10px;text-align:right;color:#92400E;font-weight:600">' + x.avoidBox + '</td>';
