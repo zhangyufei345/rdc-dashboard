@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 551; // v551: 无避缺SKU表行可点开逐日推演弹框（复用_showUpAdjDetail）
+const BUILD_VERSION = 552; // v552: 补货明细弹框加期初/在途/未清三字段、去SPU缺失列
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -26760,10 +26760,13 @@ window._showUpAdjDetail = function(x) {
     if (isPct) return (Number(v) * 100).toFixed(1) + '%';
     return (typeof v === 'number' && !Number.isInteger(v)) ? (Math.round(v * 10) / 10) : v;
   };
+  // v552（用户 2026-11-25）：本次补货明细 加「期初/在途/未清」三字段、去「SPU缺失&不补货产品」。
+  //   字段名同源 replenish-detail.json：openStock(期初) / inTransit(在途) / openOrder(未清)，均为「支」。
   const _uCols = [
     ['补货日', x.date, false], ['RDC', x.rdc, false], ['SKU编码', x.sku, false], ['SKU名称', x.skuName, false],
     ['供应链品类', x.category, false], ['生命周期', x.lifecycle, false], ['箱规', x.boxSpec, false],
-    ['海南花露水', x.hainan, false], ['SPU缺失&不补货产品', x.spuMissing, false],
+    ['期初库存(支)', x.openStock, false], ['在途库存(支)', x.inTransit, false], ['未清订单(支)', x.openOrder, false],
+    ['海南花露水', x.hainan, false],
     ['应补量(箱)', x.planBox, false], ['调整后补货量(箱)', x.adjBox, false],
     ['补货后覆盖天数(天)', x.coverDays, false], ['调整类型', x.adjType, false],
     ['大仓库存箱数(箱)', x.dcStockBox, false], ['大仓占比', x.dcRatio, true], ['补货后大仓占比', x.dcRatioAfter, true]
