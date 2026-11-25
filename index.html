@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 554; // v554: 修复全量明细表应补/实补/大仓库存箱数被误除箱规（box字段保持原值）
+const BUILD_VERSION = 555; // v555: 补货决策复盘取消单位换算按钮，固定按箱显示
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -18459,8 +18459,8 @@ function renderReplenishment() {
 //   · 缺货量 = 当月首日缺货累计（剔双休日/节假日；被拒绝订单仍计入，只标记）
 // ═══════════════════════════════════════════════════════════════════════════
 
-// v547（用户 2026-11-25）：新增 month / brand 筛选（month='' 表示跟随数据最新月）
-window._replRev = window._replRev || { unit: 'mixed', rdc: 'all', brand: 'all', month: '', page: 1, expand: {}, type: 'all', onlyShort: false, day: 'all' };
+// v555（用户 2026-11-25）：取消「全部按箱换算」切换，单位口径固定为「箱」（unit 恒 'box'）。
+window._replRev = window._replRev || { unit: 'box', rdc: 'all', brand: 'all', month: '', page: 1, expand: {}, type: 'all', onlyShort: false, day: 'all' };
 window._replDetail = window._replDetail || null;
 window._replDetailMeta = window._replDetailMeta || null;
 
@@ -18852,8 +18852,9 @@ function _revAttribFor(recs, shortRec, sd) {
   return { batches: batches, arrival: arrival, attrShort: Math.round(attrShort * 10) / 10, attributable: attr.length > 0, doneCount: done.length };
 }
 
+// v555: 单位切换按钮已删除，口径固定为箱；此函数仅保留兼容外部旧调用，一律强制 box。
 function _revToggleUnit() {
-  window._replRev.unit = window._replRev.unit === 'box' ? 'mixed' : 'box';
+  window._replRev.unit = 'box';
   _revRefresh();
 }
 
@@ -18972,10 +18973,8 @@ function _revCardInner() {
   var s = '';
   s += '<div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
   s += '<span class="card-title">本月补货决策复盘 <span style="font-weight:400;font-size:11px;color:var(--text-secondary)">' + _revMonthLabel(month) + ' · 数据截止 ' + (dayList.length ? dayList[dayList.length - 1] : '—') + '</span></span>';
-  s += '<span style="display:flex;align-items:center;gap:8px">';
-  s += '<span style="font-size:11px;color:var(--text-secondary)">' + (unitBox ? '当前：全部按箱（支→箱向上取整）' : '当前：应补/实补/大仓=箱，其余=支') + '</span>';
-  s += '<button class="btn-import" style="padding:4px 12px;font-size:11px" onclick="_revToggleUnit()">' + (unitBox ? '恢复默认单位' : '全部按箱换算') + '</button>';
-  s += '</span></div>';
+  // v555: 固定按箱口径，删除「全部按箱换算 / 恢复默认单位」切换按钮。
+  s += '<span style="font-size:11px;color:var(--text-secondary)">当前：全部按箱（支→箱向上取整）</span></div>';
 
   s += '<div style="padding:0 16px 16px">';
 
@@ -19262,10 +19261,8 @@ function _revCardInner() {
 //   数据源/口径/箱支切换/CSV 均未改动，只改了挂载位置与入口。
 function renderReplenishReview() {
   setTitle('补货决策复盘');
-  // v548（用户 2026-11-25）：每次进入本页，单位口径复位为默认（应补/实补/大仓=箱，其余=支）。
-  //   根因：_replRev.unit 仅在脚本首次加载时初始化为 'mixed'，点过「全部按箱换算」后变 'box'，
-  //   SPA 切页不重新初始化，回到本页就停在整箱态。这里在进入页时复位；同页内点按钮切换不受影响。
-  if (window._replRev) window._replRev.unit = 'mixed';
+  // v555（用户 2026-11-25）：固定按箱口径——进页强制 unit='box'，防御旧会话残留的 mixed 状态。
+  if (window._replRev) window._replRev.unit = 'box';
   var page = document.getElementById('page-replenish-review');
   if (!page) { console.warn('[rev] page-replenish-review not found'); return; }
   page.innerHTML = _revSectionHtml();
