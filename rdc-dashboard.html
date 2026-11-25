@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 547; // v547: 增量分析只留长窗口；补货决策复盘新增月份/品牌筛选
+const BUILD_VERSION = 548; // v548: 补货决策复盘进入页时单位口径复位为默认（修复切页后残留整箱态）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -19231,6 +19231,10 @@ function _revCardInner() {
 //   数据源/口径/箱支切换/CSV 均未改动，只改了挂载位置与入口。
 function renderReplenishReview() {
   setTitle('补货决策复盘');
+  // v548（用户 2026-11-25）：每次进入本页，单位口径复位为默认（应补/实补/大仓=箱，其余=支）。
+  //   根因：_replRev.unit 仅在脚本首次加载时初始化为 'mixed'，点过「全部按箱换算」后变 'box'，
+  //   SPA 切页不重新初始化，回到本页就停在整箱态。这里在进入页时复位；同页内点按钮切换不受影响。
+  if (window._replRev) window._replRev.unit = 'mixed';
   var page = document.getElementById('page-replenish-review');
   if (!page) { console.warn('[rev] page-replenish-review not found'); return; }
   page.innerHTML = _revSectionHtml();
