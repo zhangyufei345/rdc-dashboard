@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 552; // v552: 补货明细弹框加期初/在途/未清三字段、去SPU缺失列
+const BUILD_VERSION = 553; // v553: 加量避缺弹框全量字段+支转箱；复盘TOP20明细改弹框
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -18879,6 +18879,35 @@ function _revSetBrand(b) {
   _revRefresh();
 }
 
+// v553（用户 2026-11-25）：TOP20 行明细由内联展开改为弹框。
+//   实现：临时把该行 expand 打开 → 复用现成 _revCardInner() 渲染 → 抽 data-rev-expand-row 那一行的
+//   td 内容作为弹框 body → 立即恢复原 expand 状态并 _revRefresh（不改变任何原有筛选/状态）。
+//   好处：展开内容（缺货摘要 + 全字段表 + 逐笔归因）一字不改，杜绝重复实现漂移。
+function _revOpenTopModal(k) {
+  var was = !!window._replRev.expand[k];
+  window._replRev.expand[k] = true;
+  var html = _revCardInner();
+  if (was) window._replRev.expand[k] = true; else delete window._replRev.expand[k];
+  var tmp = document.createElement('div'); tmp.innerHTML = html;
+  var row = tmp.querySelector('tr[data-rev-expand-row]');
+  var body = row ? row.innerHTML : '<div style="padding:16px;color:var(--text-secondary)">明细渲染失败，请刷新重试。</div>';
+  var old = document.getElementById('rev-top-modal'); if (old) old.remove();
+  var ov = document.createElement('div');
+  ov.id = 'rev-top-modal';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10002;display:flex;align-items:center;justify-content:center';
+  ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+  var parts = String(k).split('|');
+  var box = document.createElement('div');
+  box.style.cssText = 'background:var(--bg-card,#fff);border-radius:12px;max-width:1100px;width:94%;padding:18px 20px;max-height:88vh;overflow:auto';
+  box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'
+    + '<div><div style="font-size:15px;font-weight:700">' + (parts[1] || '') + ' · ' + (parts[0] || '') + '</div>'
+    + '<div style="font-size:12px;color:var(--text-secondary);margin-top:3px">补货决策复盘 · 缺货明细（缺货侧 + 补货全字段 + 逐笔归因）</div></div>'
+    + '<button onclick="document.getElementById(\'rev-top-modal\').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary)">✕</button></div>'
+    + body;
+  ov.appendChild(box); document.body.appendChild(ov);
+}
+window._revOpenTopModal = _revOpenTopModal;
+
 function _revToggleExpand(k) {
   if (window._replRev.expand[k]) delete window._replRev.expand[k];
   else window._replRev.expand[k] = true;
@@ -18994,7 +19023,7 @@ function _revCardInner() {
   filtered = filtered.filter(function(x) { return skuQHit('rev-top', x.sku, x.name); }); // v532: SKU 代码查询框（在 TOP20 截取前过滤）
   var top = filtered.slice(0, 20);
   s += '<div style="border:1px solid var(--border-card);border-radius:10px;overflow:hidden;margin-bottom:14px">';
-  s += '<div style="padding:9px 12px;background:var(--bg-secondary,#F8FAFC);font-size:12.5px;font-weight:600">缺货 TOP20 复盘 <span style="font-weight:400;color:var(--text-secondary);font-size:11px">' + (window._replRev.rdc === 'all' ? '全部 RDC · 按首日缺货累计' : window._replRev.rdc + ' · 按首日缺货累计') + ' · 点击行展开完整明细（缺货侧 + 补货全字段）</span></div>';
+  s += '<div style="padding:9px 12px;background:var(--bg-secondary,#F8FAFC);font-size:12.5px;font-weight:600">缺货 TOP20 复盘 <span style="font-weight:400;color:var(--text-secondary);font-size:11px">' + (window._replRev.rdc === 'all' ? '全部 RDC · 按首日缺货累计' : window._replRev.rdc + ' · 按首日缺货累计') + ' · 点击行弹框查看完整明细（缺货侧 + 补货全字段）</span></div>';
   if (!top.length) {
     s += '<div style="padding:22px;text-align:center;color:var(--text-secondary);font-size:12px">当前 RDC 当月无首日缺货记录</div>';
   } else {
@@ -19019,8 +19048,10 @@ function _revCardInner() {
       var bs = _revBoxSpec(recs[0], x.sku);
       var p = _revSum(recs, 'planBox'), a = _revSum(recs, 'adjBox');
       var pct = x.ord > 0 ? (x.short / x.ord * 100) : null;
+      // v553: 点击改为弹框展示明细。open 仍保留（_revOpenTopModal 临时置 expand=true 复用本段渲染）；
+      //   正常点击不再 toggle expand，故内联展开永不出现，明细只从弹框看。
       var open = !!window._replRev.expand[k];
-      s += '<tr style="border-top:1px solid var(--border-card);cursor:pointer" onclick="_revToggleExpand(\'' + k + '\')">';
+      s += '<tr style="border-top:1px solid var(--border-card);cursor:pointer" onclick="_revOpenTopModal(\'' + k + '\')">';
       s += '<td style="padding:6px 8px"><b style="color:#1D4ED8">' + x.rdc.replace('RDC', '') + '</b></td>';
       s += '<td style="padding:6px 8px"><span style="font-family:monospace;font-weight:600">' + x.sku + '</span> <span style="color:var(--text-secondary)">' + (x.name || '').slice(0, 18) + '</span></td>';
       s += '<td style="text-align:right;padding:6px;color:#A32D2D;font-weight:600">' + _revShown(x.short, bs, false) + '</td>';
@@ -19038,7 +19069,7 @@ function _revCardInner() {
         //   用户 2026-11-08：希望点开后展示的明细包含所有信息，而不仅仅是补货明细。
         var bsX = _revBoxSpec(recs[0], x.sku);
         var _uSuf = _revUnitSuffix(false);
-        s += '<tr style="border-top:1px dashed var(--border-card);background:#FCFCFA"><td colspan="8" style="padding:10px 12px">';
+        s += '<tr data-rev-expand-row="' + k + '" style="border-top:1px dashed var(--border-card);background:#FCFCFA"><td colspan="8" style="padding:10px 12px">';
         // —— 缺货侧（缺货 TOP10 的本体，展开时一并给出，含逐日缺口分布）
         s += '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:11px;margin-bottom:9px;line-height:1.9">';
         s += '<span style="font-size:11.5px;font-weight:600;color:#A32D2D">缺货合计 ' + _revShown(x.short, bsX, false) + ' ' + _uSuf + '</span>';
@@ -26753,34 +26784,42 @@ window._showUpAdjDetail = function(x) {
   s += '<div style="flex:1;background:#FEF2F2;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">不增量缺口(箱)</div><div style="font-size:18px;font-weight:700;color:#B91C1C">' + x.gapBox + '</div></div>';
   s += '<div style="flex:1;background:#FEF3C7;border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text-secondary)">避免缺货(箱)</div><div style="font-size:18px;font-weight:700;color:#92400E">' + x.avoidBox + '</div></div>';
   s += '</div>';
-  s += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">运输期消耗 ' + Math.round(x.transitUse) + ' 支 · 到货日 ' + x.arrival + ' · 窗口 ' + x.covered + '/4 天</div>';
-  // v526: 在红框位置增加「本次补货明细」表，字段与「补货决策复盘」全字段明细表一致（图3样式：表头+数据行，横向可滚动）
-  const _uFmt = function(v, isPct) {
-    if (v === null || v === undefined || v === '') return '—';
-    if (isPct) return (Number(v) * 100).toFixed(1) + '%';
-    return (typeof v === 'number' && !Number.isInteger(v)) ? (Math.round(v * 10) / 10) : v;
-  };
-  // v552（用户 2026-11-25）：本次补货明细 加「期初/在途/未清」三字段、去「SPU缺失&不补货产品」。
-  //   字段名同源 replenish-detail.json：openStock(期初) / inTransit(在途) / openOrder(未清)，均为「支」。
-  const _uCols = [
-    ['补货日', x.date, false], ['RDC', x.rdc, false], ['SKU编码', x.sku, false], ['SKU名称', x.skuName, false],
-    ['供应链品类', x.category, false], ['生命周期', x.lifecycle, false], ['箱规', x.boxSpec, false],
-    ['期初库存(支)', x.openStock, false], ['在途库存(支)', x.inTransit, false], ['未清订单(支)', x.openOrder, false],
-    ['海南花露水', x.hainan, false],
-    ['应补量(箱)', x.planBox, false], ['调整后补货量(箱)', x.adjBox, false],
-    ['补货后覆盖天数(天)', x.coverDays, false], ['调整类型', x.adjType, false],
-    ['大仓库存箱数(箱)', x.dcStockBox, false], ['大仓占比', x.dcRatio, true], ['补货后大仓占比', x.dcRatioAfter, true]
-  ];
-  s += '<div style="font-size:13px;font-weight:600;margin:10px 0 6px">本次补货明细</div>';
+  // v553（用户 2026-11-25）：运输期消耗由「支」改「箱」（÷箱规四舍五入保留1位）
+  const _bs = Number(x.spec) > 0 ? Number(x.spec) : null;
+  const _pcs2box = function(v) { return _bs ? (Math.round((Number(v) || 0) / _bs * 10) / 10) : (Math.round((Number(v) || 0) * 10) / 10); };
+  s += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">运输期消耗 <b>' + _pcs2box(x.transitUse) + ' 箱</b> · 到货日 ' + x.arrival + ' · 窗口 ' + x.covered + '/4 天</div>';
+  // v553: 「本次补货明细」升级为复盘同款**全量补货字段**（29 列，字段清单同源 REV_COLS），
+  //   但值取 x 的原始值、不做 _revShown 的单位切换二次换算，且支数字段统一 ÷箱规四舍五入保留1位显示箱。
+  //   字段顺序/清单与 REV_COLS 一致；本弹框是单条记录，__short/__rej 两列无聚合上下文，显示 '—'。
+  s += '<div style="font-size:13px;font-weight:600;margin:10px 0 6px">本次补货明细 <span style="font-weight:400;color:var(--text-secondary);font-size:11px">—— 全量补货字段（支数已÷箱规折箱，保留1位；原始值不扣减）</span></div>';
   s += '<div style="overflow-x:auto;border:1px solid var(--border-card);border-radius:8px;margin-bottom:14px">';
-  s += '<table style="border-collapse:collapse;font-size:11.5px;white-space:nowrap;min-width:100%"><thead><tr style="background:var(--bg-page,#F8FAFC)">';
-  _uCols.forEach(function(c) { s += '<th style="padding:7px 10px;border-bottom:1px solid var(--border-card);text-align:left;color:var(--text-secondary);font-weight:600">' + c[0] + '</th>'; });
+  s += '<table style="border-collapse:collapse;font-size:11.5px;white-space:nowrap"><thead><tr style="background:var(--bg-page,#F8FAFC)">';
+  REV_COLS.forEach(function(c) {
+    var isTxt = ['text','date','rdc','mono','type','flag'].indexOf(c.t) >= 0;
+    var lab = c.label + (isTxt ? '' : (c.t === 'pct' || c.t === 'days' || c.t === 'spec' ? '' : '（箱）'));
+    s += '<th style="padding:7px 10px;border-bottom:1px solid var(--border-card);text-align:' + (isTxt ? 'left' : 'right') + ';color:var(--text-secondary);font-weight:600">' + lab + '</th>';
+  });
   s += '</tr></thead><tbody><tr>';
-  _uCols.forEach(function(c) { const v = _uFmt(c[1], c[2]); s += '<td style="padding:7px 10px;border-bottom:1px solid var(--border-card)">' + v + '</td>'; });
+  REV_COLS.forEach(function(c) {
+    var html = '—', al = 'right';
+    var raw = x[c.k];
+    if (c.k === 'date') { html = String(x.date).slice(5); al = 'left'; }
+    else if (c.k === 'rdc') { html = x.rdc; al = 'left'; }
+    else if (c.k === 'sku') { html = '<span style="font-family:monospace">' + x.sku + '</span>'; al = 'left'; }
+    else if (c.k === 'skuName' || c.k === 'category' || c.k === 'lifecycle' || c.k === 'hainan' || c.k === 'spuMissing' || c.k === 'lowSellWarn') { html = (raw == null || raw === '') ? '—' : String(raw); al = 'left'; }
+    else if (c.k === 'adjType') { html = (raw && raw !== '0') ? String(raw) : '—'; al = 'left'; }
+    else if (c.k === 'boxSpec') { html = raw == null ? '—' : String(Math.round(Number(raw))); }
+    else if (c.t === 'pct') { html = raw == null ? '—' : (Number(raw) * 100).toFixed(1) + '%'; }
+    else if (c.k === 'coverDays') { html = raw == null ? '—' : Math.round(Number(raw)) + '天'; }
+    else if (c.k === '__short' || c.k === '__rej') { html = '—'; }
+    else if (raw == null || raw === '') { html = '—'; }
+    else { html = String(_pcs2box(raw)); }
+    s += '<td style="padding:7px 10px;border-bottom:1px solid var(--border-card);text-align:' + al + '">' + html + '</td>';
+  });
   s += '</tr></tbody></table></div>';
-  s += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">观察窗逐日推演（不增量情形）</div>';
-  s += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-card)"><th style="text-align:left;padding:7px 10px;border-bottom:1px solid var(--border-card)">日期</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">订单需求(支)</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">当日缺口(支)</th></tr></thead><tbody>';
-  x.daily.forEach(function(dd) { s += '<tr><td style="padding:6px 10px;border-bottom:1px solid var(--border-card)">' + dd.day + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card)">' + dd.dem + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card);color:' + (dd.gap > 0 ? '#B91C1C' : '#15803D') + '">' + dd.gap + '</td></tr>'; });
+  s += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">观察窗逐日推演（不增量情形 · 已折箱）</div>';
+  s += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg-card)"><th style="text-align:left;padding:7px 10px;border-bottom:1px solid var(--border-card)">日期</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">订单需求(箱)</th><th style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border-card)">当日缺口(箱)</th></tr></thead><tbody>';
+  x.daily.forEach(function(dd) { s += '<tr><td style="padding:6px 10px;border-bottom:1px solid var(--border-card)">' + dd.day + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card)">' + _pcs2box(dd.dem) + '</td><td style="padding:6px 10px;text-align:right;border-bottom:1px solid var(--border-card);color:' + (dd.gap > 0 ? '#B91C1C' : '#15803D') + '">' + _pcs2box(dd.gap) + '</td></tr>'; });
   s += '</tbody></table></div>';
   ov.innerHTML = s;
   document.body.appendChild(ov);
