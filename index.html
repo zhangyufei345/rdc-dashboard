@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 550; // v550: 加量避缺新增「加量后无避缺SKU」表（已进观察但避缺=0，按加量箱降序）
+const BUILD_VERSION = 551; // v551: 无避缺SKU表行可点开逐日推演弹框（复用_showUpAdjDetail）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -26588,6 +26588,8 @@ function renderUpAdjTab(page, tabBar) {
   //   页面不再提供切换，也不再展示短窗口 KPI / 明细列。
   const isLong = true;
   const valid = isLong ? (c.longValid || []) : c.valid;
+  // v551: 无避缺表行数据提升到函数作用域，供行点击弹框按索引取数（与 valid 表同级、互不干扰）
+  let noAvoidRows = [];
   const addCnt = c.list.length;
   const doneCnt = isLong ? c.list.filter(function(x) { return x.hasNext && x.longDone; }).length : c.list.filter(function(x) { return x.status === '已完成'; }).length;
   const obsCnt = c.list.filter(function(x) { return x.status === '观察中'; }).length;
@@ -26684,6 +26686,7 @@ function renderUpAdjTab(page, tabBar) {
   if (isLong) {
     const enteredNoAvoid = c.list.filter(function(x) { return x.status !== '未到货' && !(x.longAvoidBox > 0); })
                                  .sort(function(a, b) { return (Number(b.incBox) || 0) - (Number(a.incBox) || 0); });
+    noAvoidRows = enteredNoAvoid;   // v551: 供无避缺表行点击弹框取数
     const naInc = enteredNoAvoid.reduce(function(s, x) { return s + (Number(x.incBox) || 0); }, 0);
     const naClosed = enteredNoAvoid.filter(function(x) { return x.longStatus === '已闭环'; }).length;
     const naOpen = enteredNoAvoid.length - naClosed;
@@ -26697,10 +26700,10 @@ function renderUpAdjTab(page, tabBar) {
       h += '<div style="overflow:auto;max-height:360px;border:1px solid var(--border-card);border-radius:8px">';
       h += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="position:sticky;top:0;background:var(--bg-card);z-index:1">';
       naCols.forEach(function(col) { h += '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border-card);white-space:nowrap;font-weight:600;color:var(--text-secondary)">' + col[0] + '</th>'; });
-      h += '</tr></thead><tbody>';
+      h += '</tr></thead><tbody id="na-tbody">';
       enteredNoAvoid.forEach(function(x) {
         const closed = x.longStatus === '已闭环';
-        h += '<tr style="border-bottom:1px solid var(--border-card)">';
+        h += '<tr style="border-bottom:1px solid var(--border-card);cursor:pointer" title="点击查看本次补货明细与逐日推演">';
         h += '<td style="padding:7px 10px;white-space:nowrap">' + x.date + '</td>';
         h += '<td style="padding:7px 10px;white-space:nowrap">' + x.rdc + '</td>';
         h += '<td style="padding:7px 10px;white-space:nowrap;font-family:monospace">' + x.sku + '</td>';
@@ -26726,6 +26729,14 @@ function renderUpAdjTab(page, tabBar) {
     const tr = ev.target.closest('tr'); if (!tr) return;
     const idx = Array.prototype.indexOf.call(tb.rows, tr);
     const x = valid[idx]; if (x) window._showUpAdjDetail(x);
+  };
+  // v551（用户 2026-11-25）：无避缺表行也能点开逐日推演弹框（复用同一 _showUpAdjDetail）。
+  //   用 id 精确取第二个 tbody，不改上面的原表绑定；noAvoidRows 与表行顺序一致（加量箱降序）。
+  const naTb = document.getElementById('na-tbody');
+  if (naTb) naTb.onclick = function(ev) {
+    const tr = ev.target.closest('tr'); if (!tr) return;
+    const idx = Array.prototype.indexOf.call(naTb.rows, tr);
+    const x = noAvoidRows[idx]; if (x) window._showUpAdjDetail(x);
   };
 }
 
