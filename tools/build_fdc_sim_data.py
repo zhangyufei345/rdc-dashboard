@@ -118,7 +118,11 @@ def parse_slice(blob):
                 v = r[i] if i < len(r) else None
                 arr.append(dict(meta, dp=(v if isinstance(v, (int, float)) else None)))
             dpw[w] = arr
-    if len(cum) != 6:
+    # v547（2026-11-25）：源表「山姆需求」可能删去非展示仓（实测 11-25 少了常州，只剩 5 仓）。
+    #   模拟页 ACTIVE 只有天津/惠州/嘉兴/武汉，非展示仓缺行不应让整份切片被静默丢弃
+    #   （那会导致图表停更）。这里改为「展示仓必须齐全」，缺的非展示仓在差分层沿用前值（见 events）。
+    missing_active = [w for w in ACTIVE if w not in cum]
+    if missing_active:
         return None
     dp_usable = {}
     for w in WHS:
@@ -153,7 +157,9 @@ def main():
     for a, b in zip(slices, slices[1:]):
         s, e = d(a['date']), d(b['date']) - DAY
         span = (e - s).days + 1
-        qty = {w: b['cumulativeShip'][w] - a['cumulativeShip'][w] for w in WHS}
+        # v547: 非展示仓（成都/常州）缺行时沿用前一片段累计值 → 差分 0，不猜数、不影响展示仓
+        qty = {w: b['cumulativeShip'].get(w, a['cumulativeShip'].get(w, 0))
+                  - a['cumulativeShip'].get(w, 0) for w in WHS}
         events.append({'from': s.isoformat(), 'to': e.isoformat(), 'days': span,
                        'qty': qty, 'srcSlice': b['sha'], 'prevSlice': a['sha']})
 
