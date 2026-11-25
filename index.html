@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 558; // v558: 加量避缺表删除遗留的「说明」列（4天漏判对照，短窗口已删）
+const BUILD_VERSION = 559; // v559: 补货决策复盘删除顶部长篇口径说明块（用户要求「废话删掉」）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -18977,13 +18977,6 @@ function _revCardInner() {
   s += '<span style="font-size:11px;color:var(--text-secondary)">当前：全部按箱（支→箱向上取整）</span></div>';
 
   s += '<div style="padding:0 16px 16px">';
-
-  s += '<div style="padding:8px 12px;background:#FAEEDA;border-radius:8px;font-size:11.5px;color:#854F0B;line-height:1.7;margin-bottom:12px">';
-  s += '本期补货明细覆盖 <b>' + rdcs.map(function(r) { return r.replace('RDC', ''); }).join(' / ') + '</b>；其余 RDC 无补货明细，相关组合不做判定。';
-  s += '<br>口径：TOP10 的缺货量 = 当月首日缺货<b>累计</b>（已剔双休日/节假日，被拒绝订单仍计入），只用于排序；补货量按「应补量 / 调整后补货量」箱数统计。';
-  s += '<br><b>已满足</b> = 首日未满足量里后来被满足的部分（首日缺货 − 最终仍未满足，负数按 0）。所以已满足不会超过缺货；全部补齐时两者相等。';
-  s += '<br><b>归因口径</b>：每笔补货单独算到货日（补货日 + 运输周期：华中/华南 4 天，华北/东北/西北 5 天，西南 7 天），观察窗 = 到货日起 4 天；只统计该窗口内的首日缺货（支 ÷ 箱规 = 箱，剔非工作日）。到货前、窗口外的缺口不挂到这笔补货上；窗口没走完只标「观察中」，不下砍量/足额/加量结论。<b>v533</b>：若窗口内该 SKU×RDC 又有新补货，窗口截到新补货日前一天（新补货日的缺口归新补货那笔，避免重复归因）。';
-  s += '</div>';
 
   s += '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px">';
   s += '<div style="background:var(--bg-secondary,#F8FAFC);border-radius:8px;padding:10px 12px"><div style="font-size:11px;color:var(--text-secondary)">应补合计</div><div style="font-size:18px;font-weight:600;margin-top:2px">' + formatNum(Math.round(planSum)) + '<span style="font-size:11px;font-weight:400;color:var(--text-secondary)"> 箱</span></div></div>';
