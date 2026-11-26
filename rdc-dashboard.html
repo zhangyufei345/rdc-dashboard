@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 562; // v562: 复盘页删除全量补货明细表，TOP20弹框改为只渲染目标行
+const BUILD_VERSION = 563; // v563: 补货调整跟踪到货日支持批次实际覆盖（华中11-23/西南11-19→11-25），减量+增量口径同步重算
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -26323,6 +26323,18 @@ function _adjDateAdd(iso, n) {
   _adjDateCache[k] = v;
   return v;
 }
+// v563（2026-11-26 用户裁定）：批次实际到货日覆盖 —— 源表无到货日字段，到货日原按「补货日+运输周期」推算。
+//   华中 11-23、西南 11-19 两批货实际 11-25 到仓（提前到货），按实际日重算观察窗，其余批次口径不变。
+//   key = 'RDC短名|补货日(YYYY-MM-DD)' → 实际到货日；_adjArrival 统一入口，减量/增量/长窗口终点共用。
+const ADJ_ARRIVAL_OVERRIDE = { '华中|2026-11-23': '2026-11-25', '西南|2026-11-19': '2026-11-25' };
+function _adjArrival(date, rdcShort) {
+  const iso = String(date || '').slice(0, 10);
+  if (!iso) return null;
+  const ov = ADJ_ARRIVAL_OVERRIDE[String(rdcShort) + '|' + iso];
+  if (ov) return ov;                                   // 命中覆盖：用实际到货日
+  const t = ADJ_TRANSPORT[rdcShort];
+  return t != null ? _adjDateAdd(iso, t) : null;        // 未命中：仍按运输周期
+}
 function _adjFmtNum(v) { return Math.round(v || 0).toLocaleString('zh-CN'); }
 function _adjBoxSpec(sku) { const bs = window.boxSpecOf(sku); return bs > 0 ? bs : null; }   // v361(B): 三级兜底
 function _adjIsH(sku) { return !!(sku && window._skuIsHainan && window._skuIsHainan[sku]); }
@@ -26367,8 +26379,8 @@ function buildAdjComputed() {
   const recsInMonth = (adjMonth === 'all') ? recs : recs.filter(function(r) { return String(r.date || '').slice(0, 7) === adjMonth; });
   const list = recsInMonth.map(function(r, idx) {
     const full = ADJ_RDC_FULL[r.rdc] || ((r.rdc || '') + 'RDC');
-    const t = ADJ_TRANSPORT[r.rdc];
-    const arrival = (t != null && r.date) ? _adjDateAdd(r.date, t) : null;
+    // v563: 到货日走统一入口（命中覆盖批次用实际到货日，其余仍按运输周期）
+    const arrival = _adjArrival(r.date, r.rdc);
     const winStart = arrival;
     const winEnd = arrival ? _adjDateAdd(arrival, ADJ_WINDOW_DAYS - 1) : null;
     const cut = Math.round(((r.planQty || 0) - (r.adjQty || 0)) * 100) / 100;
@@ -26472,7 +26484,8 @@ function buildUpAdjAvoid() {
     if (lead == null) continue;
     const spec = Number(r.boxSpec || 0) || _adjBoxSpec(String(r.sku)) || 1;
     const sku = String(r.sku || '').trim();
-    const arrival = _adjDateAdd(date, lead);
+    // v563: 到货日走统一入口（覆盖批次用实际到货日）；运输期消耗随之自动缩短到补货日~实际到货日前
+    const arrival = _adjArrival(date, rdcShort);
     // 运输在途期消耗：补货日(含) ~ 到货日前(不含)
     let transitUse = 0, d0 = date;
     while (d0 < arrival) { transitUse += dem(d0, full, sku); d0 = _adjDateAdd(d0, 1); }
@@ -26485,7 +26498,8 @@ function buildUpAdjAvoid() {
     let nextDate = null;
     for (let j = 0; j < dates.length; j++) { if (dates[j] > date) { nextDate = dates[j]; break; } }
     const hasNext = !!nextDate;
-    const nextArrival = nextDate ? _adjDateAdd(nextDate, lead) : null;
+    // v563: 下一批到货日同样走覆盖入口（若下一批恰是覆盖批次，长窗口终点也跟着前移）
+    const nextArrival = nextDate ? _adjArrival(nextDate, rdcShort) : null;
     // v529: 长窗口终点 = 下批到货日（若有）；无后续补货则延伸到数据末日 maxOrd —— 保证长窗是短窗真超集。
     //   不再要求「窗口走完才统计」，只要有缺口就实时计入（用户 2026-11-21 裁定：不用等周期关闭，逻辑才能与短窗对齐）。
     const shortEnd = _adjDateAdd(arrival, ADJ_WINDOW_DAYS - 1);
@@ -26594,6 +26608,7 @@ function renderUpAdjTab(page, tabBar) {
   h += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9;margin-bottom:10px">';
   if (isLong) {
     h += '口径：观察期从本次到货日延长到<b>同 SKU×RDC 下一笔补货的到货日</b>（下单日 + 运输周期）；<b>无后续补货则延伸到数据末日 ' + (c.maxOrd || '-') + '</b>，是固定 4 天的真超集。<b>实时统计：只要有缺口就计入，不等观察周期关闭</b>。<b>避免缺货箱 = min(加量箱, 长窗缺口箱)</b>；橙色行为固定 4 天漏判、延长后才抓到。';
+    h += '<br><span style="color:#B45309">实际到货日修正（v563）：华中 11-23、西南 11-19 两批按实际 11-25 到仓重算（含在途期消耗与下一批到货日），其余批次仍按运输周期。</span>';
   } else {
     h += '口径：对每笔<b>加量</b>补货，按「期初 + 在途 − 运输期已消耗 + 应补量到货」推演不增量情形下的库存；观察窗 = 到货日起 4 天，逐日扣订单需求。<b>避免缺货箱 = min(加量箱, 不增量缺口箱)</b>，仅窗口走完(4/4)且确实会缺才计。缺货数据覆盖至 <b>' + (c.maxOrd || '-') + '</b>。';
   }
@@ -26914,6 +26929,7 @@ function renderAdjustTrack() {
   html += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">🔁 补货调整跟踪 <span style="font-weight:400;color:var(--text-secondary);font-size:12px">—— 每一笔因规则/大仓触发的补货调整，与到货后 4 天观察窗口内的真实缺货做因果对账</span></div>';
   html += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.9">';
   html += '口径：到货日 = 补货日 + 运输周期（华中+4/华南+4/华北+5/东北+5/西北+5/西南+7）；观察窗口 = 到货日起 4 天（对齐 RDC 补货间隔 3-4 天，避免吃到下个补货日的在途）；窗口缺货量 = <b>订单明细首日缺货量(支)÷箱规</b>，与扣减量同单位（箱）直接对比。<br>';
+  html += '<span style="color:#B45309">实际到货日修正（v563，2026-11-26 用户裁定）：华中 11-23、西南 11-19 两批货实际 11-25 到仓，到货日与观察窗按 11-25 重算，其余批次仍按运输周期。</span><br>';
   html += '缺货数据已覆盖至 <b>' + (maxOrd || '-') + '</b>；最早观察窗口 ' + (computed.list.length ? computed.list.reduce(function(m, r) { return r.winStart && r.winStart < m ? r.winStart : m; }, '9999-99-99') : '-') + ' 开始';
   if (maxOrd && entered.length < cuts.length) html += ' —— <span style="color:#B45309">有 ' + (cuts.length - entered.length) + ' 条记录的窗口尚未进入数据覆盖范围，归因指标将随缺货数据日更自动点亮</span>';
   html += '</div></div>';
