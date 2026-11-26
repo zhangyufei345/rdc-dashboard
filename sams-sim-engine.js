@@ -1,7 +1,7 @@
 /* ==========================================================================
  * 山姆前置仓「补货量 → 库存演化」沙箱引擎 —— 自动生成，请勿手改
  * 生成脚本 : tools/build_sams_sim_bundle.py
- * 来源     : rdc-dashboard.html 逐字抽取 L3018~L4032（1015 行，sha16=2995ba835a34028f）
+ * 来源     : rdc-dashboard.html 逐字抽取 L3018~L4037（1020 行，sha16=d13a0b2cda7b557c）
  * 用法     : 页面按需 fetch 本文件文本，用 new Function('window', code) 编译，
  *            取 window.SamsSimEngine.create() 得到与线上公式完全同源的引擎。
  *
@@ -14,7 +14,7 @@
  * ========================================================================== */
 (function (global) {
   var RealDate = global.Date;
-  var SHA16 = '2995ba835a34028f';
+  var SHA16 = 'd13a0b2cda7b557c';
 
   // 形参 window / Date 遮蔽全局：SRC 里的 window._samsState 落在沙箱对象上，
   // new Date() 走 FakeDate，绝不污染看板主页面的 Date / _samsState。
@@ -706,10 +706,11 @@ function samsRopAt(wh, coverW, st) {
   } else {
     dUse = fut.daily; reqCover = fut.sum; reqBasis = 'future';
   }
-  var k = d > 0 ? dUse / d : 1;                   // 未来日均 ÷ 历史日均 → 安全库存同比例缩放
+  var k = d > 0 ? dUse / d : 1;                   // 扣本周订单前的未来日均 ÷ 历史日均（仅保留作展示/兼容）
+  var dSs = dUse, kSs = k;                        // v560: 安全库存专用基数——默认同 k；扣本周订单后改按扣后日均（随①需求覆盖同步）
   var W_use = dUse * 7;                           // 基准周均（兼容旧字段 / 明细表 / CSV）
   // ===== 预警线的完整组成 =====
-  var ssFinal = ss * k;                           // 【第二段】安全库存（按需求倍率等比缩放）
+  var ssFinal = ss * kSs;                         // 【第二段】安全库存（v560: 按扣后需求倍率 kSs 等比缩放）
   var rop = reqCover + ssFinal;                   // = 两段之和
 
   // v409: 「最新周实际」= 最新一个有实际数据的自然周（**含进行中的本周**，页面会标"进行中"）。
@@ -727,7 +728,7 @@ function samsRopAt(wh, coverW, st) {
   var leadKnown = !!(SAMS_LEAD && SAMS_LEAD[_leadKey] != null);
   var lead = leadKnown ? SAMS_LEAD[_leadKey] : 0;
   // ===== v421: 【两个时点分开】预警线用「今天起」，补货决策用「到仓后」 =====
-  //   - 预警线 rop 回答「今天该有多少库存」→ 用今天起 D 天的需求（上面的 reqCover + ss×k，口径未变）
+  //   - 预警线 rop 回答「今天该有多少库存」→ 用今天起 D 天的需求（上面的 reqCover + ss×kSs，v560 起 SS 随扣后需求同步）
   //   - 补货决策（需补量 / 车数 / 售罄天数 / 再下单间隔 / 免租上限线）回答「到仓后这批货撑多久、补多少」
   //     → 货在到仓日入库，从那天起才消耗它 ⇒ 必须用【到仓日起】的逐段实际需求
   //   这两条轴只在「需求恒定」时重合；DP 按周排、且到仓后可能跨进更高的一周时就会分叉。
@@ -759,7 +760,7 @@ function samsRopAt(wh, coverW, st) {
   var stockoutRisk = leadDemand > curStock;                  // 到货前就断货 ⇒ 覆盖天数不足以覆盖时效
   var gapVsRop = curStock - rop;                             // 当前库存相对预警线的缺口（<0 = 已低于预警线）
   var curStockDays = dUse > 0 ? curStock / dUse : 0;         // 当前库存还能撑几天（不含在途/在产）
-  var dropDays = dUse > 0 ? rop / dUse : 0;                  // 预警线折合天数（今天起口径：= 覆盖天数 + 安全库存天数）
+  var dropDays = dSs > 0 ? rop / dSs : 0;                    // v560: 预警线折合天数按扣后日均（与 rop 同口径）
 
   // ===== v434：目标售罄天数算法已删除（用户 2026-10-18 裁定），以下为历史记录 =====
   //   v411~v433 曾有第二入口：needBoxes = 到仓后 targetDays 天需求 − 到仓时在库；byTarget = ⌈needBoxes ÷ 整车⌉。
@@ -821,6 +822,11 @@ function samsRopAt(wh, coverW, st) {
   //   扣减沿用表格同一笔 ded（本周已发生＋补填，上限本周 DP、超出作废），下限 0 防扣穿。
   if (ded > 0) {
     reqCover = Math.max(0, reqCover - ded);
+    // v560（用户 2026-11-25 裁定）：安全库存随需求覆盖同步——扣本周订单后，用扣后日均重算 kSs/ssFinal，
+    //   不再让 SS 停在扣前 DP 口径。dUse/k 仍是扣前值，仅用于 W_use/展示；SS 与目标水位统一走 kSs。
+    dSs = D > 0 ? reqCover / D : dUse;
+    kSs = d > 0 ? dSs / d : 1;
+    ssFinal = ss * kSs;
     rop = reqCover + ssFinal;
     if (!curKnown) {   // 未填库存时按预警线假设，必须跟着新 rop 走
       curStock = rop;
@@ -832,19 +838,19 @@ function samsRopAt(wh, coverW, st) {
     //   原写在 if(!curKnown) 内 → 实填库存仓（如天津 2000 箱）走不到，仍显示按扣单前旧预警线 5946 算出的
     //   「低于预警线 3946 箱」；现与 dropDays 并列，未填/实填库存仓一律重算：2000−3035=−1035 箱。
     gapVsRop = curStock - rop;
-    dropDays = dUse > 0 ? rop / dUse : 0;
+    dropDays = dSs > 0 ? rop / dSs : 0;
   }
   var coverDemandArr = coverDemandRaw - ded;   // 扣减后进入目标水位的有效需求
   // v431：安全库存口径改为「跟随覆盖天数」（原跟随 覆盖周数×7）。
   //   ss 在两处复用：①预警线(rop) 仍用 D = 覆盖周数×7（口径不动，见 L2960）；②覆盖目标用 D = 覆盖天数。
   //   两者仅在「覆盖天数 ≠ 覆盖周数×7」时不同；对齐时（覆盖天数 = 覆盖周数×7）两式逐字相等。
-  //   sdD = σ日、upGapDay = 上行缺口(箱/天)、k = 未来日均÷历史日均（同比例缩放），均来自上方 samsRopAt 作用域。
+  //   sdD = σ日、upGapDay = 上行缺口(箱/天)、kSs = 扣后日均÷历史日均（v560 安全库存同比例缩放），均来自上方 samsRopAt 作用域。
   // v544：目标水位侧同样去掉峰值法，只用统计法（与预警线侧 ss 口径一致）。ss2c 仅参考展示、不参与取值。
   var ss1c = samsProbit(st.csl) * sdD * Math.sqrt(coverDays);     // ① 统计法：F⁻¹(csl) × σ日 × √覆盖天数
   var ss2c = SAMS_SSU * upGapDay * coverDays;     // ② 峰值法：v544 起仅参考展示、不参与取值
   var ssc = ss1c;                                 // v544：只用统计法（原 Math.max(ss1c,ss2c)）
   var ssPickC = '统计法';                         // v544：恒为统计法
-  var ssFinalC = ssc * k;                                     // 按需求倍率 k 同比例放大
+  var ssFinalC = ssc * kSs;                                   // v560: 与预警线同口径，按扣后需求倍率 kSs 放大
   var coverTarget = coverDemandArr + ssFinalC;                // 目标库存水位（含安全库存，安全库存按覆盖天数定）
   var coverNeed = Math.max(0, coverTarget - curStock);        // v430：减【当前库存】（今天时点），原为 stockAtArrival
   // ⚠ 浮点/路径容差：coverTarget 走 samsCumAt（按天分段累加），rop 走 samsFutureDemand（按周桶比例摊），
@@ -968,17 +974,16 @@ function samsRopAt(wh, coverW, st) {
     W_hist: W_hist, sdW: sH.sd, d: d, sdD: sdD, hiW: hiW, upGapDay: upGapDay,
     D: D, ss1: ss1, ss2: ss2, ss: ss, ssPick: ssPick, ropHist: ropHist,
     W_plan: W_plan, nPlan: pv.length,
-    W_use: W_use, k: k, rop: rop, dUse: dUse,
+    W_use: W_use, k: k, dSs: dSs, kSs: kSs, rop: rop, dUse: dUse,
     reqCover: reqCover, ssFinal: ssFinal,
     reqBasis: reqBasis, fut: fut, W_future: fut.ok ? fut.daily : 0,
     // v440: 口径来源标注 —— future=用未来DP / chosen=用户选了「按历史销售覆盖」/ fallback=无未来DP被迫历史回退
     //   展示层必须区分 chosen 与 fallback，否则用户选了历史口径却被标成「历史回退」，会以为系统又偷偷用了 DP。
     basisWhy: (reqBasis === 'future') ? 'future' : (st.basis === 'hist' ? 'chosen' : 'fallback'),
-    // 🔴 折合天数必须除以「基准日均」(W_use/7) 而非历史日均：rop 已按 k 缩放，
-    //    若再除以历史 d 会把调整系数重复计入（惠州 会算成 16.3 天而不是 14.9 天）
+    // 🔴 v560: rop 已按 kSs 缩放，折合天数必须除以同口径的扣后日均 dSs（原 dUse 是扣前值，会重复计入口径差）
     dropDays: dropDays,
     reqCoverDays: D,
-    ssDays: dUse > 0 ? ssFinal / dUse : 0,          // 安全库存折合天数
+    ssDays: dSs > 0 ? ssFinal / dSs : 0,            // 安全库存折合天数（按扣后日均）
     batchDays: batchDays,                 // v502：有补货=入库起算（已扣时效）/ 0车=今天起算（在库全额）· 分段累加求解
     batchDaysExtrap: batchDaysExtrap,     // 其中靠「DP 未覆盖外推」的天数（诚实标注）
     // v458：把「确定 / 计划外」拆开 —— 确定 = DP 已排计划区间内算得死的天数；计划外 = batchDaysExtrap
