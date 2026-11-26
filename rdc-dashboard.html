@@ -1416,7 +1416,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 563; // v563: 补货调整跟踪到货日支持批次实际覆盖（华中11-23/西南11-19→11-25），减量+增量口径同步重算
+const BUILD_VERSION = 564; // v564: 加量总箱卡片增加构成说明（计划员调整计入/凑起运量已剔除）
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -26629,13 +26629,21 @@ function renderUpAdjTab(page, tabBar) {
   //     实测口径变为 200 笔 5,682 箱；避缺总箱 1,086.4 不变（这 5 笔避缺均为 0）。
   //   避缺总箱 = totalAvoid（原卡片数值，长窗有效避缺合计，口径不变）；效率 = 避缺 ÷ 加量总箱。
   //   避缺箱统计口径（min(加量,缺口)、实时统计、窗口定义）全部不变，只改这一张卡片的展示。
-  const enteredRecs = c.list.filter(function(x) { return x.status !== '未到货' && String(x.adjType || '').trim() !== '凑起运量'; });
+  const enteredRaw = c.list.filter(function(x) { return x.status !== '未到货'; });
+  const enteredRecs = enteredRaw.filter(function(x) { return String(x.adjType || '').trim() !== '凑起运量'; });
   const totalIncEntered = enteredRecs.reduce(function(s, x) { return s + (Number(x.incBox) || 0); }, 0);
   const avoidRate = totalIncEntered > 0 ? (totalAvoid / totalIncEntered * 100).toFixed(1) : '0.0';
+  // v564（用户 2026-11-26）：卡片内追加构成说明 —— 计划员调整计入加量总箱；凑起运量已被剔除（不在 6,814 内）。
+  //   两者分列并标注「计入/已剔除」，避免读者把剔除项误当成分子的一部分造成加总矛盾。
+  const cqRecs = enteredRaw.filter(function(x) { return String(x.adjType || '').trim() === '凑起运量'; });
+  const cqBox = cqRecs.reduce(function(s, x) { return s + (Number(x.incBox) || 0); }, 0);
+  const jgyRecs = enteredRecs.filter(function(x) { return String(x.adjType || '').trim() === '计划员调整'; });
+  const jgyBox = jgyRecs.reduce(function(s, x) { return s + (Number(x.incBox) || 0); }, 0);
   h += '<div style="flex:1;min-width:150px;background:#FEF3C7;border-radius:8px;padding:10px 12px">'
      + '<div style="font-size:11px;color:var(--text-secondary)">加量总箱 / 避缺总箱<span title="加量总箱只算已进入观察期或走完观察期的记录，且不含调整原因为凑起运量的记录；效率=避缺总箱÷加量总箱"> ⓘ</span></div>'
      + '<div style="font-size:18px;font-weight:700;color:#92400E">' + formatNum(Math.round(totalIncEntered)) + ' <span style="font-size:13px;font-weight:400">/</span> ' + formatNum(Math.round(totalAvoid * 10) / 10) + '<span style="font-size:11px;font-weight:400;margin-left:3px">箱</span></div>'
      + '<div style="font-size:10px;color:#92400E;margin-top:2px">避缺效率 ' + avoidRate + '% · 加量' + enteredRecs.length + '笔已进观察</div>'
+     + '<div style="font-size:10px;color:#92400E;margin-top:3px;line-height:1.5">其中计划员调整 ' + formatNum(Math.round(jgyBox)) + '箱(' + jgyRecs.length + '笔)计入；凑起运量 ' + formatNum(Math.round(cqBox)) + '箱(' + cqRecs.length + '笔)已剔除、避缺0</div>'
      + '</div>';
   h += '</div>';
   if (isLong) {
