@@ -66,6 +66,41 @@ def main():
                           'weekCount': len(weeks), 'rowCount': len(rows)}
         checks.append((s['date'], s['sha'], len(weeks), len(rows), len(blob)))
 
+    # 2026-11-26 发现：源「山姆需求」sheet 自 11-25 起删掉「山姆-常州FDC」两行，
+    # 页面 samsSimRun 硬断言 built[date].whs.length === 6，缺仓会让整个补货模拟页报红字。
+    # 数据层兜底：对缺仓快照补两行零需求（元数据照抄最近有该仓的快照，周桶列清零），
+    # 只恢复 6 仓结构；ACTIVE 四仓（天津/惠州/嘉兴/武汉）计算不受影响，不改看板代码。
+    def whs_of(rows):
+        return set(str(r[7]) for r in rows[1:] if len(r) > 7 and r[7])
+
+    ref_whs = set()
+    for s in w_slices:
+        ref_whs |= whs_of(out[s['date']]['rows'])
+    filled = []
+    for s in w_slices:
+        rows = out[s['date']]['rows']
+        missing = sorted(ref_whs - whs_of(rows))
+        if not missing:
+            continue
+        for wh in missing:
+            tpl = None
+            for s2 in reversed(w_slices):
+                hit = [r for r in out[s2['date']]['rows'][1:]
+                       if len(r) > 7 and str(r[7]) == wh]
+                if hit:
+                    tpl = hit
+                    break
+            if not tpl:
+                raise SystemExit('切片 %s 缺仓 %s 且全链无模板可补' % (s['date'], wh))
+            for row in tpl:
+                new = list(row)
+                for c in range(21, len(new)):   # 21+ 为周桶列，20 是指标列保留
+                    new[c] = 0
+                rows.append(new)
+            filled.append((s['date'], wh))
+    if filled:
+        print('缺仓补零行（恢复 6 仓结构）:', filled)
+
     with open(OUT, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False, separators=(',', ':'))
     print('已写出', OUT, os.path.getsize(OUT), '字节 | 切片数', len(out))
