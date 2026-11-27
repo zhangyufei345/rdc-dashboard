@@ -3,7 +3,8 @@
 山姆前置仓「实际在库 + 在途」数据构建器（v513，2026-11-18 用户裁定）
 
 【用户口径】
-  1. 天津：用户给定 2026-10-18 期初库存 = 16,876 箱（2026-11-18 16:29 用户修正，此前误用 27,840）。
+  1. 天津：原给定 2026-10-18 期初库存 = 16,876 箱（2026-11-18 16:29 用户修正，此前误用 27,840）。
+     v570（2026-11-27）：用户给出「现在（图末 2026-11-26）实际在库 13,572 箱」，据此按既有出货/转储事件倒推修正整条历史水位；期初改为倒推值，原给定值保留在说明里。
   2. 其他仓：不给单独期初 ——「首次转储量在运输周期后就可以认为是期初库存」。
      落地：该仓第一笔转储的「到仓日」= 创建日期 + 运输时效，当天期初在库 = 第一笔转储量；
      到仓日之前无库存数据，图上留白（不画 0，避免假装知道）。
@@ -34,7 +35,10 @@ OUT = os.path.join(ROOT, 'sams-actual-stock.json')
 SKU = '69001'
 START = '2026-10-18'
 LEAD = {'天津': 4, '惠州': 4, '嘉兴': 2, '武汉': 4, '成都': 5, '常州': 0}   # v514：用户裁定取「提货运输」天数（1+4→4），T 当日不额外加
-TJ_OPENING = 16876                      # 天津 2026-10-18 期初库存（用户 2026-11-18 16:29 修正）
+TJ_OPENING = 16876                      # 天津原给定 2026-10-18 期初库存（用户 2026-11-18 16:29 修正）
+# v570：用户给定图末 2026-11-26 实际在库 13,572 箱 → 倒推修正天津历史水位/期初。
+TJ_CURRENT_DATE = '2026-11-26'
+TJ_CURRENT_ONHAND = 13572
 # v518（用户 2026-11-18 17:02 裁定）：出货日期重排 —— 惠州 10-22 的 5,916 箱改计入 10-23。
 #   只挪日期、总量不变（不是追加）。用 (仓, 原日, 目标日, 数量) 表留痕，便于追溯/复核。
 SHIP_MOVE = [('惠州', '2026-10-22', '2026-10-23', 5916)]
@@ -145,13 +149,24 @@ def build():
         arrive.setdefault((t['wh'], t['arrivalDate']), 0.0)
         arrive[(t['wh'], t['arrivalDate'])] += t['qty']
 
+    # v570：按图末实际在库倒推天津期初。出货/到货事件不变，水位整体平移，
+    #   因此倒推期初 = 原期初 + (实际末在库 − 原口径末在库)。
+    if dates[-1] != TJ_CURRENT_DATE:
+        raise SystemExit('倒推锚点日期不符：图末 %s ≠ %s' % (dates[-1], TJ_CURRENT_DATE))
+    tj_ship_sum = sum(num(ship_by_wh.get(dt, {}).get('天津')) for dt in dates)
+    tj_arr_sum = sum(q for (w, dt), q in arrive.items() if w == '天津' and dt > START)
+    tj_base_end = TJ_OPENING - tj_ship_sum + tj_arr_sum
+    tj_opening = TJ_OPENING + (TJ_CURRENT_ONHAND - tj_base_end)
+    print('天津倒推：原期初 %s → 修正期初 %s（原口径末在库 %s → 实际 %s）'
+          % (TJ_OPENING, tj_opening, tj_base_end, TJ_CURRENT_ONHAND))
+
     per = {}
     notes = {}
     for w in active:
         wh_trans = [t for t in transfers if t['wh'] == w]
         first_arr = min((t['arrivalDate'] for t in wh_trans), default=None)
         opening_date = START if w == '天津' else first_arr
-        opening_qty = TJ_OPENING if w == '天津' else (
+        opening_qty = tj_opening if w == '天津' else (
             sum(t['qty'] for t in wh_trans if t['arrivalDate'] == first_arr) if first_arr else None)
 
         rows, on_hand = [], None
@@ -186,8 +201,11 @@ def build():
         notes[w] = {
             'openingDate': opening_date,
             'openingQty': None if opening_qty is None else round(opening_qty, 2),
-            'openingSource': ('用户给定 2026-10-18 期初库存 16,876 箱' if w == '天津'
-                              else '首次转储量于到仓日作为期初（创建日+%d 天）' % LEAD[w]),
+            'openingSource': (
+                ('原给定 10-18 期初 16,876 箱；按 %s 实际在库 %s 箱倒推修正为 %s 箱'
+                 % (TJ_CURRENT_DATE, format(TJ_CURRENT_ONHAND, ',.0f'), format(tj_opening, ',.0f')))
+                if w == '天津'
+                else '首次转储量于到仓日作为期初（创建日+%d 天）' % LEAD[w]),
             'leadDays': LEAD[w],
             'transferTotal': round(sum(t['qty'] for t in wh_trans), 2),
             'transferCount': len(wh_trans),
@@ -203,6 +221,10 @@ def build():
         'transferTotalByWh': {w: round(sum(t['qty'] for t in transfers if t['wh'] == w), 2) for w in active},
         'shipTotalByWh': {w: round(sum(num(x['ship'].get(w)) for x in daily_src), 2) for w in active},
         'shipKnownThrough': ship_last,
+        'tjOpeningOriginal': TJ_OPENING,
+        'tjOpeningDerived': round(tj_opening, 2),
+        'tjAnchorDate': TJ_CURRENT_DATE,
+        'tjAnchorOnHand': TJ_CURRENT_ONHAND,
         'dateRange': [START, end],
         'smwhCorrected': True,
         'shipMoves': [{'wh': w, 'from': fd, 'to': td, 'qty': q} for w, fd, td, q in SHIP_MOVE],
