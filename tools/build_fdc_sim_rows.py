@@ -59,7 +59,10 @@ def main():
         if miss or bad_week or len(weeks) < 20:
             raise SystemExit('切片 %s 表头不合规: 缺=%s 坏周桶=%s 周桶数=%d'
                              % (s['date'], miss, bad_week, len(weeks)))
-        metrics = sorted(set(str(r[20]) for r in rows[1:] if len(r) > 20 and r[7]))
+        # v569：计划指标列在新版「山姆需求」中由第 21 列移到第 27 列，按表头名动态定位。
+        metric_idx = hdr.index('计划指标') if '计划指标' in hdr else 20
+        metrics = sorted(set(str(r[metric_idx]) for r in rows[1:]
+                             if len(r) > metric_idx and r[metric_idx] and r[7]))
         if metrics != ['DP_共识数量', '实际出货_数量']:
             raise SystemExit('切片 %s 计划指标异常: %s' % (s['date'], metrics))
         out[s['date']] = {'sha': s['sha'], 'sheetName': SHEET, 'rows': rows,
@@ -82,10 +85,19 @@ def main():
         missing = sorted(ref_whs - whs_of(rows))
         if not missing:
             continue
+        # v569：新版「山姆需求」在指标列后新增 6 列元数据，不能再写死 21+ 全是周桶；
+        #   只按表头正则清零真实周桶列，避免把「计划指标」一并清掉导致补仓行被 samsBuild 忽略。
+        week_idx = [i for i, k in enumerate(rows[0]) if WEEK_RX.match(str(k or ''))]
         for wh in missing:
             tpl = None
+            # v569：模板必须来自同表头格式切片。新版表头比旧版多 6 列，
+            #   若拿新版行补旧版切片，计划指标会错位成品牌编码，samsBuild 仍只认出 5 仓。
+            same_hdr = tuple(str(x or '').strip() for x in rows[0])
             for s2 in reversed(w_slices):
-                hit = [r for r in out[s2['date']]['rows'][1:]
+                cand = out[s2['date']]['rows']
+                if tuple(str(x or '').strip() for x in cand[0]) != same_hdr:
+                    continue
+                hit = [r for r in cand[1:]
                        if len(r) > 7 and str(r[7]) == wh]
                 if hit:
                     tpl = hit
@@ -94,8 +106,9 @@ def main():
                 raise SystemExit('切片 %s 缺仓 %s 且全链无模板可补' % (s['date'], wh))
             for row in tpl:
                 new = list(row)
-                for c in range(21, len(new)):   # 21+ 为周桶列，20 是指标列保留
-                    new[c] = 0
+                for c in week_idx:
+                    if c < len(new):
+                        new[c] = 0
                 rows.append(new)
             filled.append((s['date'], wh))
     if filled:

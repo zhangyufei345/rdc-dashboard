@@ -88,9 +88,12 @@ def parse_slice(blob):
     if len(rows) < 7:
         return None
     hdr = rows[0]
+    # v569（2026-11-27）：「山姆需求」新增 6 列，计划指标由第 21 列移到第 27 列；
+    #   按表头名动态定位，兼容新旧格式，周桶列从计划指标之后开始。
+    metric_idx = hdr.index('计划指标') if '计划指标' in hdr else 20
     week_cols, month_cols = [], []
     for i, k in enumerate(hdr):
-        if not isinstance(k, str) or i < 21:
+        if not isinstance(k, str) or i <= metric_idx:
             continue
         if parse_week_header(k) and re.match(r'2026-(10|11) ', k):
             week_cols.append((i, k))
@@ -103,12 +106,13 @@ def parse_slice(blob):
 
     cum, dpw = {}, {}
     for r in rows[1:]:
-        if not r[7] or r[20] not in (SHIP_METRIC, PLAN_METRIC):
+        metric = r[metric_idx] if metric_idx < len(r) else None
+        if not r[7] or metric not in (SHIP_METRIC, PLAN_METRIC):
             continue
         w = wh_short(r[7])
         if w not in WHS:
             continue
-        if r[20] == SHIP_METRIC:
+        if metric == SHIP_METRIC:
             cum[w] = sum(r[i] for i, _ in cols
                          if i < len(r) and isinstance(r[i], (int, float)))
         elif fmt == 'W':
