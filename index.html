@@ -1421,7 +1421,9 @@ const DB_NAME = 'RDC_Dashboard';
 //   参数按钮「历史覆盖」同步改为明确文案「按历史销售覆盖」；默认值仍为未来计划优先，sams-sim-engine.js 不改。
 // v567（2026-11-27 用户裁定）：v566 新增卡改为单选方案切换（未来计划优先 / 按历史销售覆盖），
 //   同一时刻只显示勾选方案的结果；不再在每个仓卡片里同时写两套天数。默认仍显示按历史销售覆盖。
-const BUILD_VERSION = 567; // v567: 最优天数方案切换单选显示
+// v568（2026-11-27 用户裁定）：删除上方固定的「最佳补货覆盖天数建议」主卡片（不能筛选的口径），
+//   只保留带单选切换的方案卡片；参数栏默认值与其他模块不动。
+const BUILD_VERSION = 568; // v568: 删除固定口径主卡片
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -5712,185 +5714,21 @@ function samsSimBasisAdviceHtml(R, Aplan, Ahist) {
   return h;
 }
 
+// v568（2026-11-27 用户裁定）：删除上方固定的「最佳补货覆盖天数建议」主卡片，
+//   只保留带单选切换的方案卡片；A/S.advice 仍保留用于主口径数据与回退，但不再渲染旧卡片。
 function samsSimAdviceHtml(A, R) {
   var S = window._samsSimState;
-  if (!A) {
-    return '<div style="border:1px solid #BFDBFE;background:#F8FBFF;border-radius:10px;'
-      + 'padding:12px 14px;margin-bottom:14px;font-size:12px;color:#1E40AF">'
-      + '💡 <b>最佳补货覆盖天数建议</b>　正在按全部起算日逐档扫描（约 2 秒）…</div>';
-  }
-  if (A.err) {
-    return '<div style="border:1px solid #FCA5A5;background:#FEF2F2;border-radius:10px;'
-      + 'padding:12px 14px;margin-bottom:14px;font-size:12px;color:#991B1B">'
-      + '建议计算失败：' + samsSimEsc(A.err) + '</div>';
-  }
-  var ACTIVE = R.active, h = '', i;
-  var uni = A.uniform, uniAgg = null;
-  for (i = 0; i < A.agg.length; i++) if (A.agg[i].cd === uni) uniAgg = A.agg[i];
-
-  h += '<div style="border:1px solid #BFDBFE;background:#F8FBFF;border-radius:10px;padding:12px 14px;margin-bottom:14px">';
-  h += '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
-    + '<span style="font-size:13px;font-weight:600;color:#1E40AF">💡 最佳补货覆盖天数建议</span>'
-    + '<span style="font-size:11px;color:#3B82F6">硬约束＝该仓 <b>全部起算日都不缺货</b>，'
-    + '满足后再取最小覆盖天数；库存覆盖＝当前窗口 平均在库 ÷ 日均出货</span></div>';
-
-  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 8px">';
-  for (i = 0; i < ACTIVE.length; i++) {
-    var w = ACTIVE[i], cd = A.minOk[w];
-    var r = cd != null ? samsSimAdvAt(A, w, cd) : null;
-    var up = cd != null ? samsSimAdvPlatform(A, w, cd) : null;
-    var prev = cd != null ? samsSimAdvAt(A, w, cd - 1) : null;
-    var only = A.startsCount[w] <= 1;
-    h += '<div style="flex:1 1 200px;min-width:180px;background:#fff;border:1px solid #DBEAFE;'
-      + 'border-radius:8px;padding:9px 11px">'
-      + '<div style="font-size:11px;color:var(--text-secondary)">' + w + 'FDC · '
-      + A.startsCount[w] + ' 个起算日</div>'
-      + ((A.droppedCount && A.droppedCount[w] > 0)
-          ? '<div style="font-size:10px;color:#B45309;margin-top:2px" title="无解起算日：'
-            + A.droppedStartDates[w].join('、') + '">已剔除 ' + A.droppedCount[w]
-            + ' 个无解起算日，按剩余 ' + A.feasibleCount[w] + ' 个取值</div>'
-          : '');
-    if (cd == null) {
-      h += '<div style="font-size:15px;font-weight:600;color:var(--color-red);margin-top:2px">'
-        + A.range[1] + ' 天内无解</div>';
-    } else {
-      h += '<div style="font-size:15px;font-weight:600;color:#1D4ED8;margin-top:2px">最低 ' + cd + ' 天'
-        + (up > cd ? '<span style="font-size:11px;font-weight:400;color:#3B82F6">（' + cd + '~' + up + ' 天等价）</span>' : '')
-        + '</div>'
-        + '<div style="font-size:11px;color:var(--text-secondary);line-height:1.7;margin-top:2px">'
-        + '库存覆盖 <b>' + (r.invCover == null ? '—' : r.invCover.toFixed(1) + ' 天') + '</b>'
-        + '｜补货 ' + samsSimNum(r.boxes) + ' 箱（' + r.cars.toFixed(0) + ' 车）'
-        + (prev && prev.worstShortRate > 0.0005
-            ? '<br>再少 1 天 → 最坏缺货 <b style="color:var(--color-red)">'
-              + (prev.worstShortRate * 100).toFixed(1) + '%</b>'
-            : '')
-        + '</div>';
-    }
-    if (only) {
-      h += '<div style="font-size:10px;color:#B45309;margin-top:3px">⚠ 仅 ' + A.startsCount[w]
-        + ' 个起算日 / 短窗口，参考价值有限</div>';
-    }
-    h += '</div>';
-  }
-  h += '</div>';
-
-  if (uni != null && uniAgg) {
-    var worstWh = ACTIVE[0];
-    for (i = 0; i < ACTIVE.length; i++) {
-      if (A.minOk[ACTIVE[i]] != null && (A.minOk[worstWh] == null || A.minOk[ACTIVE[i]] > A.minOk[worstWh]))
-        worstWh = ACTIVE[i];
-    }
-    h += '<div style="background:#EFF6FF;border-radius:8px;padding:8px 11px;font-size:12px;color:#1E40AF">'
-      + '统一参数（coverDays 为全局参数）：<b style="font-size:14px">' + uni + ' 天</b>'
-      + '　三仓同时零缺货，受 <b>' + worstWh + '</b> 约束'
-      + '｜三仓平均库存覆盖 <b>' + uniAgg.avgCover.toFixed(1) + ' 天</b></div>';
-  } else {
-    h += '<div style="background:#FEF2F2;border-radius:8px;padding:8px 11px;font-size:12px;color:#991B1B">'
-      + '在 ' + A.range[1] + ' 天内没有任何统一档位能让三仓同时零缺货。</div>';
-  }
-
-  // v498（用户 2026-11-14「这个天数设置看起来有点鸡肋，因为对覆盖天数建议没影响，建议删掉」）：
-  //   已删除「目标平均库存覆盖天数」输入框与「可达 / 冲突」判定。
-  //   原因：建议值 =「全部起算日零缺货」的最小档位，是硬约束下的唯一解，与库存目标无关，
-  //   那个输入框只能改一句判定文案、改不了建议本身 → 确属鸡肋。
-  //   替换为「库存覆盖为什么大于覆盖天数」的折叠解释（这是用户紧接着问的问题）。
-  var covWhy = '', openWhy = '';
-  for (i = 0; i < ACTIVE.length; i++) {
-    var wq = ACTIVE[i], cq = A.minOk[wq];
-    var rq = cq != null ? samsSimAdvAt(A, wq, cq) : null;
-    if (!rq) continue;
-    if (rq.invCover != null) covWhy += (covWhy ? '、' : '') + wq + ' <b>' + rq.invCover.toFixed(1) + ' 天</b>';
-    if (rq.openDays != null) openWhy += (openWhy ? '、' : '') + wq + ' ' + rq.openDays.toFixed(1) + ' 天';
-  }
-  h += '<details style="margin-top:8px;border-top:1px dashed var(--border-card);padding-top:7px">'
-    + '<summary style="cursor:pointer;font-size:11.5px;color:#1E40AF;font-weight:600">'
-    + '❓ 为什么「库存覆盖」远大于「覆盖天数」？点开看构成</summary>'
-    + '<div style="font-size:11.5px;color:var(--text-secondary);line-height:1.9;padding:7px 0 0">'
-    + '两者不是同一个东西：<b>覆盖天数</b>是补货目标参数（每次补到「未来 N 天需求 ＋ 安全库存」）；'
-    + '<b>库存覆盖</b>是实际平均在库 ÷ 日均出货，衡量实际压了多少货。'
-    + '所以库存覆盖必然大于覆盖天数，原因有四：'
-    + '<br>① <b>期初＝起算日预警线</b>（含安全库存），本身就比覆盖天数厚：'
-    + (openWhy || '—') + '（折合天数）。'
-    + '<br>② <b>补货目标里另含安全库存</b>：N 天档 ＝ 未来 N 天需求 ＋ 安全库存，'
-    + '安全库存单独再占约 3~5 天。'
-    + '<br>③ <b>整车 ' + samsSimNum((R.params && R.params.car) || 5568) + ' 箱取整</b>：'
-    + '按车补货，零头必然多压一部分。'
-    + '<br>④ <b>需求下降后消化慢</b>：10 月 DP 高于 11 月，前期按高需求补的货只能靠出货慢慢消化，'
-    + '期间平均水位被推高。'
-    + '<br>各仓在本档位的实际库存覆盖：' + (covWhy || '—') + '。'
-    + '</div></details>';
-
-  // v499（用户 2026-11-14「逐日显示 出货 / 在库 / 缺口」）：
-  //   每个仓「再少 1 天」那一档，列出**缺得最多的那次起算**的逐日明细。
-  //   目的：回答「平均库存够 20 多天，为什么还是会缺货」——平均值掩盖局部时点。
-  if (A.worstDays && Object.keys(A.worstDays).length) {
-    h += '<details style="margin-top:8px;border-top:1px dashed var(--border-card);padding-top:7px">'
-      + '<summary style="cursor:pointer;font-size:11.5px;color:#1E40AF;font-weight:600">'
-      + '▸ 逐日明细：各仓「再少 1 天」时最坏的那次起算（出货 / 到货 / 在库 / 缺口）</summary>'
-      + '<div style="padding:7px 0 0">'
-      + '<div style="font-size:11px;color:var(--text-secondary);line-height:1.7;margin-bottom:4px">'
-      + '为什么「平均库存覆盖 20 多天」却仍然缺货：平均值掩盖了局部时点。'
-      + '下面列的是该档位在<b>所有起算日里缺得最多的那一次</b>，逐日看货是怎么被吃完的；'
-      + '红底行＝当天出现缺口。</div>';
-    for (var wi9 = 0; wi9 < ACTIVE.length; wi9++) {
-      var ww = ACTIVE[wi9], WD = A.worstDays[ww];
-      if (!WD) continue;
-      h += '<div style="font-size:11px;font-weight:600;color:var(--text-primary);margin:8px 0 3px">'
-        + ww + 'FDC · ' + WD.cd + ' 天档 · 起算 ' + WD.start
-        + '　缺口合计 <b style="color:var(--color-red)">' + samsSimNum(WD.short) + ' 箱</b>'
-        + '（占该次出货 ' + (WD.shortPct * 100).toFixed(1) + '%）</div>'
-        + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:10.5px;white-space:nowrap">'
-        + '<thead><tr style="background:var(--bg-primary)">'
-        + ['日期', '出货', '到货', '在库(出货后)', '缺口', '下单']
-            .map(function (t) {
-              return '<th style="padding:3px 6px;border:1px solid var(--border-card)">' + t + '</th>';
-            }).join('')
-        + '</tr></thead><tbody>';
-      for (var ri9 = 0; ri9 < WD.rows.length; ri9++) {
-        var q9 = WD.rows[ri9];
-        var hasAct = q9.s > 0 || q9.a > 0 || q9.sh > 0 || q9.o > 0;
-        h += '<tr' + (q9.sh > 0 ? ' style="background:#FEF2F2;font-weight:600"'
-                                : (hasAct ? '' : ' style="color:var(--text-secondary)"')) + '>'
-          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:left">' + q9.d.slice(5)
-          + (q9.intervalDays > 1 && q9.s > 0
-              ? ' <span style="color:#EA580C;font-size:9px">·' + q9.intervalDays + 'd</span>' : '')
-          + '</td>'
-          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
-          + (q9.s ? samsSimNum(q9.s) : '—') + '</td>'
-          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
-          + (q9.a ? samsSimNum(q9.a) : '—') + '</td>'
-          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
-          + samsSimNum(q9.on) + '</td>'
-          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right;'
-          + (q9.sh > 0 ? 'color:var(--color-red)' : '') + '">'
-          + (q9.sh > 0 ? samsSimNum(q9.sh) : '0') + '</td>'
-          + '<td style="padding:2px 6px;border:1px solid var(--border-card);text-align:right">'
-          + (q9.o ? samsSimNum(q9.o) : '—') + '</td>'
-          + '</tr>';
-      }
-      h += '</tbody></table></div>';
-    }
-    h += '</div></details>';
-  }
-
-  var line = A.agg.filter(function (x) { return x.cd >= 10 && x.cd <= 18; })
-    .map(function (x) { return x.cd + '天 ' + x.avgCover.toFixed(1); }).join(' · ');
-  if (line) {
-    h += '<div style="margin-top:7px;font-size:11px;color:var(--text-secondary);line-height:1.7">'
-      + '各档位三仓平均库存覆盖：' + line + '（天）'
-      + '<br>扫描 ' + A.cds.length + ' 档 × 各仓全部起算日，用时 ' + A.ms + ' ms；'
-      + '起算日＝该仓有 DP 且允许决策、距窗口末 ≥7 天</div>';
-  }
-  // v567：只追加方案单选切换；上方原有主卡片内容/顺序/默认展开状态一字不动。
   if (S.adviceHist || S.advicePlan) {
-    h += samsSimBasisAdviceHtml(R, S.advicePlan, S.adviceHist);
-  } else {
-    h += '<div style="border:1px solid #C7D2FE;background:#F8FAFF;border-radius:10px;'
-       + 'padding:10px 12px;margin-top:10px;font-size:11.5px;color:#3730A3">'
-       + '🔁 最优天数方案切换正在计算…</div>';
+    return samsSimBasisAdviceHtml(R, S.advicePlan, S.adviceHist);
   }
-  h += '</div>';
-  return h;
+  if (A && A.err) {
+    return '<div style="border:1px solid #FCA5A5;background:#FEF2F2;border-radius:10px;'
+      + 'padding:12px 14px;font-size:12px;color:#991B1B">'
+      + '方案计算失败：' + samsSimEsc(A.err) + '</div>';
+  }
+  return '<div style="border:1px solid #C7D2FE;background:#F8FAFF;border-radius:10px;'
+    + 'padding:10px 12px;font-size:11.5px;color:#3730A3">'
+    + '🔁 最优天数方案切换正在计算…</div>';
 }
 
 // 档位下拉只切换主图，不重算（所有档位已一次算完）
