@@ -1416,7 +1416,10 @@ const DB_NAME = 'RDC_Dashboard';
 //   超出本周DP部分作废、不结转下周、不扣穿整窗；下周需求与安全库存完整保留。
 //   改 samsRopAt 页面版 + 抽取出的 sams-sim-engine.js（重跑 build_sams_sim_bundle.py，公式同源），
 //   展示层 ①列标注/说明带/输入框 title 同步；输入框位置不动，只作额外补填。DB_VERSION 不动。
-const BUILD_VERSION = 565; // v565: 缺货差异维护原因下拉新增「库存不满整箱」「库存为Q状态」
+// v566（2026-11-26 用户裁定）：山姆补货模拟「最佳补货覆盖天数建议」新增固定「按历史销售覆盖」对照仿真；
+//   原有主卡片（跟随参数栏基准口径，默认未来计划优先）内容/顺序/默认展开状态不变，只在末尾追加对照结果。
+//   参数按钮「历史覆盖」同步改为明确文案「按历史销售覆盖」；默认值仍为未来计划优先，sams-sim-engine.js 不改。
+const BUILD_VERSION = 566; // v566: 最优天数建议新增按历史销售覆盖仿真
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -4999,6 +5002,8 @@ function renderSamsFc() {
 window._samsSimState = {
   data: null, engine: null, loading: false, err: '', result: null,
   selCd: null, paramsKey: '', lastMs: 0,
+  // v566：固定「按历史销售覆盖」的最优天数对照结果（不覆盖主卡片 S.advice）
+  adviceHist: null,
   // v513（用户 2026-11-18 裁定）：新增「实际库存情况」TAB。默认 view='sim'，原模拟趋势图
   //   内容/顺序/位置/默认展开状态一字不动；实际库存数据按需懒加载，不阻塞原页面。
   view: 'sim', actualData: null, actualLoading: false, actualErr: '',
@@ -5084,7 +5089,7 @@ function samsSimParamCardHtml() {
     + grp('覆盖天数', num('coverDays', st.coverDays, 'min="1" step="1"', true)
         + '<span style="font-size:11px;color:var(--text-secondary)">→ 反推车数</span>')
     + grp('覆盖周数', seg('coverW', st.coverW, [[0.5, '0.5周'], [1, '1周'], [1.5, '1.5周'], [2, '2周'], [3, '3周']]))
-    + grp('基准口径', seg('basis', st.basis, [['plan', '未来计划优先'], ['hist', '历史覆盖'], ['max', '取两者高']]))
+    + grp('基准口径', seg('basis', st.basis, [['plan', '未来计划优先'], ['hist', '按历史销售覆盖'], ['max', '取两者高']]))
     + grp('历史窗口', seg('win', st.win, [[4, '近4周'], [8, '近8周'], [12, '近12周'], [0, '全部']]))
     + grp('异常周', seg('useExclude', st.useExclude ? '1' : '0', [['1', '剔除'], ['0', '不剔除']]))
     + grp('整车(箱/车)', num('car', st.car, ''))
@@ -5425,21 +5430,31 @@ function samsSimAdvPlatform(A, w, cd) {
   return up;
 }
 
-function samsSimAdviceRun(R) {
+// v566：forceBasis 用于追加固定口径对照（本次传 'hist'），builtIn/onBuilt 让两次扫描共用同一批 DP 快照。
+function samsSimAdviceRun(R, forceBasis, builtIn, onBuilt) {
   var S = window._samsSimState, D = S.data;
   var t0 = Date.now();
   var ACTIVE = R.active, daily = D.daily, P = R.params;
+  // 主卡片逻辑不动：forceBasis 为空时仍完整使用当前参数栏基准口径。
+  if (forceBasis && forceBasis !== P.basis) {
+    P = {};
+    for (var pk in R.params) if (Object.prototype.hasOwnProperty.call(R.params, pk)) P[pk] = R.params[pk];
+    P.basis = forceBasis;
+  }
   var eng = S.engine.create(), st = eng.state;
   st.win = P.win; st.coverW = P.coverW; st.basis = P.basis; st.car = P.car;
   st.minCarRatio = P.minCarRatio; st.csl = P.csl;
   st.useExclude = P.useExclude; st.freeDays = P.freeDays;
   var exList = P.useExclude ? D.exclude : null;
-  var built = {}, i, j, w;
-  for (i = 0; i < daily.length; i++) {
-    var x0 = daily[i], o = D.slices[x0.dpSnapshotDate];
-    if (!o) throw new Error('决策日 ' + x0.date + ' 缺 DP 快照');
-    eng.setToday(x0.date);
-    built[x0.date] = eng.build(o.rows, o.sheetName, exList);
+  var built = builtIn || {}, i, j, w;
+  if (!builtIn) {
+    for (i = 0; i < daily.length; i++) {
+      var x0 = daily[i], o = D.slices[x0.dpSnapshotDate];
+      if (!o) throw new Error('决策日 ' + x0.date + ' 缺 DP 快照');
+      eng.setToday(x0.date);
+      built[x0.date] = eng.build(o.rows, o.sheetName, exList);
+    }
+    if (onBuilt) onBuilt(built);
   }
   // 可用起算日：该仓有 DP、允许决策、距窗口末 ≥7 天（否则窗口太短无意义）
   var lastDate = daily[daily.length - 1].date;
@@ -5559,6 +5574,7 @@ function samsSimAdviceRun(R) {
       avgCover: covs.reduce(function (a, b) { return a + b; }, 0) / covs.length, worst: worst2 });
   }
   return { cds: CDS, range: [CDS[0], CDS[CDS.length - 1]], perWh: perWh, agg: agg,
+           basis: P.basis,
            minOk: minOk, uniform: uniform, startsCount: startsCount,
            feasibleCount: feasibleCount, droppedCount: droppedCount,
            droppedStartDates: droppedStartDates, worstDays: worstDays,
@@ -5574,7 +5590,7 @@ function samsSimAdviceKey() {
 // 参数一变先作废旧建议，让渲染立刻显示「计算中」而不是旧结果
 function samsSimAdvicePrepare() {
   var S = window._samsSimState, key = samsSimAdviceKey();
-  if (S.adviceKey !== key) { S.advice = null; S.adviceKey = key; }
+  if (S.adviceKey !== key) { S.advice = null; S.adviceHist = null; S.adviceKey = key; }
 }
 function samsSimAdviceKick() {
   var S = window._samsSimState;
@@ -5585,11 +5601,78 @@ function samsSimAdviceKick() {
   if (S.adviceTimer) clearTimeout(S.adviceTimer);
   S.adviceTimer = setTimeout(function () {
     S.adviceTimer = null;
-    try { S.advice = samsSimAdviceRun(S.result); }
-    catch (e) { S.advice = { err: String((e && e.message) || e) }; }
+    try {
+      var sharedBuilt = null;
+      // 主卡片保持原口径；v566 追加固定『按历史销售覆盖』扫描，共用 same DP 快照避免重复 build。
+      S.advice = samsSimAdviceRun(S.result, null, null, function (b) { sharedBuilt = b; });
+      S.adviceHist = samsSimAdviceRun(S.result, 'hist', sharedBuilt);
+    }
+    catch (e) {
+      S.advice = { err: String((e && e.message) || e) };
+      S.adviceHist = null;
+    }
     var el = document.getElementById('samsSimAdvBox');
     if (el && S.result) el.innerHTML = samsSimAdviceHtml(S.advice, S.result);
   }, 40);
+}
+
+// v566：固定「按历史销售覆盖」对照卡片。只追加，不改上方主卡片任何原有内容/顺序。
+function samsSimHistAdviceHtml(H, R, A) {
+  if (!H || H.err) return '';
+  var ACTIVE = R.active, h = '';
+  var curBasis = A && !A.err && A.basis
+    ? ({ plan: '未来计划优先', hist: '按历史销售覆盖', max: '取两者高' }[A.basis] || A.basis)
+    : '当前口径';
+  h += '<div style="border:1px solid #C7D2FE;background:#F8FAFF;border-radius:10px;'
+     + 'padding:10px 12px;margin-top:10px">';
+  h += '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
+     + '<span style="font-size:12.5px;font-weight:600;color:#3730A3">🔁 新增：按历史销售覆盖仿真</span>'
+     + '<span style="font-size:11px;color:#6366F1">固定基准口径 basis=hist；预警线 / 补货水位 / 逐日需求轴都走历史日均，'
+     + '回测出货仍用真实出货；无解起算日剔除规则与上方一致</span></div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:7px">';
+  for (var i = 0; i < ACTIVE.length; i++) {
+    var w = ACTIVE[i], cd = H.minOk[w];
+    var r = cd != null ? samsSimAdvAt(H, w, cd) : null;
+    var up = cd != null ? samsSimAdvPlatform(H, w, cd) : null;
+    var curCd = A && !A.err && A.minOk ? A.minOk[w] : null;
+    h += '<div style="flex:1 1 190px;min-width:170px;background:#fff;border:1px solid #E0E7FF;'
+       + 'border-radius:8px;padding:8px 10px">'
+       + '<div style="font-size:10.5px;color:var(--text-secondary)">' + w + 'FDC · '
+       + H.startsCount[w] + ' 个起算日'
+       + ((H.droppedCount && H.droppedCount[w] > 0)
+           ? ' · 剔除 ' + H.droppedCount[w] + ' 个无解起点' : '')
+       + '</div>'
+       + (cd == null
+          ? '<div style="font-size:14px;font-weight:600;color:var(--color-red);margin-top:2px">'
+            + H.range[1] + ' 天内无解</div>'
+          : '<div style="font-size:14px;font-weight:600;color:#3730A3;margin-top:2px">最低 ' + cd + ' 天'
+            + (up > cd ? '<span style="font-size:10.5px;font-weight:400;color:#6366F1">（' + cd + '~' + up + ' 天等价）</span>' : '')
+            + '</div>'
+            + '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.7;margin-top:2px">'
+            + '库存覆盖 <b>' + (r.invCover == null ? '—' : r.invCover.toFixed(1) + ' 天') + '</b>'
+            + '｜补货 ' + samsSimNum(r.boxes) + ' 箱（' + r.cars.toFixed(0) + ' 车）'
+            + (curCd != null ? '<br>' + curBasis + ' ' + curCd + ' 天' : '')
+            + '</div>')
+       + '</div>';
+  }
+  h += '</div>';
+  if (H.uniform != null) {
+    var uniAgg = null;
+    for (var k = 0; k < H.agg.length; k++) if (H.agg[k].cd === H.uniform) uniAgg = H.agg[k];
+    h += '<div style="background:#EEF2FF;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#3730A3">'
+       + '统一参数：<b style="font-size:13px">' + H.uniform + ' 天</b>　三仓同时零缺货'
+       + (uniAgg ? '｜三仓平均库存覆盖 <b>' + uniAgg.avgCover.toFixed(1) + ' 天</b>' : '')
+       + '</div>';
+  } else {
+    h += '<div style="background:#FEF2F2;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#991B1B">'
+       + '在 ' + H.range[1] + ' 天内没有统一档位能让三仓同时零缺货。</div>';
+  }
+  h += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.7;margin-top:6px">'
+     + '历史窗口 ' + (R.params.win > 0 ? '近 ' + R.params.win + ' 周' : '全部')
+     + '｜覆盖周数 ' + R.params.coverW + '｜异常周 ' + (R.params.useExclude ? '剔除' : '不剔除')
+     + '｜扫描 ' + H.cds.length + ' 档 × 各仓可用起算日，用时 ' + H.ms + ' ms。</div>';
+  h += '</div>';
+  return h;
 }
 
 function samsSimAdviceHtml(A, R) {
@@ -5760,6 +5843,14 @@ function samsSimAdviceHtml(A, R) {
       + '各档位三仓平均库存覆盖：' + line + '（天）'
       + '<br>扫描 ' + A.cds.length + ' 档 × 各仓全部起算日，用时 ' + A.ms + ' ms；'
       + '起算日＝该仓有 DP 且允许决策、距窗口末 ≥7 天</div>';
+  }
+  // v566：只追加历史销售覆盖对照；上方原有主卡片内容/顺序/默认展开状态一字不动。
+  if (S.adviceHist) {
+    h += samsSimHistAdviceHtml(S.adviceHist, R, A);
+  } else {
+    h += '<div style="border:1px solid #C7D2FE;background:#F8FAFF;border-radius:10px;'
+       + 'padding:10px 12px;margin-top:10px;font-size:11.5px;color:#3730A3">'
+       + '🔁 按历史销售覆盖仿真正在计算…</div>';
   }
   h += '</div>';
   return h;
