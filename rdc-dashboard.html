@@ -1432,7 +1432,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   只保留带单选切换的方案卡片；参数栏默认值与其他模块不动。
 // v569（2026-11-27）：修山姆模拟静态包生成链——「山姆需求」新增列导致计划指标列位移，
 //   改为按表头名动态定位，兼容新旧格式；补 11/26 出货并推进实际库存趋势图到 11/26。
-const BUILD_VERSION = 572; // v572: 补货决策复盘逐日缺货列只显示有缺货的日期
+const BUILD_VERSION = 573; // v573: 慢动根因下钻新增「主要提报来源」列，显示贡献最大的月份+渠道
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -24814,7 +24814,30 @@ function renderSlowMoving() {
   var shipQtyAll2 = {};
   (dataStore.orderDetail || []).forEach(function(o) { var k = normalizeRdcName(o.warehouse) + '|' + o.skuCode; if (!slowKeysAll2.has(k)) return; shipQtyAll2[k] = (shipQtyAll2[k] || 0) + (o.firstDayQty || 0); });
   var bizDemandAll2 = {};
-  (dataStore.bizDemand || []).forEach(function(b) { var k = normalizeRdcName(b.rdc) + '|' + b.opCode; if (!slowKeysAll2.has(k)) return; bizDemandAll2[k] = (bizDemandAll2[k] || 0) + ((b.dealerDemand || 0) + (b.kaDemand || 0) + (b.newChannel || 0)); });
+  // v573: 按「月×渠道」聚合业务提报，取提报量最大的来源，供慢动根因下钻表展示「几月哪个渠道提的需求」。
+  //   bizDemand 每行自带 dateStr(补货日期→月) / dealerDemand / kaDemand / newChannel，可完整回溯。
+  var bizDemandTopSrc = {};   // key: rdc|sku => { label:'6月 KA', qty:6000, month:'2026-06', channel:'KA' }
+  (dataStore.bizDemand || []).forEach(function(b) {
+    var k = normalizeRdcName(b.rdc) + '|' + b.opCode;
+    if (!slowKeysAll2.has(k)) return;
+    var m = String(b.dateStr || '').slice(0, 7);
+    var chans = [['经销商', b.dealerDemand], ['KA', b.kaDemand], ['新通路', b.newChannel]];
+    chans.forEach(function(pair) {
+      var q = Number(pair[1]) || 0;
+      if (q <= 0) return;
+      var sk = k + '|' + m + '|' + pair[0];
+      bizDemandTopSrc[sk] = (bizDemandTopSrc[sk] || 0) + q;
+    });
+  });
+  var bizDemandSrcBest = {};
+  Object.keys(bizDemandTopSrc).forEach(function(sk) {
+    var parts = sk.split('|');                       // rdc | sku | month | channel
+    var key = parts[0] + '|' + parts[1];
+    var q = bizDemandTopSrc[sk];
+    if (!bizDemandSrcBest[key] || q > bizDemandSrcBest[key].qty) {
+      bizDemandSrcBest[key] = { label: Number(parts[2].slice(5)) + '月 ' + parts[3], qty: q, month: parts[2], channel: parts[3] };
+    }
+  });
   var detailRowsAll2 = slow6AllRdc.map(function(d) {
     var key = d.rdc + '|' + d.sku;
     var netIn = transNetAll2[key] ? (transNetAll2[key].inn - transNetAll2[key].out) : 0;
@@ -24826,7 +24849,8 @@ function renderSlowMoving() {
     var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0;
     var isNew = !maySlowKeysAll.has(key);
     var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, demand: demand, fut: fut, fut5: fut5v, expiryRatio: expiryRatio, isNew: isNew });
-    return { rdc: d.rdc, sku: d.sku, inventoryAmt: d.planAmt, rootCause: diag.rc, fullRootCause: diag.rc };
+    return { rdc: d.rdc, sku: d.sku, inventoryAmt: d.planAmt, rootCause: diag.rc, fullRootCause: diag.rc,
+             bizTopSrc: bizDemandSrcBest[key] || null };   // v573: 主要提报月+渠道
   });
   // 聚合 RDC × 主根因 金额（元）
   var causeRdcMatrix = {};      // {cause: {rdc: amt}}
@@ -24851,7 +24875,7 @@ function renderSlowMoving() {
     if (!causeRdcSkus[cause]) causeRdcSkus[cause] = {};
     if (!causeRdcSkus[cause][d.rdc]) causeRdcSkus[cause][d.rdc] = [];
     var info = slowSkuInfo[d.rdc + '|' + d.sku] || {};
-    causeRdcSkus[cause][d.rdc].push({ rdc: d.rdc, sku: d.sku, skuName: info.skuName, brand: info.brand, coverageLevel: info.coverageLevel, inventoryAmt: d.inventoryAmt, rootCause: d.rootCause });
+    causeRdcSkus[cause][d.rdc].push({ rdc: d.rdc, sku: d.sku, skuName: info.skuName, brand: info.brand, coverageLevel: info.coverageLevel, inventoryAmt: d.inventoryAmt, rootCause: d.rootCause, bizTopSrc: d.bizTopSrc || null });
   });
   Object.keys(causeRdcSkus).forEach(function(c) { Object.keys(causeRdcSkus[c]).forEach(function(rdc) { causeRdcSkus[c][rdc].sort(function(a, b) { return (b.inventoryAmt || 0) - (a.inventoryAmt || 0); }); }); });
   window._causeMatrix.causeRdcSkus = causeRdcSkus;
@@ -25179,6 +25203,10 @@ function openCauseDrillDown(rdc, cause) {
     var nameEsc = esc(r.skuName);
     var brandEsc = esc(r.brand);
     var rcEsc = esc(rc);
+    var srcHtml = r.bizTopSrc
+      ? '<span title="提报量最大的月份·渠道：' + esc(r.bizTopSrc.month) + ' · ' + esc(r.bizTopSrc.channel) + ' · ' + r.bizTopSrc.qty.toLocaleString('zh-CN') + ' 支">'
+          + esc(r.bizTopSrc.label) + ' <span style="color:var(--text-secondary)">' + r.bizTopSrc.qty.toLocaleString('zh-CN') + '</span></span>'
+      : '<span style="color:var(--text-secondary)">—</span>';
     return '<tr>'
       + '<td class="num">' + (i + 1) + '</td>'
       + '<td>' + rdc + '</td>'
@@ -25189,6 +25217,7 @@ function openCauseDrillDown(rdc, cause) {
       + '<td class="num">' + (r.inventoryAmt / 1000).toFixed(1) + '</td>'
       + '<td class="num">' + pct + '%</td>'
       + '<td style="max-width:340px;font-size:11px;line-height:1.4" title="' + rcEsc + '"><span style="color:' + rcColor + ';font-weight:600">' + rcEsc + '</span></td>'
+      + '<td style="font-size:11px;white-space:nowrap">' + srcHtml + '</td>'
       + '</tr>';
   }).join('');
   var css = '<style>.cdm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999}.cdm-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(1100px,94vw);max-height:88vh;background:var(--bg-card,#fff);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);z-index:10000;display:flex;flex-direction:column;overflow:hidden}.cdm-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;border-bottom:1px solid var(--border-light,#eee);gap:12px}.cdm-title{font-size:16px;font-weight:700;color:var(--text-primary,#111)}.cdm-sub{font-size:12px;color:var(--text-secondary,#666);margin-top:4px}.cdm-close{background:transparent;border:none;font-size:28px;line-height:1;cursor:pointer;color:var(--text-secondary,#666);padding:0 4px}.cdm-close:hover{color:#DC2626}.cdm-body{flex:1;overflow:auto;padding:12px 16px}.cdm-footer{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-top:1px solid var(--border-light,#eee);gap:8px}</style>';
@@ -25198,7 +25227,7 @@ function openCauseDrillDown(rdc, cause) {
     +   '<div class="cdm-header"><div><div class="cdm-title">🔍 SKU 根因下钻 — <span style="color:#DC2626">' + rdc + '</span> × <span style="color:#DC2626">' + cause + '</span></div>'
     +   '<div class="cdm-sub">共 <b>' + skus.length + '</b> 个SKU｜金额 <b>' + bucketAmtK + '</b> 千元｜占该RDC慢动总额 <b>' + pctRdc + '%</b>｜每SKU计入最严重主根因（金额零重复）</div></div>'
     +   '<button class="cdm-close" onclick="closeCauseDrillDown()" title="关闭 (Esc)">×</button></div>'
-    +   '<div class="cdm-body"><table class="data-table"><thead><tr><th>#</th><th>RDC</th><th>SKU编码</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">慢动金额(千元)</th><th class="num">占桶%</th><th>根因(完整)</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
+    +   '<div class="cdm-body"><table class="data-table"><thead><tr><th>#</th><th>RDC</th><th>SKU编码</th><th>名称</th><th>品牌</th><th>覆盖等级</th><th class="num">慢动金额(千元)</th><th class="num">占桶%</th><th>根因(完整)</th><th title="该SKU提报量最大的月份和渠道">主要提报来源</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
     +   '<div class="cdm-footer"><span style="font-size:11px;color:var(--text-secondary)">数据口径与矩阵一致（仅最严重主根因）</span><button class="btn-export" onclick="exportCauseBucket(\'' + rdc + '\',\'' + cause + '\')">导出该桶CSV</button></div>'
     + '</div>';
   var old = document.getElementById('causeDrillModal');
@@ -25223,13 +25252,14 @@ function exportCauseBucket(rdc, cause) {
   var skus = (cm && cm.causeRdcSkus && cm.causeRdcSkus[cause] && cm.causeRdcSkus[cause][rdc]) || [];
   if (skus.length === 0) { if (typeof showToast === 'function') showToast('该桶无数据', true); return; }
   var bucketAmt = (cm.causeRdcMatrix[cause] && cm.causeRdcMatrix[cause][rdc]) || 0;
-  var csv = '\uFEFF#,RDC,SKU编码,名称,品牌,覆盖等级,慢动金额(元),占桶%,根因(完整)\n';
+  var csv = '\uFEFF#,RDC,SKU编码,名称,品牌,覆盖等级,慢动金额(元),占桶%,根因(完整),主要提报来源\n';
   skus.forEach(function(r, i) {
     var pct = bucketAmt > 0 ? (r.inventoryAmt / bucketAmt * 100).toFixed(1) : '0.0';
     var name = (r.skuName || '').replace(/,/g, '，');
     var brand = (r.brand || '').replace(/,/g, '，');
     var rc = (r.rootCause || '').replace(/,/g, '，').replace(/\n/g, ' ');
-    csv += [(i + 1), rdc, r.sku, name, brand, r.coverageLevel, r.inventoryAmt, pct, rc].join(',') + '\n';
+    var src = r.bizTopSrc ? (r.bizTopSrc.label + ' ' + r.bizTopSrc.qty + '支 (' + r.bizTopSrc.month + ' · ' + r.bizTopSrc.channel + ')') : '';
+    csv += [(i + 1), rdc, r.sku, name, brand, r.coverageLevel, r.inventoryAmt, pct, rc, src].join(',') + '\n';
   });
   var safeCause = cause.replace(/[^\w一-龥]/g, '');
   downloadFile('SKU根因下钻_' + rdc + '_' + safeCause + '_' + new Date().toISOString().slice(0, 10) + '.csv', csv);
