@@ -1357,6 +1357,8 @@ const DB_NAME = 'RDC_Dashboard';
 // v511（2026-11-17 用户再次明确口径）：「已满足」= 首日未满足量中后来被满足的部分
 //   = max(0, 首日缺货量 − 最终仍未满足量)，因此已满足≤缺货、全部补齐时相等；不是总履约量。
 //   缺货/缺货率继续按首日口径不动。DB_VERSION 不动。
+// v572（2026-11-28 用户裁定）：「补货决策复盘」逐笔归因表的「窗口内缺货日(箱)」列只显示缺货>0 的日期，
+//   缺货 0 的天不再列出（原长窗口把整列撑得杂乱）；无缺货显示「—」。仅改展示，不动归因算法/结论判定。
 // v571（2026-11-28 用户裁定）：「补货决策复盘」每笔补货的观察期由固定「到货日+3 天（4 天）」
 //   延长为「到货日 → 同 SKU×RDC 下一笔补货的到货日（下单日+运输周期）」；无下一笔则延伸到数据末日，
 //   且窗口不短于原 4 天。下一笔到货日晚于数据末日时标「观察中」不提前下结论。
@@ -1430,7 +1432,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   只保留带单选切换的方案卡片；参数栏默认值与其他模块不动。
 // v569（2026-11-27）：修山姆模拟静态包生成链——「山姆需求」新增列导致计划指标列位移，
 //   改为按表头名动态定位，兼容新旧格式；补 11/26 出货并推进实际库存趋势图到 11/26。
-const BUILD_VERSION = 571; // v571: 补货决策复盘观察期延长至下笔补货到货日（原固定4天）
+const BUILD_VERSION = 572; // v572: 补货决策复盘逐日缺货列只显示有缺货的日期
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -18929,12 +18931,14 @@ function _revTopExpandHtml(k, x, recs, pct) {
     s += '<th style="text-align:left;padding:5px 8px;font-weight:400">状态</th>';
     s += '<th style="text-align:right;padding:5px 8px;font-weight:400">应补→实补(箱)</th>';
     s += '<th style="text-align:right;padding:5px 8px;font-weight:400">窗口缺货(箱)</th>';
-    s += '<th style="text-align:left;padding:5px 8px;font-weight:400">窗口内逐日缺货(箱)</th>';
+    s += '<th style="text-align:left;padding:5px 8px;font-weight:400" title="只列有缺货的日期，缺货 0 的天不显示">窗口内缺货日(箱)</th>';
     s += '<th style="text-align:left;padding:5px 8px;font-weight:400">决策结论</th>';
     s += '</tr></thead><tbody>';
     batches.forEach(function(b) {
-      var daily = b.dailyShort.length
-        ? b.dailyShort.map(function(d) { return d.day.slice(5) + ' <b style="color:' + (d.boxes > 0 ? '#A32D2D' : 'var(--text-secondary)') + '">' + formatNum(d.boxes) + '</b>'; }).join(' · ')
+      // v572：只列真正有缺货的日期，缺货 0 的日期不显示，避免长窗口把表格撑乱。
+      var shortDays = b.dailyShort.filter(function(d) { return d.boxes > 0; });
+      var daily = shortDays.length
+        ? shortDays.map(function(d) { return d.day.slice(5) + ' <b style="color:#A32D2D">' + formatNum(d.boxes) + '</b>'; }).join(' · ')
         : '—';
       s += '<tr style="border-top:1px solid #F1F5F9">';
       s += '<td style="padding:5px 8px;white-space:nowrap">' + (b.date || '—').slice(5) + '</td>';
@@ -18950,7 +18954,7 @@ function _revTopExpandHtml(k, x, recs, pct) {
       s += '</tr>';
     });
     s += '</tbody></table></div>';
-    s += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.6">说明（v571）：每笔「观察窗」从本笔到货日起，延长到同 SKU×RDC <b>下一笔补货的到货日</b>（下单日 + 运输周期，含当天），与「补货调整跟踪」增量分析长窗口同口径；无下一笔补货则延伸到数据末日，且窗口不短于原来的 4 天。「窗口内逐日缺货」和上方「缺货合计（当月累计）」范围不同，两者不要求相等；下一笔到货日晚于数据末日时观察窗被截断，标「观察中」不参与结论判定。</div>';
+    s += '<div style="font-size:10.5px;color:var(--text-secondary);line-height:1.6">说明（v571）：每笔「观察窗」从本笔到货日起，延长到同 SKU×RDC <b>下一笔补货的到货日</b>（下单日 + 运输周期，含当天），与「补货调整跟踪」增量分析长窗口同口径；无下一笔补货则延伸到数据末日，且窗口不短于原来的 4 天。「窗口内缺货日(箱)」只列有缺货的日期（缺货 0 的天不显示）「—」表示窗口内无缺货；它与上方「缺货合计（当月累计）」范围不同，两者不要求相等；下一笔到货日晚于数据末日时观察窗被截断，标「观察中」不参与结论判定。</div>';
     s += '</div>';
   }
   s += '</td></tr>';
