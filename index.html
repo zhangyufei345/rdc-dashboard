@@ -1432,7 +1432,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   只保留带单选切换的方案卡片；参数栏默认值与其他模块不动。
 // v569（2026-11-27）：修山姆模拟静态包生成链——「山姆需求」新增列导致计划指标列位移，
 //   改为按表头名动态定位，兼容新旧格式；补 11/26 出货并推进实际库存趋势图到 11/26。
-const BUILD_VERSION = 574; // v574: 修复 v573 漏掉 bizDemandAll2 累加导致「业务提报需求虚高」消失的回归
+const BUILD_VERSION = 575; // v575: 业务提报虚高的出货改为同 SKU 提报起止窗口内的 firstDayQty
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -21384,9 +21384,12 @@ function renderCovStackedChart(cfg) {
 // 让 plan-monitor 也能通过 window._slowDiagMap[key] 查询 (rdc,sku) 的根因，无需进入「慢动品分析」页。
 function diagnoseSlowItem(o) {
   var netIn = o.netIn, ship = o.ship, demand = o.demand, fut = o.fut, fut5 = o.fut5, expiryRatio = o.expiryRatio, isNew = o.isNew;
+  // v575: 「业务提报需求虚高」单独用同窗口出货 shipBiz（该 RDC|SKU 首条~末条正提报日期之间）；
+  //   未传 shipBiz 的旧调用方继续用 ship，分仓需求虚高/严重呆滞也继续用原 ship，口径不变。
+  var shipBiz = (o.shipBiz == null) ? ship : o.shipBiz;
   var flags = [];
   if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('分仓需求虚高(过量补货)');
-  if (demand > 0 && ship / demand < 0.5) flags.push('业务提报需求虚高');
+  if (demand > 0 && shipBiz / demand < 0.5) flags.push('业务提报需求虚高');
   if (fut5 > 0 && fut / fut5 < 0.7) flags.push('未来需求下降');
   if (expiryRatio > 0.3) flags.push('效期风险');
   if (ship === 0 && fut === 0) flags.push('严重呆滞');
@@ -24814,9 +24817,36 @@ function renderSlowMoving() {
   var shipQtyAll2 = {};
   (dataStore.orderDetail || []).forEach(function(o) { var k = normalizeRdcName(o.warehouse) + '|' + o.skuCode; if (!slowKeysAll2.has(k)) return; shipQtyAll2[k] = (shipQtyAll2[k] || 0) + (o.firstDayQty || 0); });
   var bizDemandAll2 = {};
+  var bizDemandWindow = {};   // v575: key=rdc|sku => {start:'YYYY-MM-DD', end:'YYYY-MM-DD'}，仅按正提报行取边界
   // v574: 恢复 v573 被误删的 demand 累加——诊断口径仍是「全部月份+经销商/KA/新通路加总」。
   //   这一段必须保留，否则 demand=0，「业务提报需求虚高 / 需求信号全面失真」会整类消失。
-  (dataStore.bizDemand || []).forEach(function(b) { var k = normalizeRdcName(b.rdc) + '|' + b.opCode; if (!slowKeysAll2.has(k)) return; bizDemandAll2[k] = (bizDemandAll2[k] || 0) + ((b.dealerDemand || 0) + (b.kaDemand || 0) + (b.newChannel || 0)); });
+  (dataStore.bizDemand || []).forEach(function(b) {
+    var k = normalizeRdcName(b.rdc) + '|' + b.opCode;
+    if (!slowKeysAll2.has(k)) return;
+    var total = (b.dealerDemand || 0) + (b.kaDemand || 0) + (b.newChannel || 0);
+    bizDemandAll2[k] = (bizDemandAll2[k] || 0) + total;
+    // v575: 记录该 SKU 正提报的首末日期，作为「业务提报需求虚高」的归因出货窗口
+    if (total > 0) {
+      var ds = String(b.dateStr || '').slice(0, 10);
+      if (ds) {
+        var w = bizDemandWindow[k];
+        if (!w) bizDemandWindow[k] = { start: ds, end: ds };
+        else { if (ds < w.start) w.start = ds; if (ds > w.end) w.end = ds; }
+      }
+    }
+  });
+  // v575: 业务提报虚高专用出货——只统计该 RDC|SKU 提报窗口内的 firstDayQty。
+  //   原 shipQtyAll2（全量）保留给「分仓需求虚高(过量补货)」和「严重呆滞」，那两条判定不动。
+  var shipBizQtyAll2 = {};
+  (dataStore.orderDetail || []).forEach(function(o) {
+    var k = normalizeRdcName(o.warehouse) + '|' + o.skuCode;
+    if (!slowKeysAll2.has(k)) return;
+    var w = bizDemandWindow[k];
+    if (!w) return;
+    var ds = String(o.dateStr || '').slice(0, 10);
+    if (ds && (ds < w.start || ds > w.end)) return;
+    shipBizQtyAll2[k] = (shipBizQtyAll2[k] || 0) + (o.firstDayQty || 0);
+  });
   // v573: 按「月×渠道」聚合业务提报，取提报量最大的来源，供慢动根因下钻表展示「几月哪个渠道提的需求」。
   //   bizDemand 每行自带 dateStr(补货日期→月) / dealerDemand / kaDemand / newChannel，可完整回溯。
   var bizDemandTopSrc = {};   // key: rdc|sku => { label:'6月 KA', qty:6000, month:'2026-06', channel:'KA' }
@@ -24845,13 +24875,14 @@ function renderSlowMoving() {
     var key = d.rdc + '|' + d.sku;
     var netIn = transNetAll2[key] ? (transNetAll2[key].inn - transNetAll2[key].out) : 0;
     var ship = shipQtyAll2[key] || 0;
+    var shipBiz = shipBizQtyAll2[key] || 0;   // v575: 仅业务提报虚高判定使用
     var demand = bizDemandAll2[key] || 0;
     var fut = covFutureSum(d, _slow6AllFutFields); // v395: 与 futureDemandAll 同源同口径
     var fut5v = futureDemand5All[key] || 0;
     var exMap = (dataStore.inventory && dataStore.inventory.expiry7) ? dataStore.inventory.expiry7[key] : null;
     var expiryRatio = exMap && exMap.sellable > 0 ? exMap.below23 / exMap.sellable : 0;
     var isNew = !maySlowKeysAll.has(key);
-    var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, demand: demand, fut: fut, fut5: fut5v, expiryRatio: expiryRatio, isNew: isNew });
+    var diag = diagnoseSlowItem({ netIn: netIn, ship: ship, shipBiz: shipBiz, demand: demand, fut: fut, fut5: fut5v, expiryRatio: expiryRatio, isNew: isNew });
     return { rdc: d.rdc, sku: d.sku, inventoryAmt: d.planAmt, rootCause: diag.rc, fullRootCause: diag.rc,
              bizTopSrc: bizDemandSrcBest[key] || null };   // v573: 主要提报月+渠道
   });
