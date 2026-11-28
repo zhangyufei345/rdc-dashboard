@@ -1432,7 +1432,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   只保留带单选切换的方案卡片；参数栏默认值与其他模块不动。
 // v569（2026-11-27）：修山姆模拟静态包生成链——「山姆需求」新增列导致计划指标列位移，
 //   改为按表头名动态定位，兼容新旧格式；补 11/26 出货并推进实际库存趋势图到 11/26。
-const BUILD_VERSION = 576; // v576: 业务提报虚高的出货从该 SKU 首次提报日起算到数据末日
+const BUILD_VERSION = 577; // v577: 总仓缺货模拟改为按 RDC 的 T+N 补货周期窗口归因
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -15499,6 +15499,30 @@ function renderDcSupplySimTab(page, tabBar) {
   // 订单明细中 RDC 字段叫 warehouse，归一化给 rdc
   paidRowsAll.forEach(r => { if (r.warehouse && !r.rdc) r.rdc = r.warehouse; });
   const paidRows = paidRowsAll.filter(r => !r.rdc || selectedSimRdcs.indexOf(r.rdc) >= 0);
+  // v577: 归因窗口改为「总仓异常日 T ～ T+N（该 RDC 运输周期）」，按 RDC 触发。
+  //   只有当该 RDC 在 T 当天确实有缺货，才把该 RDC 在窗口内新增的首日缺货归因总仓。
+  const SIM_LEAD = { '华中RDC': 4, '华南RDC': 4, '华北RDC': 5, '东北RDC': 5, '西北RDC': 5, '西南RDC': 7, '华东RDC': 1 };
+  function simAddDays(iso, n) {
+    if (!iso || iso.length < 10) return iso;
+    const dt = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + (n || 0)));
+    return dt.toISOString().slice(0, 10);
+  }
+  const impactedOrderIdx = new Set();
+  selectedRows.forEach(function(d) {
+    const t = d.dateStr;
+    if (!t || !d.materialCode) return;
+    DC_SUPPLY_RDC_KEYS.forEach(function(r) {
+      if (selectedSimRdcs.indexOf(r.name) < 0) return;
+      if ((d[r.shortKey + 'Short'] || 0) <= 0) return;
+      const end = simAddDays(t, SIM_LEAD[r.name] || 0);
+      paidRows.forEach(function(o, idx) {
+        if (o.skuCode !== d.materialCode || o.warehouse !== r.name) return;
+        if (!o.dateStr || o.dateStr < t || o.dateStr > end) return;
+        if (((o.orderQty || 0) - (o.firstDayQty || 0)) <= 0) return;
+        impactedOrderIdx.add(idx);
+      });
+    });
+  });
   const totalOrder = paidRows.reduce((s, d) => s + (d.orderQty || 0), 0);
   const totalFirstDay = paidRows.reduce((s, d) => s + (d.firstDayQty || 0), 0);
   const currentRate = totalOrder > 0 ? totalFirstDay / totalOrder : 0; // 日订单满足率
@@ -15510,7 +15534,7 @@ function renderDcSupplySimTab(page, tabBar) {
   });
 
   // ========== 关键修正：模拟可消化 = 订单维度首日缺货支数累计（同一订单只算一次）==========
-  // 口径：在用户选定的月份 + RDC 范围内，对受影响 SKU 的订单求 firstDayShort 累计
+  // v577 口径：只统计「总仓异常日 T ～ T+N」窗口内的首日缺货，N=该 RDC 运输周期
   // firstDayShort = orderQty - firstDayQty，即"该订单首日未满足的支数"
   // 如果这些 SKU 在总仓供应充足（不再是紧张/缺货），这部分首日缺货可被消化
   const rdcImpact = {};
@@ -15519,11 +15543,10 @@ function renderDcSupplySimTab(page, tabBar) {
   });
   // SKU×RDC 维度的订单首日缺货累计（用于 SKU 明细表）
   const skuRdcFirstShort = {}; // key=sku -> { rdc -> firstDayShort合计, total }
-  // v2.6-fix：诊断计数器
-  let _matchTotal = 0, _shortTotal = 0;
-  paidRows.forEach(r => {
-    if (!r.skuCode || !impactedSkuSet[r.skuCode]) return;
-    _matchTotal++;
+  // v2.6-fix：诊断计数器（v577 起匹配口径=总仓异常 T+N 窗口内的缺货订单）
+  let _matchTotal = impactedOrderIdx.size, _shortTotal = 0;
+  paidRows.forEach(function(r, idx) {
+    if (!impactedOrderIdx.has(idx)) return;
     if (!r.rdc || !rdcImpact[r.rdc]) return;
     const short = (r.orderQty || 0) - (r.firstDayQty || 0);
     if (short > 0) {
@@ -15613,7 +15636,7 @@ function renderDcSupplySimTab(page, tabBar) {
   const html = tabBar + `
     <div style="margin-bottom:16px">
       <div style="font-size:var(--font-size-xl);font-weight:600;margin-bottom:4px">${monthLabel} 总仓供应对日订单满足率影响模拟 <span style="font-size:10px;color:#94A3B8;font-weight:400;margin-left:8px">v2.6-fix</span></div>
-      <div style="font-size:12px;color:var(--text-secondary)">假设：选中 SKU 在总仓供应充足，其在各 RDC 的缺货可被总仓调拨消化，估算对<b>日订单满足率</b>的提升效果。${monthSourceLabel && monthSourceLabel !== ('跟随顶部（' + rangeMonths[0] + '）') ? '<span style="color:#D97706">（' + monthSourceLabel + '）</span>' : ''}</div>
+      <div style="font-size:12px;color:var(--text-secondary)">假设：选中 SKU 在总仓供应充足，其在各 RDC 的缺货可被总仓调拨消化，估算对<b>日订单满足率</b>的提升效果。归因窗口：总仓异常日 T 起，只计该 RDC <b>T～T+N</b>（N=运输周期）内的新缺货。${monthSourceLabel && monthSourceLabel !== ('跟随顶部（' + rangeMonths[0] + '）') ? '<span style="color:#D97706">（' + monthSourceLabel + '）</span>' : ''}</div>
     </div>
 
     <!-- 诊断条 v2.6-fix：显示关键计数，方便定位数据问题 -->
@@ -15713,7 +15736,7 @@ function renderDcSupplySimTab(page, tabBar) {
           </table>
         </div>
       </div>
-      <div style="padding:6px 4px;font-size:10px;color:var(--text-secondary)">口径：受影响 SKU 订单的 firstDayShort 累计（同一订单只算一次）· 占比分母=该 RDC 全部非免费单首日缺货支数</div>
+      <div style="padding:6px 4px;font-size:10px;color:var(--text-secondary)">口径：总仓异常日 T～T+N 窗口内首日缺货 firstDayShort 累计（同一订单只算一次）· 占比分母=该 RDC 全部非免费单首日缺货支数</div>
     </div>
 
     <!-- 关键SKU明细 -->
@@ -15845,7 +15868,7 @@ function exportDcSupplySim() {
   const header = ['SKU','名称','品牌','大仓原状态','涉及RDC数','总缺货箱数','模拟可消化(支)','箱规'].concat(rdcNames.map(n => n + '缺货箱数'));
   const csv = '\uFEFF' + header.join(',') + '\n';
   rows.forEach(s => {
-    const simulated = Math.round(s.totalShortBoxes * specOf(s.sku));
+    const simulated = s.firstDayShort || 0;   // v577: 与页面 KPI 同口径（T+N 窗口内首日缺货支数）
     const line = [
       s.sku, s.name, s.brand, s.dcSupply, s.rdcCount, s.totalShortBoxes, simulated, specOf(s.sku)
     ].concat(rdcNames.map(n => s.rdcShort[n] || 0));
