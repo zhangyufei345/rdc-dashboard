@@ -1432,7 +1432,7 @@ const DB_NAME = 'RDC_Dashboard';
 //   只保留带单选切换的方案卡片；参数栏默认值与其他模块不动。
 // v569（2026-11-27）：修山姆模拟静态包生成链——「山姆需求」新增列导致计划指标列位移，
 //   改为按表头名动态定位，兼容新旧格式；补 11/26 出货并推进实际库存趋势图到 11/26。
-const BUILD_VERSION = 577; // v577: 总仓缺货模拟改为按 RDC 的 T+N 补货周期窗口归因
+const BUILD_VERSION = 578; // v578: 首次提报前已有出货时，业务提报虚高回退全量出货比对
 // v539: 拉回分析品牌回填——代码含字母统一「非卖品」，其余按已有品牌/主数据/品名关键词兜底；只改品牌归类
 // v538: 拉回分析筛选栏换行对齐——筛选条件整体成组，换行从「月份」起对齐，标签与下拉不拆行；控件/口径不变
 // v537: 拉回分析新增「发货RDC」筛选（按发货工厂归一，与RDC饼图同源），放在收货仓后；原筛选/下钻结构不动
@@ -21407,8 +21407,8 @@ function renderCovStackedChart(cfg) {
 // 让 plan-monitor 也能通过 window._slowDiagMap[key] 查询 (rdc,sku) 的根因，无需进入「慢动品分析」页。
 function diagnoseSlowItem(o) {
   var netIn = o.netIn, ship = o.ship, demand = o.demand, fut = o.fut, fut5 = o.fut5, expiryRatio = o.expiryRatio, isNew = o.isNew;
-  // v576: 「业务提报需求虚高」单独用 shipBiz（该 RDC|SKU 从首次正提报日起到数据末日的出货）；
-  //   未传 shipBiz 的旧调用方继续用 ship，分仓需求虚高/严重呆滞也继续用原 ship，口径不变。
+  // v576/v578: 「业务提报需求虚高」单独用 shipBiz——默认从首次正提报日起算；若首次提报前已有出货，
+  //   v578 会在调用侧回退为全量出货，避免晚登记 SKU 被误判。未传 shipBiz 的旧调用方继续用 ship。
   var shipBiz = (o.shipBiz == null) ? ship : o.shipBiz;
   var flags = [];
   if (netIn > 0 && ship > 0 && netIn / ship > 2.0) flags.push('分仓需求虚高(过量补货)');
@@ -24894,7 +24894,11 @@ function renderSlowMoving() {
     var key = d.rdc + '|' + d.sku;
     var netIn = transNetAll2[key] ? (transNetAll2[key].inn - transNetAll2[key].out) : 0;
     var ship = shipQtyAll2[key] || 0;
-    var shipBiz = shipBizQtyAll2[key] || 0;   // v575: 仅业务提报虚高判定使用
+    var shipBiz = shipBizQtyAll2[key] || 0;   // v575: 从首次提报日起算的出货，仅业务提报虚高判定使用
+    // v578: 若首次提报日之前已有出货，说明该日只是业务开始登记、不是销售起点；
+    //   此时再用「首次提报日起算」会把历史出货全部抹掉（例：西南20877 提报40支，但此前已出货4832支），
+    //   因此回退到全量出货与提报总量比对。首次提报前无出货的 SKU 保持 v576 口径。
+    if (ship > shipBiz) shipBiz = ship;
     var demand = bizDemandAll2[key] || 0;
     var fut = covFutureSum(d, _slow6AllFutFields); // v395: 与 futureDemandAll 同源同口径
     var fut5v = futureDemand5All[key] || 0;
@@ -25431,7 +25435,7 @@ function renderSlowMovingLogic() {
   s += '<h2>🔍 根因判定规则（统一需求侧诊断，适用于全部慢动品）</h2><div class="logic-card">';
   s += '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">每个慢动SKU 用以下数据口径做诊断（字段名与代码完全一致）。<strong>新增慢动与存量慢动共用同一套引擎</strong>，不再区分快照/趋势——因为根因永远在需求侧，库存只是结果：</p>';
   s += '<div class="rule-box">';
-  s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 实际出货 ship</div><div class="ri-cond">来源：订单明细 firstDayQty</div><div class="ri-result">真实卖出去的数量</div></div>';
+  s += '<div class="rule-item" style="border-left-color:#3B82F6"><div class="ri-flag">🚚 实际出货 ship</div><div class="ri-cond">来源：订单明细 firstDayQty；业务提报虚高专用 shipBiz 默认从首次提报日起算，若首次提报前已有出货则回退全量</div><div class="ri-result">真实卖出去的数量</div></div>';
   s += '<div class="rule-item" style="border-left-color:#8B5CF6"><div class="ri-flag">🔄 净转入 netIn</div><div class="ri-cond">来源：转储数据 转入−转出</div><div class="ri-result">实际补货入库量（补多了即偏高）</div></div>';
   s += '<div class="rule-item" style="border-left-color:#D97706"><div class="ri-flag">📝 业务提报需求 demand</div><div class="ri-cond">来源：业务需求满足情况（经销商+KA+新渠道）</div><div class="ri-result">销售端报上来的需求</div></div>';
   s += '<div class="rule-item" style="border-left-color:#059669"><div class="ri-flag">📅 分仓未来需求 fut</div><div class="ri-cond">来源：' + (covSnapMonthLabel('cov7') || '10月') + '覆盖表 ' + (covFutureRangeText('cov7') || 'cov11~cov16（2026-11 ~ 2027-04，快照月起点的未来 6 个月）') + '</div><div class="ri-result">系统按覆盖逻辑测算的分仓需求</div></div>';
